@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Admission Register</title>
+<meta name="theme-color" content="#9B3437" />
+<meta name="description" content="School admission register — add, search, and manage student entries with cloud sync." />
+<link rel="manifest" href="./manifest.json" />
+<link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+<link rel="apple-touch-icon" href="./icons/icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Register" />
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #F3ECDA; font-family: 'Source Serif 4', Georgia, serif; color: #1F2A44; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 0 64px; }
+  .ledger-row { border-bottom: 1px solid #D9CBA3; }
+  .ledger-row:last-child { border-bottom: none; }
+  .rule-input {
+    background: transparent; border: none; border-bottom: 1px solid #B7A97E;
+    padding: 4px 2px; font-family: 'Source Serif 4', Georgia, serif; color: #1F2A44;
+    width: 100%; outline: none; font-size: 14px;
+  }
+  .rule-input:focus { border-bottom: 1px solid #9B3437; }
+  .stamp { font-family: 'IBM Plex Mono', monospace; }
+  button { font-family: inherit; }
+  svg.icon { display: inline-block; vertical-align: middle; }
+  select.stamp { border: 1px solid #B7A97E; border-radius: 3px; background: #FBF7EC; color: #1F2A44; font-size: 13px; padding: 6px 8px; flex-shrink: 0; }
+  .btn { display: flex; align-items: center; gap: 6px; border-radius: 3px; padding: 8px 14px; font-size: 13px; font-family: 'IBM Plex Mono', monospace; cursor: pointer; flex-shrink: 0; }
+  .panel { margin: 16px 24px 0; padding: 18px; background: #FBF7EC; border: 1px solid #D9CBA3; border-radius: 4px; }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; }
+  .field-grid label { font-size: 11px; color: #6B5F4B; text-transform: uppercase; letter-spacing: 0.6px; }
+</style>
+</head>
+<body>
+
+<!-- Login Screen -->
+<div id="loginScreen" style="position:fixed;inset:0;background:#F3ECDA;z-index:1000;display:flex;align-items:center;justify-content:center;font-family:'Source Serif 4',Georgia,serif;">
+  <div style="width:320px;max-width:90vw;padding:32px 28px;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:6px;border-top:3px solid #9B3437;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
+      <span id="icon-login-book"></span>
+      <h1 style="font-family:'Zilla Slab',serif;font-weight:700;font-size:20px;margin:0;color:#1F2A44;">Admission Register</h1>
+    </div>
+    <p style="font-size:13px;color:#6B5F4B;margin:0 0 16px;">Enter password to continue.</p>
+    <input type="password" id="loginPasswordInput" class="rule-input" placeholder="Password" style="margin-bottom:10px;" />
+    <p id="loginError" style="color:#9B3437;font-size:12.5px;min-height:16px;margin:0 0 12px;"></p>
+    <button id="loginSubmitBtn" style="width:100%;background:#9B3437;color:#F3ECDA;border:none;border-radius:3px;padding:10px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Unlock Register</button>
+  </div>
+</div>
+
+<div class="wrap" id="mainApp" style="display:none;">
+  <!-- Header -->
+  <div style="display:flex;border-bottom:3px double #9B3437;">
+    <div style="width:10px;background:#9B3437;flex-shrink:0;"></div>
+    <div style="padding:28px 24px 20px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span id="icon-bookopen"></span>
+        <h1 style="font-family:'Zilla Slab',serif;font-weight:700;font-size:26px;letter-spacing:0.3px;margin:0;">Admission Register</h1>
+      </div>
+      <p class="stamp" id="headerInfo" style="margin:6px 0 0;font-size:13px;color:#6B5F4B;letter-spacing:0.5px;">loading…</p>
+    </div>
+  </div>
+
+  <p style="font-size:12px;color:#6B5F4B;padding:10px 24px 0;margin:0;">
+    This register is stored in the cloud (Supabase) — accessible from any device/browser you open this file on.
+  </p>
+
+  <!-- Toolbar -->
+  <div style="display:flex;gap:10px;padding:16px 24px 0;align-items:center;flex-wrap:wrap;">
+    <div style="flex:1;min-width:160px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #B7A97E;padding-bottom:4px;">
+      <span id="icon-search"></span>
+      <input id="searchInput" placeholder="Search by name, class, mobile…" class="rule-input" style="border-bottom:none;padding:0;" />
+    </div>
+    <select id="classFilterSel" class="stamp"></select>
+    <select id="sessionFilterSel" class="stamp"></select>
+    <button id="toggleFormBtn" class="btn" style="background:#9B3437;color:#F3ECDA;border:none;">
+      <span id="icon-formToggle"></span><span id="formToggleLabel">New Entry</span>
+    </button>
+    <button id="toggleBackupsBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;">
+      <span id="icon-history"></span>Backups
+    </button>
+    <button id="logoutBtn" class="btn" style="background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;">
+      Logout
+    </button>
+  </div>
+
+  <div id="formPanel"></div>
+  <div id="backupsPanel"></div>
+
+  <div style="margin:20px 24px 0;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:4px;">
+    <div id="entriesList"></div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept="application/json" style="display:none;" />
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+/* ---------- Supabase connection ---------- */
+const SUPABASE_URL = "https://zeumswqaoaqzfvlwtplk.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpldW1zd3Fhb2FxemZ2bHd0cGxrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwNjMyNjksImV4cCI6MjA5OTYzOTI2OX0.pCsQ-aE6CbYtwUxlTJycN32uAoPLwQ9Snx16leaT4wE";
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+function toDbRow(e) {
+  return {
+    id: e.id, serial: e.serial, name: e.name, father_name: e.fatherName,
+    roll_no: e.rollNo, mobile: e.mobile, address: e.address,
+    class_name: e.className, session: e.session, notes: e.notes,
+    created_at: e.createdAt,
+  };
+}
+function fromDbRow(r) {
+  return {
+    id: r.id, serial: r.serial, name: r.name, fatherName: r.father_name,
+    rollNo: r.roll_no, mobile: r.mobile, address: r.address,
+    className: r.class_name, session: r.session, notes: r.notes,
+    createdAt: r.created_at,
+  };
+}
+/* ---------- Icons (inline lucide-style SVGs) ---------- */
+function icon(name, opts) {
+  opts = opts || {};
+  const size = opts.size || 16;
+  const color = opts.color || 'currentColor';
+  const paths = {
+    search: '<circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>',
+    plus: '<line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line>',
+    x: '<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>',
+    check: '<polyline points="20 6 9 17 4 12"></polyline>',
+    trash2: '<polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>',
+    pencil: '<path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path>',
+    bookopen: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2Z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7Z"></path>',
+    history: '<path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"></path><path d="M3 3v5h5"></path><polyline points="12 7 12 12 16.5 15.5"></polyline>',
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line>',
+    upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line>',
+    rotateccw: '<path d="M3 12a9 9 0 1 0 2.64-6.36L3 8"></path><polyline points="3 3 3 8 8 8"></polyline>'
+  };
+  return `<svg class="icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths[name] || ''}</svg>`;
+}
+
+/* ---------- Fields / constants ---------- */
+const FIELDS = [
+  { key: "name", label: "Name", placeholder: "Full name" },
+  { key: "fatherName", label: "Father's Name", placeholder: "Father's full name" },
+  { key: "rollNo", label: "Roll No.", placeholder: "e.g. 21" },
+  { key: "mobile", label: "Mobile No.", placeholder: "10-digit number" },
+  { key: "address", label: "Address", placeholder: "House no, street, city" },
+  { key: "className", label: "Class", placeholder: "e.g. 8th" },
+  { key: "session", label: "Session", placeholder: "e.g. 2026-27" },
+  { key: "notes", label: "Notes", placeholder: "Any additional remarks" },
+];
+const ADD_FIELDS = FIELDS.filter(f => f.key !== "rollNo");
+const EMPTY = { name: "", fatherName: "", rollNo: "", mobile: "", address: "", className: "", session: "", notes: "" };
+
+/* ---------- State ---------- */
+const state = {
+  entries: [], loading: true, form: { ...EMPTY }, showForm: false,
+  editingId: null, editForm: { ...EMPTY }, query: "", classFilter: "all",
+  sessionFilter: "all", saving: false, error: "", showBackups: false,
+  backups: [], restoring: false,
+};
+
+/* ---------- Storage helpers (Supabase) ---------- */
+async function loadEntries() {
+  await refreshEntries();
+  state.loading = false;
+  await loadBackupManifest();
+  renderAll();
+}
+
+async function refreshEntries() {
+  const { data, error } = await supabaseClient
+    .from("admission_entries").select("*").order("serial", { ascending: true });
+  if (error) { state.error = "Could not load entries. Check your connection."; }
+  else { state.entries = data.map(fromDbRow); }
+}
+
+async function loadBackupManifest() {
+  const { data, error } = await supabaseClient
+    .from("register_backups").select("id,ts").order("ts", { ascending: false }).limit(10);
+  if (!error && data) state.backups = data.map(r => ({ key: r.id, timestamp: r.ts }));
+}
+
+async function createBackup() {
+  try {
+    const timestamp = new Date().toISOString();
+    await supabaseClient.from("register_backups").insert({ id: timestamp, ts: timestamp, data: state.entries });
+    const { data } = await supabaseClient.from("register_backups").select("id,ts").order("ts", { ascending: false });
+    if (data && data.length > 10) {
+      const toDelete = data.slice(10).map(r => r.id);
+      await supabaseClient.from("register_backups").delete().in("id", toDelete);
+    }
+    await loadBackupManifest();
+  } catch (e) {}
+}
+
+async function restoreBackup(backup) {
+  state.restoring = true;
+  renderBackupsPanel();
+  try {
+    const { data, error } = await supabaseClient.from("register_backups").select("data").eq("id", backup.key).single();
+    if (error || !data) {
+      state.error = "That backup could not be found.";
+    } else {
+      const list = data.data || [];
+      await supabaseClient.from("admission_entries").delete().neq("id", "__none__");
+      if (list.length) await supabaseClient.from("admission_entries").insert(list.map(toDbRow));
+      await refreshEntries();
+      state.showBackups = false;
+      state.error = "";
+    }
+  } catch (e) {
+    state.error = "Could not restore that backup.";
+  }
+  state.restoring = false;
+  renderAll();
+}
+
+function downloadBackup() {
+  const blob = new Blob([JSON.stringify(state.entries, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `admission-register-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function handleImportFile(ev) {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      if (!Array.isArray(parsed)) throw new Error("Invalid format");
+      state.saving = true; renderHeader();
+      await supabaseClient.from("admission_entries").delete().neq("id", "__none__");
+      if (parsed.length) await supabaseClient.from("admission_entries").insert(parsed.map(toDbRow));
+      await refreshEntries();
+      await createBackup();
+      state.error = "";
+      state.showBackups = false;
+    } catch (err) {
+      state.error = "That file doesn't look like a valid backup.";
+    }
+    state.saving = false;
+    renderAll();
+  };
+  reader.readAsText(file);
+  ev.target.value = "";
+}
+
+/* ---------- Business logic ---------- */
+function nextSerial(list) {
+  return list.length ? Math.max(...list.map(e => e.serial)) + 1 : 1;
+}
+function nextRollForClass(list, className) {
+  const cls = (className || "").trim();
+  const nums = list.filter(e => (e.className || "").trim() === cls)
+    .map(e => parseInt(e.rollNo, 10)).filter(n => !isNaN(n));
+  const next = nums.length ? Math.max(...nums) + 1 : 1;
+  return String(next).padStart(3, "0");
+}
+function previewRoll() { return nextRollForClass(state.entries, state.form.className); }
+
+async function handleAdd() {
+  if (!state.form.name.trim()) {
+    state.error = "Name is required.";
+    renderFormPanel();
+    return;
+  }
+  const entry = {
+    ...state.form,
+    rollNo: nextRollForClass(state.entries, state.form.className),
+    id: `${Date.now()}`,
+    serial: nextSerial(state.entries),
+    createdAt: new Date().toISOString(),
+  };
+  state.saving = true; renderHeader();
+  const { error } = await supabaseClient.from("admission_entries").insert(toDbRow(entry));
+  if (error) {
+    state.error = "Could not save. Try again.";
+  } else {
+    state.error = "";
+    await refreshEntries();
+    await createBackup();
+    state.form = { ...EMPTY, session: state.form.session };
+    state.showForm = false;
+  }
+  state.saving = false;
+  renderAll();
+}
+
+function startEdit(entry) {
+  state.editingId = entry.id;
+  state.editForm = { ...entry };
+  renderEntries();
+}
+async function saveEdit() {
+  state.saving = true; renderHeader();
+  const editedId = state.editingId;
+  const { error } = await supabaseClient.from("admission_entries").update(toDbRow(state.editForm)).eq("id", editedId);
+  if (error) {
+    state.error = "Could not save. Try again.";
+  } else {
+    state.error = "";
+    await refreshEntries();
+    await createBackup();
+    state.editingId = null;
+  }
+  state.saving = false;
+  renderAll();
+}
+function cancelEdit() {
+  state.editingId = null;
+  renderEntries();
+}
+async function removeEntry(id) {
+  state.saving = true; renderHeader();
+  const { error } = await supabaseClient.from("admission_entries").delete().eq("id", id);
+  if (error) {
+    state.error = "Could not delete. Try again.";
+  } else {
+    state.error = "";
+    await refreshEntries();
+    await createBackup();
+  }
+  state.saving = false;
+  renderAll();
+}
+
+function getClassList() {
+  const set = new Set(state.entries.map(e => (e.className || "").trim()).filter(Boolean));
+  return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+function getSessionList() {
+  const set = new Set(state.entries.map(e => (e.session || "").trim()).filter(Boolean));
+  return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+function getFiltered() {
+  const q = state.query.trim().toLowerCase();
+  return state.entries.filter(e => {
+    const matchesClass = state.classFilter === "all" || (e.className || "").trim() === state.classFilter;
+    const matchesSession = state.sessionFilter === "all" || (e.session || "").trim() === state.sessionFilter;
+    const matchesQuery = !q || [e.name, e.fatherName, e.rollNo, e.mobile, e.address, e.className, e.session, e.notes]
+      .some(v => (v || "").toLowerCase().includes(q));
+    return matchesClass && matchesSession && matchesQuery;
+  });
+}
+
+/* ---------- Renderers ---------- */
+function renderHeader() {
+  document.getElementById("headerInfo").innerHTML = state.loading
+    ? "loading…"
+    : `${state.entries.length} ${state.entries.length === 1 ? "entry" : "entries"} on record${state.saving ? " · saving…" : ""}`;
+  document.getElementById("icon-bookopen").innerHTML = icon("bookopen", { size: 22, color: "#9B3437" });
+  document.getElementById("icon-search").innerHTML = icon("search", { size: 16, color: "#6B5F4B" });
+  document.getElementById("icon-history").innerHTML = icon("history", { size: 15 });
+  document.getElementById("icon-formToggle").innerHTML = icon(state.showForm ? "x" : "plus", { size: 15 });
+  document.getElementById("formToggleLabel").textContent = state.showForm ? "Cancel" : "New Entry";
+  const toggleFormBtn = document.getElementById("toggleFormBtn");
+  toggleFormBtn.style.background = state.showForm ? "#1F2A44" : "#9B3437";
+  const toggleBackupsBtn = document.getElementById("toggleBackupsBtn");
+  toggleBackupsBtn.style.background = state.showBackups ? "#1F2A44" : "transparent";
+  toggleBackupsBtn.style.color = state.showBackups ? "#F3ECDA" : "#1F2A44";
+}
+
+function renderFilters() {
+  const classSel = document.getElementById("classFilterSel");
+  const sessionSel = document.getElementById("sessionFilterSel");
+  const classList = getClassList();
+  const sessionList = getSessionList();
+
+  classSel.style.display = classList.length ? "" : "none";
+  sessionSel.style.display = sessionList.length ? "" : "none";
+
+  classSel.innerHTML = `<option value="all">All classes</option>` +
+    classList.map(c => `<option value="${escapeAttr(c)}">Class ${escapeHtml(c)}</option>`).join("");
+  sessionSel.innerHTML = `<option value="all">All sessions</option>` +
+    sessionList.map(s => `<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join("");
+  classSel.value = state.classFilter;
+  sessionSel.value = state.sessionFilter;
+}
+
+function renderFormPanel() {
+  const el = document.getElementById("formPanel");
+  if (!state.showForm) { el.innerHTML = ""; return; }
+  el.className = "panel";
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+      <span class="stamp" style="background:#1F2A44;color:#F3ECDA;font-size:12px;padding:4px 10px;border-radius:3px;">Roll No. ${previewRoll()}</span>
+      <span style="font-size:11.5px;color:#6B5F4B;">assigned automatically, class-wise</span>
+    </div>
+    <div class="field-grid">
+      ${ADD_FIELDS.map(f => `
+        <div style="grid-column:${f.key === "address" || f.key === "notes" ? "1 / -1" : "auto"};">
+          <label class="stamp">${f.label}</label>
+          <input class="rule-input" data-form-field="${f.key}" placeholder="${escapeAttr(f.placeholder)}" value="${escapeAttr(state.form[f.key])}" />
+        </div>`).join("")}
+    </div>
+    ${state.error ? `<p style="color:#9B3437;font-size:13px;margin-top:12px;">${escapeHtml(state.error)}</p>` : ""}
+    <button id="addEntryBtn" style="margin-top:16px;background:#9B3437;color:#F3ECDA;border:none;border-radius:3px;padding:9px 18px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Add to Register</button>
+  `;
+  el.querySelectorAll("[data-form-field]").forEach(inp => {
+    inp.addEventListener("input", (e) => { state.form[e.target.dataset.formField] = e.target.value; });
+  });
+  document.getElementById("addEntryBtn").addEventListener("click", handleAdd);
+}
+
+function renderBackupsPanel() {
+  const el = document.getElementById("backupsPanel");
+  if (!state.showBackups) { el.innerHTML = ""; return; }
+  el.className = "panel";
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <span class="stamp" style="font-size:12px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;">Backup &amp; Restore</span>
+      ${state.restoring ? `<span class="stamp" style="font-size:12px;color:#6B5F4B;">restoring…</span>` : ""}
+    </div>
+    <p style="font-size:12px;color:#6B5F4B;margin:0 0 14px;">A snapshot is saved automatically every time the register changes (last 10 kept). You can also download a copy to your device, or restore from a file.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+      <button id="downloadBackupBtn" ${state.entries.length === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${state.entries.length === 0 ? "not-allowed" : "pointer"};opacity:${state.entries.length === 0 ? 0.5 : 1};">${icon("download", { size: 14 })} Download Backup</button>
+      <button id="restoreFileBtn" style="display:flex;align-items:center;gap:6px;background:transparent;color:#1F2A44;border:1px solid #B7A97E;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${icon("upload", { size: 14 })} Restore from File</button>
+    </div>
+    <span class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;">Automatic Snapshots</span>
+    ${state.backups.length === 0
+      ? `<p style="font-size:12.5px;color:#6B5F4B;margin-top:8px;">No snapshots yet — one will be saved after your next change.</p>`
+      : `<div style="margin-top:8px;">${state.backups.map(b => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 4px;border-bottom:1px solid #D9CBA3;">
+            <span class="stamp" style="font-size:12.5px;color:#1F2A44;">${new Date(b.timestamp).toLocaleString()}</span>
+            <button class="restoreBtn" data-key="${escapeAttr(b.key)}" data-ts="${escapeAttr(b.timestamp)}" ${state.restoring ? "disabled" : ""} style="display:flex;align-items:center;gap:4px;background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:5px 10px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:${state.restoring ? "not-allowed" : "pointer"};">${icon("rotateccw", { size: 12 })} Restore</button>
+          </div>`).join("")}</div>`}
+  `;
+  document.getElementById("downloadBackupBtn").addEventListener("click", downloadBackup);
+  document.getElementById("restoreFileBtn").addEventListener("click", () => document.getElementById("fileInput").click());
+  el.querySelectorAll(".restoreBtn").forEach(btn => {
+    btn.addEventListener("click", () => restoreBackup({ key: btn.dataset.key, timestamp: btn.dataset.ts }));
+  });
+}
+
+function renderEntries() {
+  const el = document.getElementById("entriesList");
+  if (state.loading) {
+    el.innerHTML = `<p style="padding:24px;color:#6B5F4B;font-size:14px;">Opening the register…</p>`;
+    return;
+  }
+  const filtered = getFiltered();
+  if (filtered.length === 0) {
+    el.innerHTML = `<p style="padding:24px;color:#6B5F4B;font-size:14px;">${state.entries.length === 0 ? "No entries yet. Add the first student above." : "No entries match your search or filters."}</p>`;
+    return;
+  }
+  const sorted = filtered.slice().sort((a, b) => a.serial - b.serial);
+  el.innerHTML = sorted.map(e => {
+    if (state.editingId === e.id) {
+      return `
+        <div class="ledger-row" data-row-id="${e.id}" style="display:flex;padding:16px 18px;gap:14px;">
+          <div class="stamp" style="width:34px;flex-shrink:0;color:#9B3437;font-weight:500;font-size:14px;padding-top:2px;">${String(e.serial).padStart(3, "0")}</div>
+          <div style="flex:1;">
+            <div class="field-grid">
+              ${FIELDS.map(f => `
+                <div style="grid-column:${f.key === "address" || f.key === "notes" ? "1 / -1" : "auto"};">
+                  <label class="stamp">${f.label}</label>
+                  <input class="rule-input" data-edit-field="${f.key}" value="${escapeAttr(state.editForm[f.key])}" />
+                </div>`).join("")}
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px;">
+              <button class="saveEditBtn" style="display:flex;align-items:center;gap:4px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:6px 12px;font-size:12px;cursor:pointer;">${icon("check", { size: 13 })} Save</button>
+              <button class="cancelEditBtn" style="display:flex;align-items:center;gap:4px;background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;border-radius:3px;padding:6px 12px;font-size:12px;cursor:pointer;">${icon("x", { size: 13 })} Cancel</button>
+            </div>
+          </div>
+        </div>`;
+    }
+    return `
+      <div class="ledger-row" data-row-id="${e.id}" style="display:flex;padding:16px 18px;gap:14px;">
+        <div class="stamp" style="width:34px;flex-shrink:0;color:#9B3437;font-weight:500;font-size:14px;padding-top:2px;">${String(e.serial).padStart(3, "0")}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;">${escapeHtml(e.name) || "—"}</div>
+          <div style="font-size:13px;color:#6B5F4B;margin-top:2px;">s/o ${escapeHtml(e.fatherName) || "—"}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:8px;font-size:12.5px;">
+            <span class="stamp" style="color:#1F2A44;">Roll ${escapeHtml(e.rollNo) || "—"}</span>
+            <span class="stamp" style="color:#1F2A44;">📞 ${escapeHtml(e.mobile) || "—"}</span>
+            <span class="stamp" style="color:#1F2A44;">Class ${escapeHtml(e.className) || "—"}</span>
+            <span class="stamp" style="color:#1F2A44;">Session ${escapeHtml(e.session) || "—"}</span>
+          </div>
+          <div style="font-size:12.5px;color:#6B5F4B;margin-top:4px;">${escapeHtml(e.address)}</div>
+          ${e.notes ? `<div style="font-size:12.5px;color:#1F2A44;margin-top:6px;font-style:italic;">Note: ${escapeHtml(e.notes)}</div>` : ""}
+        </div>
+        <div style="display:flex;gap:8px;flex-shrink:0;align-items:flex-start;">
+          <button class="editBtn" aria-label="Edit" style="background:none;border:none;cursor:pointer;color:#6B5F4B;">${icon("pencil", { size: 16 })}</button>
+          <button class="deleteBtn" aria-label="Delete" style="background:none;border:none;cursor:pointer;color:#9B3437;">${icon("trash2", { size: 16 })}</button>
+        </div>
+      </div>`;
+  }).join("");
+
+  el.querySelectorAll(".editBtn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.closest("[data-row-id]").dataset.rowId;
+      const entry = state.entries.find(x => x.id === id);
+      if (entry) startEdit(entry);
+    });
+  });
+  el.querySelectorAll(".deleteBtn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.closest("[data-row-id]").dataset.rowId;
+      removeEntry(id);
+    });
+  });
+  el.querySelectorAll(".saveEditBtn").forEach(btn => btn.addEventListener("click", saveEdit));
+  el.querySelectorAll(".cancelEditBtn").forEach(btn => btn.addEventListener("click", cancelEdit));
+  el.querySelectorAll("[data-edit-field]").forEach(inp => {
+    inp.addEventListener("input", (e) => { state.editForm[e.target.dataset.editField] = e.target.value; });
+  });
+}
+
+function renderAll() {
+  renderHeader();
+  renderFilters();
+  renderFormPanel();
+  renderBackupsPanel();
+  renderEntries();
+}
+
+function escapeHtml(str) {
+  if (str === undefined || str === null) return "";
+  return String(str).replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+}
+function escapeAttr(str) { return escapeHtml(str); }
+
+/* ---------- Static event bindings ---------- */
+document.getElementById("searchInput").addEventListener("input", (e) => {
+  state.query = e.target.value;
+  renderEntries();
+});
+document.getElementById("classFilterSel").addEventListener("change", (e) => {
+  state.classFilter = e.target.value;
+  renderEntries();
+});
+document.getElementById("sessionFilterSel").addEventListener("change", (e) => {
+  state.sessionFilter = e.target.value;
+  renderEntries();
+});
+document.getElementById("toggleFormBtn").addEventListener("click", () => {
+  state.showForm = !state.showForm;
+  renderHeader();
+  renderFormPanel();
+});
+document.getElementById("toggleBackupsBtn").addEventListener("click", () => {
+  state.showBackups = !state.showBackups;
+  renderHeader();
+  renderBackupsPanel();
+});
+document.getElementById("fileInput").addEventListener("change", handleImportFile);
+
+/* ---------- Password gate ---------- */
+const REGISTER_PASSWORD_HASH = "cc54389a0752e125b246083a93ee7d47cee6f752e820125b83cc1677cce25906";
+const AUTH_KEY = "register-auth-ok";
+
+async function sha256Hex(text) {
+  const buf = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function showLogin() {
+  document.getElementById("loginScreen").style.display = "flex";
+  document.getElementById("mainApp").style.display = "none";
+  document.getElementById("icon-login-book").innerHTML = icon("bookopen", { size: 20, color: "#9B3437" });
+  document.getElementById("loginPasswordInput").value = "";
+  document.getElementById("loginError").textContent = "";
+  document.getElementById("loginPasswordInput").focus();
+}
+
+async function attemptLogin() {
+  const val = document.getElementById("loginPasswordInput").value;
+  const hash = await sha256Hex(val);
+  if (hash === REGISTER_PASSWORD_HASH) {
+    try { localStorage.setItem(AUTH_KEY, "true"); } catch (e) {}
+    document.getElementById("loginScreen").style.display = "none";
+    document.getElementById("mainApp").style.display = "";
+    loadEntries();
+  } else {
+    document.getElementById("loginError").textContent = "Incorrect password. Try again.";
+    document.getElementById("loginPasswordInput").value = "";
+    document.getElementById("loginPasswordInput").focus();
+  }
+}
+
+document.getElementById("loginSubmitBtn").addEventListener("click", attemptLogin);
+document.getElementById("loginPasswordInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") attemptLogin();
+});
+document.getElementById("logoutBtn").addEventListener("click", () => {
+  try { localStorage.removeItem(AUTH_KEY); } catch (e) {}
+  showLogin();
+});
+
+/* ---------- Basic source-peeking deterrents ---------- */
+document.addEventListener("contextmenu", (e) => e.preventDefault());
+document.addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase();
+  if (e.key === "F12") e.preventDefault();
+  if ((e.ctrlKey || e.metaKey) && (k === "u" || k === "s")) e.preventDefault();
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && (k === "i" || k === "j" || k === "c")) e.preventDefault();
+});
+
+/* ---------- Init ---------- */
+let alreadyAuthed = false;
+try { alreadyAuthed = localStorage.getItem(AUTH_KEY) === "true"; } catch (e) {}
+
+if (alreadyAuthed) {
+  document.getElementById("loginScreen").style.display = "none";
+  document.getElementById("mainApp").style.display = "";
+  loadEntries();
+} else {
+  showLogin();
+}
+/* ---------- PWA: register service worker ---------- */
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
+
