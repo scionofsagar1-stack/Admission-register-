@@ -101,6 +101,7 @@
       <input id="searchInput" placeholder="Search by name, class, mobile…" class="rule-input" style="border-bottom:none;padding:0;" />
     </div>
     <select id="classFilterSel" class="stamp"></select>
+    <select id="sectionFilterSel" class="stamp"></select>
     <select id="sessionFilterSel" class="stamp"></select>
     <select id="fMonthFilterSel" class="stamp"></select>
     <select id="notPaidTillFilterSel" class="stamp"></select>
@@ -741,7 +742,7 @@ function toDbRow(e) {
     id: e.id, serial: e.serial, name: e.name, father_name: e.fatherName,
     mother_name: e.motherName, dob: e.dob || null,
     roll_no: e.rollNo, mobile: e.mobile, is_whatsapp: !!e.isWhatsapp, address: e.address,
-    class_name: (e.className || "").trim(), session: (e.session || "").trim(),
+    class_name: (e.className || "").trim(), section: (e.section || "").trim(), session: (e.session || "").trim(),
     t_month: e.tMonth, f_month: e.fMonth,
     notes: e.notes, photo_url: e.photoUrl || null,
     created_at: e.createdAt, updated_at: e.updatedAt, events: e.events || [],
@@ -756,7 +757,7 @@ function fromDbRow(r) {
     id: r.id, serial: r.serial, name: r.name, fatherName: r.father_name,
     motherName: r.mother_name || "", dob: r.dob || "",
     rollNo: r.roll_no, mobile: r.mobile, isWhatsapp: !!r.is_whatsapp, address: r.address,
-    className: r.class_name, session: r.session, tMonth: r.t_month || "", fMonth: r.f_month || "",
+    className: r.class_name, section: r.section || "", session: r.session, tMonth: r.t_month || "", fMonth: r.f_month || "",
     notes: r.notes, photoUrl: r.photo_url || "",
     createdAt: r.created_at, updatedAt: r.updated_at, events: r.events || [],
     feeChart: normalizeFeeSheet(r.fee_chart),
@@ -963,6 +964,7 @@ const FIELDS = [
   { key: "mobile", label: "Mobile No.", placeholder: "10-digit number" },
   { key: "address", label: "Address", placeholder: "House no, street, city" },
   { key: "className", label: "Class", placeholder: "e.g. 8th" },
+  { key: "section", label: "Section", placeholder: "e.g. A" },
   { key: "session", label: "Session", placeholder: "e.g. 2026-27" },
   { key: "fMonth", label: "FEE TILL", type: "select", options: MONTHS, placeholder: "Select month" },
   { key: "tMonth", label: "TRANSPORT TILL", type: "select", options: MONTHS, placeholder: "Select month" },
@@ -978,7 +980,7 @@ const PASSBOOK_ALWAYS_EDITABLE_FIELDS = ["name", "fatherName", "address", "mobil
 function isFeeChartPassbookMode(feeChart) {
   return !!normalizeFeeSheet(feeChart).passbookMode;
 }
-const EMPTY = { name: "", fatherName: "", motherName: "", dob: "", rollNo: "", mobile: "", isWhatsapp: false, address: "", className: "", session: "", tMonth: "", fMonth: "", notes: "", photoUrl: "", events: [], feeChart: null, feeChartArchive: [], paidInvoiceHistory: [], createdAt: "", updatedAt: "" };
+const EMPTY = { name: "", fatherName: "", motherName: "", dob: "", rollNo: "", mobile: "", isWhatsapp: false, address: "", className: "", section: "", session: "", tMonth: "", fMonth: "", notes: "", photoUrl: "", events: [], feeChart: null, feeChartArchive: [], paidInvoiceHistory: [], createdAt: "", updatedAt: "" };
 /* Advances the Session by one year on class promotion — "2025-26" -> "2026-27",
    "2025-2026" -> "2026-2027", just "2025" -> "2026". If the pattern isn't
    recognized, return the session unchanged (don't touch anything). */
@@ -1781,6 +1783,7 @@ function buildIdCardNode(entry, settings) {
         ${kv("Mother", entry.motherName)}
         ${kv("DOB", entry.dob)}
         ${kv("Class", entry.className)}
+        ${kv("Section", entry.section)}
         ${kv("Session", entry.session)}
         ${kv("Mobile", entry.mobile)}
         ${kv("Address", entry.address)}
@@ -3900,6 +3903,7 @@ async function loadSessionAndProfile() {
   state.editUnlocked = currentProfile.role === "admin";
   state.isGuestMode = currentProfile.role === "teacher";
   state.guestClass = currentProfile.class_name || "";
+  state.guestSection = currentProfile.section || "";
   state.guestSession = currentProfile.session || "";
   return true;
 }
@@ -3907,7 +3911,7 @@ async function loadSessionAndProfile() {
 /* ---------- State ---------- */
 const state = {
   entries: [], loading: true, form: { ...EMPTY }, showForm: false,
-  editingId: null, editForm: { ...EMPTY }, editOriginal: null, query: "", classFilter: "all",
+  editingId: null, editForm: { ...EMPTY }, editOriginal: null, query: "", classFilter: "all", sectionFilter: "all",
   editOpenDemographic: false, editOpenChart: false,
   sessionFilter: "all", fMonthFilter: "all", notPaidTillFilter: "all", starFilter: "all", addressFilter: "", notesFilter: "", updatedFrom: "", updatedTo: "", saving: false, error: "", showBackups: false,
   backups: [], restoring: false, selectMode: false, selectedIds: new Set(),
@@ -3915,8 +3919,8 @@ const state = {
   showChatPanel: false, chatView: "list" /* 'list' | 'thread' */, chatThreads: [], chatThreadsLoading: false,
   chatOpenThreadType: null, chatOpenThreadKey: null, chatOpenThreadLabel: "", chatOpenThreadStudentInfo: null, chatMessages: [], chatMessagesLoading: false,
   chatDraftText: "", chatDraftImageFile: null, chatDraftImagePreview: "", chatSending: false, chatError: "", chatUnreadCount: 0,
-  editUnlocked: false, isGuestMode: false, guestClass: "", guestSession: "",
-  guestAccounts: [], showGuestPanel: false, guestForm: { email: "", className: "", session: "", password: "", accessType: "class" },
+  editUnlocked: false, isGuestMode: false, guestClass: "", guestSection: "", guestSession: "",
+  guestAccounts: [], showGuestPanel: false, guestForm: { email: "", className: "", section: "", session: "", password: "", accessType: "class" },
   guestPanelError: "", guestSaving: false, guestLastCreated: null,
   showSettingsMenu: false,
   showTemplatePanel: false,
@@ -4306,7 +4310,7 @@ async function loadGuestAccounts() {
   const { data, error } = await supabaseClient
     .from("profiles").select("*").in("role", ["teacher", "viewer"]).order("created_at", { ascending: false });
   if (!error && data) {
-    state.guestAccounts = data.map(r => ({ id: r.id, email: r.email, className: r.class_name, session: r.session, role: r.role }));
+    state.guestAccounts = data.map(r => ({ id: r.id, email: r.email, className: r.class_name, section: r.section || "", session: r.session, role: r.role }));
   }
 }
 
@@ -4315,6 +4319,7 @@ async function createGuestAccount() {
   const email = state.guestForm.email.trim();
   const isAllClasses = state.guestForm.accessType === "all";
   const cls = isAllClasses ? "" : state.guestForm.className.trim();
+  const sec = isAllClasses ? "" : state.guestForm.section.trim();
   const sess = isAllClasses ? "" : state.guestForm.session.trim();
   const pwd = state.guestForm.password.trim();
   if (!email || !pwd || (!isAllClasses && (!cls || !sess))) {
@@ -4338,7 +4343,7 @@ async function createGuestAccount() {
     return;
   }
   const { error: profileError } = await supabaseClient.from("profiles").insert({
-    id: signUpData.user.id, email, role: isAllClasses ? "viewer" : "teacher", class_name: cls, session: sess,
+    id: signUpData.user.id, email, role: isAllClasses ? "viewer" : "teacher", class_name: cls, section: sec, session: sess,
     created_at: new Date().toISOString(),
   });
   if (profileError) {
@@ -4347,7 +4352,7 @@ async function createGuestAccount() {
     state.guestPanelError = "";
     // Shown once so the admin can copy/share it with the teacher.
     state.guestLastCreated = { email, password: pwd };
-    state.guestForm = { email: "", className: "", session: "", password: "", accessType: "class" };
+    state.guestForm = { email: "", className: "", section: "", session: "", password: "", accessType: "class" };
     await loadGuestAccounts();
   }
   state.guestSaving = false;
@@ -4800,19 +4805,24 @@ function getSessionList() {
   const set = new Set(state.entries.map(e => (e.session || "").trim()).filter(Boolean));
   return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
+function getSectionList() {
+  const set = new Set(state.entries.map(e => (e.section || "").trim()).filter(Boolean));
+  return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
 function getFiltered() {
   const q = state.query.trim().toLowerCase();
   const addrQ = state.addressFilter.trim().toLowerCase();
   const noteQ = state.notesFilter.trim().toLowerCase();
   return state.entries.filter(e => {
     const matchesClass = state.classFilter === "all" || (e.className || "").trim() === state.classFilter;
+    const matchesSection = state.sectionFilter === "all" || (e.section || "").trim() === state.sectionFilter;
     const matchesSession = state.sessionFilter === "all" || (e.session || "").trim() === state.sessionFilter;
     const filterMonthIdx = MONTHS.indexOf(state.fMonthFilter);
     const entryMonthIdx = MONTHS.indexOf((e.fMonth || "").trim());
     const matchesFMonth = state.fMonthFilter === "all" || (entryMonthIdx !== -1 && entryMonthIdx >= filterMonthIdx);
     const notPaidFilterIdx = MONTHS.indexOf(state.notPaidTillFilter);
     const matchesNotPaidTill = state.notPaidTillFilter === "all" || entryMonthIdx === -1 || entryMonthIdx < notPaidFilterIdx;
-    const matchesQuery = !q || [e.name, e.fatherName, e.motherName, e.rollNo, e.mobile, e.address, e.className, e.session, e.notes]
+    const matchesQuery = !q || [e.name, e.fatherName, e.motherName, e.rollNo, e.mobile, e.address, e.className, e.section, e.session, e.notes]
       .some(v => (v || "").toLowerCase().includes(q));
     const matchesAddress = !addrQ || (e.address || "").toLowerCase().includes(addrQ);
     const matchesNotes = !noteQ || (e.notes || "").toLowerCase().includes(noteQ);
@@ -4820,7 +4830,7 @@ function getFiltered() {
     const matchesUpdatedFrom = !state.updatedFrom || (updatedDate && updatedDate >= state.updatedFrom);
     const matchesUpdatedTo = !state.updatedTo || (updatedDate && updatedDate <= state.updatedTo);
     const matchesStar = state.starFilter === "all" || !!(e.starMarks && e.starMarks[state.starFilter]);
-    return matchesClass && matchesSession && matchesFMonth && matchesNotPaidTill && matchesQuery && matchesAddress && matchesNotes && matchesUpdatedFrom && matchesUpdatedTo && matchesStar;
+    return matchesClass && matchesSection && matchesSession && matchesFMonth && matchesNotPaidTill && matchesQuery && matchesAddress && matchesNotes && matchesUpdatedFrom && matchesUpdatedTo && matchesStar;
   });
 }
 
@@ -4829,7 +4839,7 @@ function renderHeader() {
   document.getElementById("headerInfo").innerHTML = state.loading
     ? T("loading…")
     : state.isGuestMode
-      ? `${T("Class")} ${escapeHtml(state.guestClass)} · ${escapeHtml(state.guestSession)} — ${state.entries.length} ${T(state.entries.length === 1 ? "student" : "students")}`
+      ? `${T("Class")} ${escapeHtml(state.guestClass)}${state.guestSection ? " · " + T("Section") + " " + escapeHtml(state.guestSection) : ""} · ${escapeHtml(state.guestSession)} — ${state.entries.length} ${T(state.entries.length === 1 ? "student" : "students")}`
       : `${state.entries.length} ${T(state.entries.length === 1 ? "entry" : "entries")} ${T("on record")}${state.saving ? " · " + T("saving…") : ""}`;
   document.getElementById("icon-bookopen").innerHTML = icon("bookopen", { size: 22, color: "#9B3437" });
   document.getElementById("icon-search").innerHTML = icon("search", { size: 16, color: "#6B5F4B" });
@@ -4927,18 +4937,23 @@ function renderHeader() {
 
 function renderFilters() {
   const classSel = document.getElementById("classFilterSel");
+  const sectionSel = document.getElementById("sectionFilterSel");
   const sessionSel = document.getElementById("sessionFilterSel");
   const fMonthSel = document.getElementById("fMonthFilterSel");
   const notPaidSel = document.getElementById("notPaidTillFilterSel");
   const starSel = document.getElementById("starFilterSel");
   const classList = getClassList();
+  const sectionList = getSectionList();
   const sessionList = getSessionList();
 
   classSel.style.display = (!state.isGuestMode && classList.length) ? "" : "none";
+  sectionSel.style.display = (!state.isGuestMode && sectionList.length) ? "" : "none";
   sessionSel.style.display = (!state.isGuestMode && sessionList.length) ? "" : "none";
 
   classSel.innerHTML = `<option value="all">All classes</option>` +
     classList.map(c => `<option value="${escapeAttr(c)}">Class ${escapeHtml(c)}</option>`).join("");
+  sectionSel.innerHTML = `<option value="all">All sections</option>` +
+    sectionList.map(s => `<option value="${escapeAttr(s)}">Section ${escapeHtml(s)}</option>`).join("");
   sessionSel.innerHTML = `<option value="all">All sessions</option>` +
     sessionList.map(s => `<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join("");
   fMonthSel.innerHTML = `<option value="all">All Fee Paid Till</option>` +
@@ -4946,6 +4961,7 @@ function renderFilters() {
   notPaidSel.innerHTML = `<option value="all">Not Paid Till</option>` +
     MONTHS.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join("");
   classSel.value = state.classFilter;
+  sectionSel.value = state.sectionFilter;
   sessionSel.value = state.sessionFilter;
   fMonthSel.value = state.fMonthFilter;
   notPaidSel.value = state.notPaidTillFilter;
@@ -7213,6 +7229,7 @@ function renderOneEntryRow(e) {
                  </span>`
               : `<span class="stamp" style="color:#1F2A44;">📞 —</span>`}
             ${cardPassbookLock ? "" : `<span class="stamp"><span style="color:#6B5F4B;">${T("Class")}</span> <span style="color:#9B3437;font-weight:600;">${escapeHtml(e.className) || "—"}</span></span>`}
+            ${(!cardPassbookLock && e.section) ? `<span class="stamp"><span style="color:#6B5F4B;">${T("Section")}</span> <span style="color:#9B3437;font-weight:600;">${escapeHtml(e.section)}</span></span>` : ""}
             ${cardPassbookLock ? "" : `<span class="stamp"><span style="color:#6B5F4B;">${T("Session")}</span> <span style="color:#1F2A44;font-weight:600;">${escapeHtml(e.session) || "—"}</span></span>`}
             ${(!cardPassbookLock && e.dob) ? `<span class="stamp"><span style="color:#6B5F4B;">${T("DOB")}</span> <span style="color:#1F2A44;font-weight:600;">${escapeHtml(e.dob)}</span></span>` : ""}
             ${(!cardPassbookLock && e.fMonth) ? `<span class="stamp"><span style="color:#6B5F4B;">${T("FEE TILL")}</span> <span style="color:#1F2A44;font-weight:600;">${escapeHtml(e.fMonth)}</span></span>` : ""}
@@ -8068,6 +8085,10 @@ function renderGuestPanel() {
         <input class="rule-input" id="guestFormClass" placeholder="e.g. 8th" value="${escapeAttr(state.guestForm.className)}" />
       </div>
       <div>
+        <label class="stamp">Section (optional)</label>
+        <input class="rule-input" id="guestFormSection" placeholder="e.g. A" value="${escapeAttr(state.guestForm.section)}" />
+      </div>
+      <div>
         <label class="stamp">Session</label>
         <input class="rule-input" id="guestFormSession" placeholder="e.g. 2026-27" value="${escapeAttr(state.guestForm.session)}" />
       </div>` : ""}
@@ -8084,7 +8105,7 @@ function renderGuestPanel() {
         ? `<p style="font-size:12.5px;color:#6B5F4B;margin-top:8px;">No class teacher logins yet.</p>`
         : `<div style="margin-top:8px;">${state.guestAccounts.map(g => `
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 4px;border-bottom:1px solid #D9CBA3;flex-wrap:wrap;">
-              <span class="stamp" style="font-size:12.5px;color:#1F2A44;">${g.role === "viewer" ? "All Classes (view only)" : `Class ${escapeHtml(g.className)} · ${escapeHtml(g.session)}`}<br/><span style="color:#6B5F4B;font-size:11px;">${escapeHtml(g.email)}</span></span>
+              <span class="stamp" style="font-size:12.5px;color:#1F2A44;">${g.role === "viewer" ? "All Classes (view only)" : `Class ${escapeHtml(g.className)}${g.section ? " · Section " + escapeHtml(g.section) : ""} · ${escapeHtml(g.session)}`}<br/><span style="color:#6B5F4B;font-size:11px;">${escapeHtml(g.email)}</span></span>
               <button class="deleteGuestBtn" data-id="${escapeAttr(g.id)}" style="display:flex;align-items:center;gap:4px;background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:5px 10px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${icon("trash2", { size: 12 })} Remove Access</button>
             </div>`).join("")}</div>`}
     </div>
@@ -8094,6 +8115,7 @@ function renderGuestPanel() {
   document.getElementById("guestFormEmail").addEventListener("input", e => { state.guestForm.email = e.target.value; });
   if (state.guestForm.accessType === "class") {
     document.getElementById("guestFormClass").addEventListener("input", e => { state.guestForm.className = e.target.value; });
+    document.getElementById("guestFormSection").addEventListener("input", e => { state.guestForm.section = e.target.value; });
     document.getElementById("guestFormSession").addEventListener("input", e => { state.guestForm.session = e.target.value; });
   }
   document.getElementById("guestFormPassword").addEventListener("input", e => { state.guestForm.password = e.target.value; });
@@ -8118,6 +8140,10 @@ function escapeAttr(str) { return escapeHtml(str); }
 /* ---------- Static event bindings ---------- */
 document.getElementById("searchInput").addEventListener("input", (e) => {
   state.query = e.target.value;
+  renderEntries();
+});
+document.getElementById("sectionFilterSel").addEventListener("change", (e) => {
+  state.sectionFilter = e.target.value;
   renderEntries();
 });
 document.getElementById("classFilterSel").addEventListener("change", (e) => {
@@ -8635,8 +8661,10 @@ document.getElementById("logoutBtn").addEventListener("click", async () => {
   state.isGuestMode = false;
   state.editUnlocked = false;
   state.guestClass = "";
+  state.guestSection = "";
   state.guestSession = "";
   state.classFilter = "all";
+  state.sectionFilter = "all";
   state.sessionFilter = "all";
   state.showChatPanel = false;
   state.chatView = "list";
