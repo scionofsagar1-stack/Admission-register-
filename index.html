@@ -1970,9 +1970,26 @@ function feeChartRowCategory(sheet, ri, amountColIdx, monthColIdx) {
    INV-...-00001, completely independent of the other) — this function needs
    to be told the category ("fee" or "transport"). This function/table needs
    to be created once in Supabase via SQL (see the SETUP_SQL comment below). */
-async function getNextInvoiceNo(category) {
+/* Class 9th-12th ke liye Fee invoice ka counter baaki classes (1st-8th etc.)
+   se ALAG hai — Transport har class ke liye hamesha wahi ek (purana, saari
+   classes ke liye common) counter use karta hai, isme koi split nahi hai.
+   Class field free text hai ("9th", "10th" ...) isliye shuru ke digits nikaal
+   kar check karte hain. */
+function isSeniorClass(className) {
+  const m = (className || "").toString().trim().match(/^(\d{1,2})/);
+  if (!m) return false;
+  const n = parseInt(m[1], 10);
+  return n >= 9 && n <= 12;
+}
+/* category yahan "fee" ya "transport" hi rehta hai (row detect karne ke liye),
+   lekin cloud counter ka key (countKey) fee + senior class ke liye alag ho
+   jaata hai — is naye key ka counter Supabase me apne aap 001 se shuru ho
+   jaata hai (koi SQL/table change nahi chahiye — same next_invoice_no RPC,
+   bas ek naya category string). */
+async function getNextInvoiceNo(category, className) {
   const prefix = category === "transport" ? "T" : "F";
-  const { data, error } = await supabaseClient.rpc("next_invoice_no", { p_category: category });
+  const countKey = (category === "fee" && isSeniorClass(className)) ? "fee_9to12" : category;
+  const { data, error } = await supabaseClient.rpc("next_invoice_no", { p_category: countKey });
   if (error || data == null) {
     console.error("next_invoice_no RPC failed, falling back to timestamp:", error);
     // Fallback (offline/RPC missing) — will never collide at least, even
@@ -2002,7 +2019,7 @@ function restoreInvoiceNoIfLast(invoiceNo) {
    into one invoice number (see assignInvoiceNoForRow) — NOT used to expire
    or hide the receipt anymore (that time-based hiding has been removed). */
 const PAID_RECEIPT_WINDOW_MS = 60 * 1000; // 1 minute
-async function assignInvoiceNoForRow(sheet, ri) {
+async function assignInvoiceNoForRow(sheet, ri, className) {
   const amountColIdx = getFeeChartAmountColIndex(sheet);
   const monthColIdx = getFeeChartMonthColIndex(sheet);
   const category = feeChartRowCategory(sheet, ri, amountColIdx, monthColIdx);
@@ -2017,7 +2034,7 @@ async function assignInvoiceNoForRow(sheet, ri) {
     const existingInvoiceNo = sheet.invoiceNo && sheet.invoiceNo[i];
     if (existingInvoiceNo) return existingInvoiceNo;
   }
-  return await getNextInvoiceNo(category);
+  return await getNextInvoiceNo(category, className);
 }
 /* When a row is set to "Paid", also auto-mark as "Paid" all earlier rows
    (above it, before it) in the same head (category/head) — except rows that
@@ -2396,6 +2413,21 @@ function bindReprintInvoiceButtons(container) {
    snapshot/save the invoices into entry.paidInvoiceHistory before an
    archived chart is permanently deleted — so that invoice never disappears
    from the Report even after the chart is deleted. */
+/* Har invoice ke andar jitne bhi "fee" rows hain, unme se Month column
+   (agar hai) dekh kar sabse aage wala month nikaalta hai — MONTHS array
+   April→March academic order me hai, isliye "highest index" hi latest
+   month hota hai. Agar koi row month text se match na ho to skip. */
+function invoiceFeeTillMonth(items) {
+  let bestIdx = -1;
+  let bestLabel = "";
+  (items || []).forEach((it) => {
+    const raw = (it.month || "").toString().trim();
+    if (!raw) return;
+    const idx = MONTHS.findIndex((m) => raw.toLowerCase().includes(m.toLowerCase()));
+    if (idx > bestIdx) { bestIdx = idx; bestLabel = raw; }
+  });
+  return bestLabel;
+}
 function extractPaidInvoicesFromSheet(sheet, entry, sessionOverride, classNameOverride, isArchived) {
   const invoices = [];
   if (!sheet || !sheet.rows || !sheet.rows.length) return invoices;
@@ -2428,9 +2460,11 @@ function extractPaidInvoicesFromSheet(sheet, entry, sessionOverride, classNameOv
       name: entry.name || "",
       rollNo: entry.rollNo || "",
       className: classNameOverride || entry.className || "",
+      section: entry.section || "",
       session: sessionOverride || entry.session || "",
       isArchived: !!isArchived,
       items: data.rows,
+      feeTill: invoiceFeeTillMonth(data.rows),
     });
   });
   return invoices;
@@ -2482,6 +2516,7 @@ function getFilteredReportInvoices() {
     if (toMs != null && (inv.paidAt || 0) > toMs) return false;
     if (state.reportSessionSel !== "all" && inv.session !== state.reportSessionSel) return false;
     if (state.reportClassSel !== "all" && inv.className !== state.reportClassSel) return false;
+    if (state.reportSectionSel !== "all" && (inv.section || "") !== state.reportSectionSel) return false;
     if (state.reportCategorySel !== "all" && inv.category !== state.reportCategorySel) return false;
     return true;
   });
@@ -3915,6 +3950,12 @@ const state = {
   editOpenDemographic: false, editOpenChart: false,
   sessionFilter: "all", fMonthFilter: "all", notPaidTillFilter: "all", starFilter: "all", addressFilter: "", notesFilter: "", updatedFrom: "", updatedTo: "", saving: false, error: "", showBackups: false,
   backups: [], restoring: false, selectMode: false, selectedIds: new Set(),
+  showExportColumns: false,
+  /* Order matters here: this array is both the "which columns are on"
+     list AND the left-to-right order they'll appear in the PDF. Ticking a
+     new column appends it to the end; unticking removes it from wherever
+     it sits. Re-ticking the same column later puts it at the end again. */
+  exportColumnOrder: ["serial", "name", "fatherName", "motherName", "dob", "rollNo", "mobile", "className", "session", "fMonth", "tMonth", "address", "notes"],
   showNotifications: false, eventFormOpenId: null, eventDraft: { title: "", date: "", repeatYearly: false },
   showChatPanel: false, chatView: "list" /* 'list' | 'thread' */, chatThreads: [], chatThreadsLoading: false,
   chatOpenThreadType: null, chatOpenThreadKey: null, chatOpenThreadLabel: "", chatOpenThreadStudentInfo: null, chatMessages: [], chatMessagesLoading: false,
@@ -3974,6 +4015,7 @@ const state = {
   reportRangeTo: "",
   reportSessionSel: "all",
   reportClassSel: "all",
+  reportSectionSel: "all",
   reportCategorySel: "all",
   showMessageReportPanel: false,
   messageReportLoading: false,
@@ -4506,7 +4548,7 @@ async function handleAdd() {
       state.error = "";
       await refreshEntries();
       await createBackup();
-      state.form = { ...EMPTY, session: state.form.session };
+      state.form = { ...EMPTY, className: state.form.className, section: state.form.section, session: state.form.session };
       state.showForm = false;
     }
   } catch (err) {
@@ -4584,7 +4626,7 @@ function renderEditChartArchivePreview() {
       if (status === "paid") {
         sheet.paidAt[ri] = Date.now();
         sel.disabled = true;
-        const invoiceNo = await assignInvoiceNoForRow(sheet, ri);
+        const invoiceNo = await assignInvoiceNoForRow(sheet, ri, archiveEntry.className || state.editForm.className);
         sheet.invoiceNo[ri] = invoiceNo;
         autoMarkPriorSameHeadRowsPaid(sheet, ri, invoiceNo);
       } else {
@@ -6461,19 +6503,21 @@ function downloadReportPdf(invoices) {
     inv.name || "—",
     inv.rollNo || "—",
     inv.className || "—",
+    inv.section || "—",
+    inv.feeTill || "—",
     inv.session || "—",
     fmtINR(inv.total),
   ]);
-  if (!body.length) body.push(["—", "—", "—", "No invoices in this period", "—", "—", "—", fmtINR(0)]);
+  if (!body.length) body.push(["—", "—", "—", "No invoices in this period", "—", "—", "—", "—", "—", fmtINR(0)]);
 
   doc.autoTable({
-    head: [["Date", "Invoice No.", "Type", "Student", "Enroll No.", "Class", "Session", "Amount"]],
+    head: [["Date", "Invoice No.", "Type", "Student", "Enroll No.", "Class", "Section", "Fee Till", "Session", "Amount"]],
     body,
     startY: 66,
     styles: { font: "helvetica", fontSize: 8.5, cellPadding: 5 },
     headStyles: { fillColor: [155, 52, 55], textColor: 255, fontStyle: "bold" },
     bodyStyles: { textColor: [31, 42, 68] },
-    columnStyles: { 7: { halign: "right" } },
+    columnStyles: { 9: { halign: "right" } },
     margin: { left: 30, right: 30 },
   });
 
@@ -6489,7 +6533,7 @@ function downloadReportPdf(invoices) {
 }
 function exportReportCsv(invoices) {
   const esc = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
-  const rows = [["Date", "Invoice No.", "Type", "Student", "Enroll No.", "Class", "Session", "Amount"]];
+  const rows = [["Date", "Invoice No.", "Type", "Student", "Enroll No.", "Class", "Section", "Fee Till", "Session", "Amount"]];
   invoices.forEach(inv => {
     rows.push([
       new Date(inv.paidAt).toLocaleDateString("en-IN"),
@@ -6498,6 +6542,8 @@ function exportReportCsv(invoices) {
       inv.name || "",
       inv.rollNo || "",
       inv.className || "",
+      inv.section || "",
+      inv.feeTill || "",
       inv.session || "",
       inv.total,
     ]);
@@ -6518,6 +6564,7 @@ function renderReportPanel() {
   if (!state.showReportPanel) { el.innerHTML = ""; el.className = ""; return; }
   el.className = "panel";
   const classList = getClassList();
+  const sectionList = getSectionList();
   const sessionList = getSessionList();
   const invoices = getFilteredReportInvoices();
   const total = invoices.reduce((s, inv) => s + inv.total, 0);
@@ -6544,6 +6591,10 @@ function renderReportPanel() {
       <select id="repClassSel" class="stamp" style="border:1px solid #B7A97E;border-radius:3px;background:#FBF7EC;padding:6px 8px;">
         <option value="all">All Classes</option>
         ${classList.map(c => `<option value="${escapeAttr(c)}" ${state.reportClassSel === c ? "selected" : ""}>${escapeHtml(c)}</option>`).join("")}
+      </select>
+      <select id="repSectionSel" class="stamp" style="border:1px solid #B7A97E;border-radius:3px;background:#FBF7EC;padding:6px 8px;">
+        <option value="all">All Sections</option>
+        ${sectionList.map(s => `<option value="${escapeAttr(s)}" ${state.reportSectionSel === s ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
       </select>
       <select id="repSessionSel" class="stamp" style="border:1px solid #B7A97E;border-radius:3px;background:#FBF7EC;padding:6px 8px;">
         <option value="all">All Sessions</option>
@@ -6586,6 +6637,8 @@ function renderReportPanel() {
             <th style="text-align:left;padding:8px 10px;">Type</th>
             <th style="text-align:left;padding:8px 10px;">Student</th>
             <th style="text-align:left;padding:8px 10px;">Class</th>
+            <th style="text-align:left;padding:8px 10px;">Section</th>
+            <th style="text-align:left;padding:8px 10px;">Fee Till</th>
             <th style="text-align:left;padding:8px 10px;">Session</th>
             <th style="text-align:right;padding:8px 10px;">Amount</th>
           </tr>
@@ -6598,10 +6651,12 @@ function renderReportPanel() {
               <td style="padding:7px 10px;">${inv.category === "transport" ? "Transport" : "Fee"}</td>
               <td style="padding:7px 10px;">${escapeHtml(inv.name || "—")}${inv.rollNo ? ` <span style="color:#6B5F4B;">(#${escapeHtml(inv.rollNo)})</span>` : ""}</td>
               <td style="padding:7px 10px;">${escapeHtml(inv.className || "—")}</td>
+              <td style="padding:7px 10px;">${escapeHtml(inv.section || "—")}</td>
+              <td style="padding:7px 10px;">${escapeHtml(inv.feeTill || "—")}</td>
               <td style="padding:7px 10px;">${escapeHtml(inv.session || "—")}${inv.isArchived ? ` <span style="background:#9B3437;color:#F3ECDA;font-size:9px;letter-spacing:0.3px;text-transform:uppercase;padding:1px 5px;border-radius:3px;">Last Session</span>` : ""}</td>
               <td style="padding:7px 10px;text-align:right;font-weight:600;">${fmtINR(inv.total)}</td>
             </tr>
-          `).join("") : `<tr><td colspan="7" style="padding:16px;text-align:center;color:#6B5F4B;">No invoice found for this period/filter.</td></tr>`}
+          `).join("") : `<tr><td colspan="9" style="padding:16px;text-align:center;color:#6B5F4B;">No invoice found for this period/filter.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -6621,6 +6676,8 @@ function renderReportPanel() {
   if (rangeToInput) rangeToInput.addEventListener("change", (e) => { state.reportRangeTo = e.target.value; renderReportPanel(); });
   const classSel = document.getElementById("repClassSel");
   if (classSel) classSel.addEventListener("change", (e) => { state.reportClassSel = e.target.value; renderReportPanel(); });
+  const sectionSel = document.getElementById("repSectionSel");
+  if (sectionSel) sectionSel.addEventListener("change", (e) => { state.reportSectionSel = e.target.value; renderReportPanel(); });
   const sessionSel = document.getElementById("repSessionSel");
   if (sessionSel) sessionSel.addEventListener("change", (e) => { state.reportSessionSel = e.target.value; renderReportPanel(); });
   const categorySel = document.getElementById("repCategorySel");
@@ -6809,6 +6866,29 @@ function renderNotificationsPanel() {
   `;
 }
 
+/* The master list of columns the PDF export can include. `key` matches an
+   entry field (except "serial") and is referenced by state.exportColumnOrder.
+   Order here is the order columns appear in the PDF when checked. */
+const EXPORT_COLUMN_DEFS = [
+  { key: "serial",     label: "Sr. No.",         width: 18, get: e => String(e.serial).padStart(3, "0") },
+  { key: "name",       label: "Name",            width: 55, get: e => e.name || "" },
+  { key: "fatherName", label: "Father's Name",   width: 55, get: e => e.fatherName || "" },
+  { key: "motherName", label: "Mother's Name",   width: 40, get: e => e.motherName || "" },
+  { key: "dob",        label: "DOB",             width: 40, get: e => e.dob || "" },
+  { key: "rollNo",     label: "Enroll No.",      width: 32, get: e => e.rollNo || "" },
+  { key: "mobile",     label: "Mobile",          width: 35, get: e => e.mobile || "" },
+  { key: "isWhatsapp", label: "WhatsApp",        width: 28, get: e => e.isWhatsapp ? "Yes" : "No" },
+  { key: "className",  label: "Class",           width: 35, get: e => e.className || "" },
+  { key: "section",    label: "Section",         width: 28, get: e => e.section || "" },
+  { key: "session",    label: "Session",         width: 40, get: e => e.session || "" },
+  { key: "fMonth",     label: "Fee Till",        width: 42, get: e => e.fMonth || "" },
+  { key: "tMonth",     label: "Transport Till",  width: 48, get: e => e.tMonth || "" },
+  { key: "address",    label: "Address",         width: 70, get: e => e.address || "" },
+  { key: "notes",      label: "Notes",           width: 60, get: e => e.notes || "" },
+  { key: "createdAt",  label: "Created On",      width: 45, get: e => e.createdAt ? new Date(e.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "" },
+  { key: "updatedAt",  label: "Last Updated",    width: 45, get: e => e.updatedAt ? new Date(e.updatedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "" },
+];
+
 function renderSelectionPanel() {
   const el = document.getElementById("selectionPanel");
   if (!state.selectMode) { el.innerHTML = ""; el.className = ""; return; }
@@ -6816,6 +6896,7 @@ function renderSelectionPanel() {
   const filteredIds = filtered.map(e => e.id);
   const allSelected = filteredIds.length > 0 && filteredIds.every(id => state.selectedIds.has(id));
   const count = state.selectedIds.size;
+  const colCount = state.exportColumnOrder.length;
   el.className = "panel";
   el.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
@@ -6824,11 +6905,37 @@ function renderSelectionPanel() {
         Select all shown (${filteredIds.length})
       </label>
       <span class="stamp" style="font-size:12.5px;color:#6B5F4B;">${count} selected</span>
-      <div style="display:flex;gap:8px;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button id="toggleExportColumnsBtn" style="display:flex;align-items:center;gap:6px;background:transparent;color:#1F2A44;border:1px solid #B7A97E;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${icon("filetext", { size: 14 })} Columns (${colCount})</button>
         <button id="exportPdfBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#9B3437;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("filetext", { size: 14 })} Save as PDF</button>
         <button id="shareImageBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("image", { size: 14 })} Share as Image</button>
       </div>
     </div>
+    ${state.showExportColumns ? `
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid #D9CBA3;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+          <span class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;">Choose PDF Columns</span>
+          <div style="display:flex;gap:12px;">
+            <button id="exportColsAllBtn" style="background:none;border:none;color:#1F2A44;font-size:11.5px;text-decoration:underline;cursor:pointer;font-family:'IBM Plex Mono',monospace;padding:0;">All</button>
+            <button id="exportColsNoneBtn" style="background:none;border:none;color:#1F2A44;font-size:11.5px;text-decoration:underline;cursor:pointer;font-family:'IBM Plex Mono',monospace;padding:0;">None</button>
+          </div>
+        </div>
+        <p style="font-size:11px;color:#6B5F4B;margin:0 0 10px;">Tick in the order you want columns to appear in the PDF, left to right. The number shows each column's position.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;">
+          ${EXPORT_COLUMN_DEFS.map(c => {
+            const pos = state.exportColumnOrder.indexOf(c.key);
+            const checked = pos !== -1;
+            return `
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#1F2A44;cursor:pointer;">
+              <input type="checkbox" class="exportColChk" data-key="${c.key}" ${checked ? "checked" : ""} style="width:15px;height:15px;flex-shrink:0;" />
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;flex-shrink:0;font-family:'IBM Plex Mono',monospace;font-size:10px;background:${checked ? "#9B3437" : "transparent"};color:${checked ? "#F3ECDA" : "#B7A97E"};border:${checked ? "none" : "1px dashed #B7A97E"};">${checked ? pos + 1 : ""}</span>
+              ${escapeHtml(c.label)}
+            </label>
+          `;
+          }).join("")}
+        </div>
+      </div>
+    ` : ""}
   `;
   document.getElementById("selectAllChk").addEventListener("change", (e) => {
     if (e.target.checked) filteredIds.forEach(id => state.selectedIds.add(id));
@@ -6840,6 +6947,27 @@ function renderSelectionPanel() {
   if (exportBtn) exportBtn.addEventListener("click", exportSelectedToPdf);
   const shareBtn = document.getElementById("shareImageBtn");
   if (shareBtn) shareBtn.addEventListener("click", shareSelectedAsImages);
+  const toggleColsBtn = document.getElementById("toggleExportColumnsBtn");
+  if (toggleColsBtn) toggleColsBtn.addEventListener("click", () => { state.showExportColumns = !state.showExportColumns; renderSelectionPanel(); });
+  const colsAllBtn = document.getElementById("exportColsAllBtn");
+  if (colsAllBtn) colsAllBtn.addEventListener("click", () => {
+    EXPORT_COLUMN_DEFS.forEach(c => { if (!state.exportColumnOrder.includes(c.key)) state.exportColumnOrder.push(c.key); });
+    renderSelectionPanel();
+  });
+  const colsNoneBtn = document.getElementById("exportColsNoneBtn");
+  if (colsNoneBtn) colsNoneBtn.addEventListener("click", () => { state.exportColumnOrder = []; renderSelectionPanel(); });
+  el.querySelectorAll(".exportColChk").forEach(chk => {
+    chk.addEventListener("change", (e) => {
+      const key = e.target.dataset.key;
+      if (e.target.checked) {
+        if (!state.exportColumnOrder.includes(key)) state.exportColumnOrder.push(key);
+      } else {
+        state.exportColumnOrder = state.exportColumnOrder.filter(k => k !== key);
+      }
+      renderSelectionPanel();
+      renderSelectionPanel();
+    });
+  });
 }
 
 function buildCardNode(entry) {
@@ -6935,6 +7063,12 @@ function exportSelectedToPdf() {
     .slice()
     .sort((a, b) => a.serial - b.serial);
   if (!selected.length) return;
+
+  const cols = state.exportColumnOrder
+    .map(key => EXPORT_COLUMN_DEFS.find(c => c.key === key))
+    .filter(Boolean);
+  if (!cols.length) { alert("Please tick at least one column to include in the PDF."); return; }
+
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
 
@@ -6945,22 +7079,10 @@ function exportSelectedToPdf() {
   doc.setFontSize(9);
   doc.text(`Generated ${new Date().toLocaleString()} · ${selected.length} ${selected.length === 1 ? "entry" : "entries"}`, 30, 50);
 
-  const head = [["Sr.", "Name", "Father's Name", "Mother's Name", "DOB", "Enroll No.", "Mobile", "Class", "Session", "Fee Till", "Transport Till", "Address", "Notes"]];
-  const body = selected.map(e => [
-    String(e.serial).padStart(3, "0"),
-    e.name || "",
-    e.fatherName || "",
-    e.motherName || "",
-    e.dob || "",
-    e.rollNo || "",
-    e.mobile || "",
-    e.className || "",
-    e.session || "",
-    e.fMonth || "",
-    e.tMonth || "",
-    e.address || "",
-    e.notes || "",
-  ]);
+  const head = [cols.map(c => c.label)];
+  const body = selected.map(e => cols.map(c => c.get(e)));
+  const columnStyles = {};
+  cols.forEach((c, i) => { columnStyles[i] = { cellWidth: c.width }; });
 
   doc.autoTable({
     head,
@@ -6970,19 +7092,7 @@ function exportSelectedToPdf() {
     headStyles: { fillColor: [155, 52, 55], textColor: 255, fontStyle: "bold", fontSize: 7 },
     bodyStyles: { fontStyle: "bold", textColor: [31, 42, 68] },
     alternateRowStyles: { fillColor: [251, 247, 236] },
-    columnStyles: {
-      0: { cellWidth: 18 },
-      1: { cellWidth: 55 },
-      2: { cellWidth: 55 },
-      3: { cellWidth: 32 },
-      4: { cellWidth: 45 },
-      5: { cellWidth: 22 },
-      6: { cellWidth: 32 },
-      7: { cellWidth: 40 },
-      8: { cellWidth: 45 },
-      9: { cellWidth: 90 },
-      10: { cellWidth: 60 },
-    },
+    columnStyles,
     margin: { left: 30, right: 30 },
   });
 
@@ -7417,7 +7527,7 @@ function wireUpEntryRowEvents(el) {
         if (status === "paid") {
           sheet.paidAt[ri] = Date.now();
           sel.disabled = true; // don't touch again until the invoice number arrives from the cloud
-          const invoiceNo = await assignInvoiceNoForRow(sheet, ri);
+          const invoiceNo = await assignInvoiceNoForRow(sheet, ri, state.editForm.className);
           sheet.invoiceNo[ri] = invoiceNo;
           autoMarkPriorSameHeadRowsPaid(sheet, ri, invoiceNo);
         } else {
