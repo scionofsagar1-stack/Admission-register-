@@ -105,10 +105,17 @@
     <select id="sessionFilterSel" class="stamp"></select>
     <select id="fMonthFilterSel" class="stamp"></select>
     <select id="notPaidTillFilterSel" class="stamp"></select>
-    <select id="starFilterSel" class="stamp"></select>
     <button id="toggleFormBtn" class="btn" style="background:#9B3437;color:#F3ECDA;border:none;">
       <span id="icon-formToggle"></span><span id="formToggleLabel">New Entry</span>
     </button>
+    <button id="toggleMoreFiltersBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;">
+      <span id="icon-moreFilters"></span><span id="moreFiltersToggleLabel">More</span>
+    </button>
+    <div id="moreFiltersWrap" style="display:none;gap:10px;align-items:center;flex-wrap:wrap;">
+    <select id="starFilterSel" class="stamp"></select>
+    <select id="whatsappFilterSel" class="stamp"></select>
+    <select id="admTypeFilterSel" class="stamp"></select>
+    <select id="transportFilterSel" class="stamp"></select>
     <button id="toggleNotificationsBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;position:relative;">
       <span id="icon-bell"></span>Notifications<span id="notifBadge" style="display:none;background:#9B3437;color:#F3ECDA;border-radius:9px;font-size:10.5px;padding:1px 6px;margin-left:2px;"></span>
     </button>
@@ -166,14 +173,13 @@
         </button>
       </div>
     </div>
+    </div>
   </div>
 
   <div id="guestPanel"></div>
 
-  <div style="display:flex;gap:10px;padding:10px 8px 0;align-items:center;flex-wrap:wrap;">
-    <div style="flex:1;min-width:160px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #B7A97E;padding-bottom:4px;">
-      <input id="addressFilterInput" placeholder="Filter by address…" class="rule-input" style="border-bottom:none;padding:0;" />
-    </div>
+  <div id="moreFiltersWrap2" style="display:none;gap:10px;padding:10px 8px 0;align-items:center;flex-wrap:wrap;">
+    <select id="addressFilterSel" class="stamp"></select>
     <div style="flex:1;min-width:160px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #B7A97E;padding-bottom:4px;">
       <input id="notesFilterInput" placeholder="Filter by note…" class="rule-input" style="border-bottom:none;padding:0;" />
     </div>
@@ -207,6 +213,7 @@
 
 <input type="file" id="fileInput" accept="application/json" style="display:none;" />
 <div id="vivaranModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;"></div>
+<div id="bulkMessageModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -737,6 +744,38 @@ function setAppLanguage(lang) {
 /* ================= end i18n ================= */
 
 
+/* Builds a short, human-readable list of what changed between the entry as
+   it was before editing (original) and the form as it's about to be saved
+   (updated) — shown next to "Last updated" so it's not just a bare
+   timestamp. Kept deliberately coarse for the Fee Chart (a single "Fee
+   Chart" mention rather than a row-by-row diff) since granular payment
+   changes already have their own Paid Receipt / Invoice Report trail. */
+function computeUpdateSummary(original, updated) {
+  if (!original) return "";
+  const changes = [];
+  const FIELD_LABELS = [
+    ["name", "Name"], ["fatherName", "Father's Name"], ["motherName", "Mother's Name"],
+    ["dob", "DOB"], ["rollNo", "Roll No."], ["mobile", "Mobile Number"],
+    ["address", "Address"], ["className", "Class"], ["section", "Section"],
+    ["session", "Session"], ["fMonth", "Fee Till"], ["tMonth", "Transport Till"],
+    ["notes", "Notes"],
+  ];
+  FIELD_LABELS.forEach(([key, label]) => {
+    if ((original[key] || "").toString().trim() !== (updated[key] || "").toString().trim()) changes.push(label);
+  });
+  if (!!original.isWhatsapp !== !!updated.isWhatsapp) changes.push("WhatsApp Number");
+  if ((original.admType || "old") !== (updated.admType || "old")) changes.push("New/Old Status");
+  if (!!original.isTransport !== !!updated.isTransport) changes.push("Transport Status");
+  if ((original.photoUrl || "") !== (updated.photoUrl || "")) changes.push("Photo");
+  try {
+    if (JSON.stringify(original.feeChart || null) !== JSON.stringify(updated.feeChart || null)) changes.push("Fee Chart");
+  } catch (err) { /* ignore stringify errors, don't block save */ }
+  if ((original.feeChartArchive || []).length !== (updated.feeChartArchive || []).length) changes.push("Session Archived");
+  try {
+    if (JSON.stringify(original.starMarks || {}) !== JSON.stringify(updated.starMarks || {})) changes.push("Star Rating");
+  } catch (err) { /* ignore */ }
+  return changes.join(", ");
+}
 function toDbRow(e) {
   return {
     id: e.id, serial: e.serial, name: e.name, father_name: e.fatherName,
@@ -750,6 +789,9 @@ function toDbRow(e) {
     fee_chart_archive: e.feeChartArchive || [],
     paid_invoice_history: e.paidInvoiceHistory || [],
     star_marks: e.starMarks || {},
+    last_update_summary: e.lastUpdateSummary || "",
+    adm_type: e.admType || "old",
+    is_transport: !!e.isTransport,
   };
 }
 function fromDbRow(r) {
@@ -760,6 +802,9 @@ function fromDbRow(r) {
     className: r.class_name, section: r.section || "", session: r.session, tMonth: r.t_month || "", fMonth: r.f_month || "",
     notes: r.notes, photoUrl: r.photo_url || "",
     createdAt: r.created_at, updatedAt: r.updated_at, events: r.events || [],
+    lastUpdateSummary: r.last_update_summary || "",
+    admType: r.adm_type === "new" ? "new" : "old",
+    isTransport: !!r.is_transport,
     feeChart: normalizeFeeSheet(r.fee_chart),
     feeChartArchive: (r.fee_chart_archive || []).map(a => ({
       id: a.id || `arc_${Math.random().toString(36).slice(2, 9)}`,
@@ -980,7 +1025,7 @@ const PASSBOOK_ALWAYS_EDITABLE_FIELDS = ["name", "fatherName", "address", "mobil
 function isFeeChartPassbookMode(feeChart) {
   return !!normalizeFeeSheet(feeChart).passbookMode;
 }
-const EMPTY = { name: "", fatherName: "", motherName: "", dob: "", rollNo: "", mobile: "", isWhatsapp: false, address: "", className: "", section: "", session: "", tMonth: "", fMonth: "", notes: "", photoUrl: "", events: [], feeChart: null, feeChartArchive: [], paidInvoiceHistory: [], createdAt: "", updatedAt: "" };
+const EMPTY = { name: "", fatherName: "", motherName: "", dob: "", rollNo: "", mobile: "", isWhatsapp: false, address: "", className: "", section: "", session: "", tMonth: "", fMonth: "", notes: "", photoUrl: "", events: [], feeChart: null, feeChartArchive: [], paidInvoiceHistory: [], createdAt: "", updatedAt: "", lastUpdateSummary: "", admType: "old", isTransport: false };
 /* Advances the Session by one year on class promotion — "2025-26" -> "2026-27",
    "2025-2026" -> "2026-2027", just "2025" -> "2026". If the pattern isn't
    recognized, return the session unchanged (don't touch anything). */
@@ -2019,13 +2064,16 @@ function restoreInvoiceNoIfLast(invoiceNo) {
    into one invoice number (see assignInvoiceNoForRow) — NOT used to expire
    or hide the receipt anymore (that time-based hiding has been removed). */
 const PAID_RECEIPT_WINDOW_MS = 60 * 1000; // 1 minute
-async function assignInvoiceNoForRow(sheet, ri, className) {
+/* Looks inside ONE sheet for a row that was marked Paid within
+   PAID_RECEIPT_WINDOW_MS and belongs to the same category — returns its
+   invoice no. if found. skipSheet/skipRi let the caller exclude the row
+   that's currently being assigned (from the sheet it lives in). */
+function findRecentSameCategoryInvoiceNo(sheet, skipSheet, skipRi, category, now) {
+  if (!sheet || !sheet.rows) return null;
   const amountColIdx = getFeeChartAmountColIndex(sheet);
   const monthColIdx = getFeeChartMonthColIndex(sheet);
-  const category = feeChartRowCategory(sheet, ri, amountColIdx, monthColIdx);
-  const now = Date.now();
   for (let i = 0; i < sheet.rows.length; i++) {
-    if (i === ri) continue;
+    if (sheet === skipSheet && i === skipRi) continue;
     if ((sheet.statuses[i] || "") !== "paid") continue;
     const paidAt = (sheet.paidAt && sheet.paidAt[i]) || null;
     if (!paidAt || (now - paidAt) > PAID_RECEIPT_WINDOW_MS) continue;
@@ -2034,6 +2082,28 @@ async function assignInvoiceNoForRow(sheet, ri, className) {
     const existingInvoiceNo = sheet.invoiceNo && sheet.invoiceNo[i];
     if (existingInvoiceNo) return existingInvoiceNo;
   }
+  return null;
+}
+/* extraSheets (optional): other charts belonging to the SAME entry/draft —
+   e.g. when paying a row in the Current chart, pass the Archive chart(s) as
+   extraSheets (and vice versa) so that paying rows in both the current chart
+   AND an archived chart within the same short window (before Save) reuses
+   ONE invoice number instead of issuing a separate one for each chart. Only
+   matters until the entry is saved — after Save/reload, old paid rows fall
+   outside PAID_RECEIPT_WINDOW_MS anyway so this never causes stale reuse. */
+async function assignInvoiceNoForRow(sheet, ri, className, extraSheets) {
+  const amountColIdx = getFeeChartAmountColIndex(sheet);
+  const monthColIdx = getFeeChartMonthColIndex(sheet);
+  const category = feeChartRowCategory(sheet, ri, amountColIdx, monthColIdx);
+  const now = Date.now();
+  let found = findRecentSameCategoryInvoiceNo(sheet, sheet, ri, category, now);
+  if (!found && extraSheets && extraSheets.length) {
+    for (const s of extraSheets) {
+      found = findRecentSameCategoryInvoiceNo(s, null, -1, category, now);
+      if (found) break;
+    }
+  }
+  if (found) return found;
   return await getNextInvoiceNo(category, className);
 }
 /* When a row is set to "Paid", also auto-mark as "Paid" all earlier rows
@@ -2060,9 +2130,13 @@ function autoMarkPriorSameHeadRowsPaid(sheet, ri, invoiceNo) {
   }
 }
 /* When a row is set to "Close", also auto-mark as "Close" all later rows
-   (below it, after it) in the same head (category/head) — leave alone any
-   row that's already "Paid" (payment has been made, don't overwrite it with
-   close). */
+   (below it, after it) in the same head (category/head) — but STOP as soon
+   as a later row of that same head is already "Paid": that Paid row acts as
+   a wall, so nothing past it gets auto-closed (rows after it are left
+   exactly as they were — still Pending unless someone changes them by
+   hand). Earlier example: rows 1-6 are the same head, row 4 is Paid. Close
+   row 1 → rows 2 and 3 become Close, row 4 stays Paid, and the loop stops
+   there — rows 5 and 6 are left untouched. */
 function autoMarkFollowingSameMadRowsClose(sheet, ri) {
   const amountColIdx = getFeeChartAmountColIndex(sheet);
   const monthColIdx = getFeeChartMonthColIndex(sheet);
@@ -2071,9 +2145,9 @@ function autoMarkFollowingSameMadRowsClose(sheet, ri) {
   if (!sheet.statuses) sheet.statuses = [];
   for (let i = ri + 1; i < sheet.rows.length; i++) {
     if (!sheet.rows[i]) continue;
-    if (sheet.statuses[i] === "paid") continue; // already paid — mat chhedo
     const head = feeChartRowHead(sheet, i, amountColIdx, monthColIdx).toLowerCase().trim();
-    if (head !== targetHead) continue;
+    if (head !== targetHead) continue; // different head — doesn't affect this cascade, keep scanning past it
+    if (sheet.statuses[i] === "paid") break; // hit an already-Paid row of the same head — stop the cascade right here
     sheet.statuses[i] = "close";
   }
 }
@@ -2114,13 +2188,19 @@ function groupFeeChartBillItems(rawItems) {
   rawItems.forEach(it => {
     const headKey = (it.head || "").toLowerCase().trim();
     const canGroup = headKey.length > 0;
-    const key = canGroup ? `${headKey}||${it.amount}` : null;
+    // sheetTag keeps rows from a DIFFERENT chart (e.g. an archived previous
+    // session pulled in alongside the current chart's own rows — see
+    // computeFeeChartPaidReceipts' extraSheets) from silently merging into
+    // the same line just because head+amount happen to match. Each distinct
+    // source (primary sheet, or a specific archived session) gets its own
+    // groups.
+    const key = canGroup ? `${headKey}||${it.amount}||${it.sheetTag || ""}` : null;
     if (canGroup && keyIndex.has(key)) {
       const g = groups[keyIndex.get(key)];
       g.rows.push(it);
       if (it.month && !g.months.includes(it.month)) g.months.push(it.month);
     } else {
-      const g = { rows: [it], head: it.head, amount: it.amount, months: it.month ? [it.month] : [] };
+      const g = { rows: [it], head: it.head, amount: it.amount, months: it.month ? [it.month] : [], sessionLabel: it.sessionLabel || null };
       if (canGroup) keyIndex.set(key, groups.length);
       groups.push(g);
     }
@@ -2142,6 +2222,7 @@ function groupFeeChartBillItems(rawItems) {
     } else {
       label = translateJoinedCells(g.rows[0].detail);
     }
+    if (g.sessionLabel) label = `${label} (${g.sessionLabel})`;
     return {
       ri: g.rows[0].ri,
       detail: label,
@@ -2266,7 +2347,20 @@ function buildFeeChartBillText(entry, bill) {
    but both numbers come from the SAME global counter (see getNextInvoiceNo),
    so numbering is one shared sequence across every class/student, never
    restarted or duplicated per class. */
-function computeFeeChartPaidReceipts(sheet, archiveMeta) {
+/* extraSheets (optional): array of { sheet, sessionLabel } for other charts
+   belonging to the SAME entry — e.g. when building the Current chart's
+   receipt, pass the Archive chart(s) here (sessionLabel = that archive's
+   session, e.g. "2025-26") so that rows paid together across charts (same
+   invoice no. — see assignInvoiceNoForRow's extraSheets) show up combined in
+   ONE receipt instead of the archive-side rows silently going missing from
+   the receipt view. Rows from a different sheetTag NEVER merge into the same
+   line even if head+amount match (see groupFeeChartBillItems), and any
+   sessionLabel is appended to that line so it's clear which session it came
+   from. Only rows whose invoiceNo matches the primary sheet's latest invoice
+   for that category are pulled in; rowIndices (used by Cancel Receipt) still
+   only ever reference the PRIMARY sheet, so cross-sheet rows here are
+   display-only and don't affect cancel. */
+function computeFeeChartPaidReceipts(sheet, archiveMeta, extraSheets) {
   const amountColIdx = getFeeChartAmountColIndex(sheet);
   const monthColIdx = getFeeChartMonthColIndex(sheet);
   const buckets = { fee: [], transport: [] };
@@ -2301,13 +2395,53 @@ function computeFeeChartPaidReceipts(sheet, archiveMeta) {
     const detail = feeChartRowDetail(sheet, ri, amountColIdx);
     const head = feeChartRowHead(sheet, ri, amountColIdx, monthColIdx);
     const month = feeChartRowMonth(sheet, ri, monthColIdx);
-    buckets[category].push({ ri, detail, amount, status: "paid", head, month });
+    // orderWeight: archived-session rows are shown BEFORE current-chart rows
+    // in the combined receipt (see sort below) — if the primary sheet itself
+    // is an archived session, its own rows count as archived (0); otherwise
+    // they're the "current" rows (1).
+    const orderWeight = (archiveMeta && archiveMeta.isArchived) ? 0 : 1;
+    buckets[category].push({ ri, detail, amount, status: "paid", head, month, source: "primary", sheetTag: "__primary__", sessionLabel: null, orderWeight });
   });
+  // Pass 3: pull in matching-invoiceNo rows from any extraSheets (other
+  // charts of the same entry) so combined-batch payments show as one
+  // receipt. These are display-only (source: "extra") and never added to
+  // rowIndices. Each extra sheet gets its own sheetTag (its sessionLabel, or
+  // a fallback tag when it has none, e.g. the current chart) so its rows
+  // group separately from the primary sheet's and from each other.
+  if (extraSheets && extraSheets.length) {
+    extraSheets.forEach((extra, exIdx) => {
+      const extraSheet = extra && extra.sheet;
+      if (!extraSheet || !extraSheet.rows) return;
+      const sessionLabel = (extra && extra.sessionLabel) || null;
+      const sheetTag = sessionLabel || `__extra_${exIdx}__`;
+      const exAmountColIdx = getFeeChartAmountColIndex(extraSheet);
+      const exMonthColIdx = getFeeChartMonthColIndex(extraSheet);
+      extraSheet.rows.forEach((row, ri) => {
+        if ((extraSheet.statuses[ri] || "") !== "paid") return;
+        const category = feeChartRowCategory(extraSheet, ri, exAmountColIdx, exMonthColIdx);
+        if (!latestInvoiceNo[category]) return;
+        const invoiceNo = (extraSheet.invoiceNo && extraSheet.invoiceNo[ri]) || null;
+        if (invoiceNo !== latestInvoiceNo[category]) return;
+        const amount = feeChartRowAmount(extraSheet, ri, exAmountColIdx);
+        const detail = feeChartRowDetail(extraSheet, ri, exAmountColIdx);
+        const head = feeChartRowHead(extraSheet, ri, exAmountColIdx, exMonthColIdx);
+        const month = feeChartRowMonth(extraSheet, ri, exMonthColIdx);
+        // Archived extra sheets (sessionLabel set) sort before the current
+        // chart's rows (sessionLabel null → weight 1, same as primary current).
+        const orderWeight = sessionLabel ? 0 : 1;
+        buckets[category].push({ ri, detail, amount, status: "paid", head, month, source: "extra", sheetTag, sessionLabel, orderWeight });
+      });
+    });
+  }
   const makeReceipt = (category, label) => {
-    const items = groupFeeChartBillItems(buckets[category]);
+    // Sort (stably) so archived-session rows always print before the
+    // current chart's rows, as requested — orderWeight 0 (archived) comes
+    // before 1 (current); relative order within each group is untouched.
+    const orderedBucket = buckets[category].slice().sort((a, b) => a.orderWeight - b.orderWeight);
+    const items = groupFeeChartBillItems(orderedBucket);
     if (!items.length) return null;
     const total = items.reduce((s, it) => s + it.total, 0);
-    const rowIndices = buckets[category].map(it => it.ri);
+    const rowIndices = buckets[category].filter(it => it.source === "primary").map(it => it.ri);
     return {
       items, total, invoiceNo: latestInvoiceNo[category] || "—", category,
       label: (archiveMeta && archiveMeta.isArchived) ? `Last Session ${label}` : label,
@@ -2458,6 +2592,7 @@ function extractPaidInvoicesFromSheet(sheet, entry, sessionOverride, classNameOv
       total,
       entryId: entry.id,
       name: entry.name || "",
+      fatherName: entry.fatherName || "",
       rollNo: entry.rollNo || "",
       className: classNameOverride || entry.className || "",
       section: entry.section || "",
@@ -2480,15 +2615,19 @@ function extractPaidInvoicesFromSheet(sheet, entry, sessionOverride, classNameOv
    permanent snapshot of invoices taken before an archived chart was
    deleted, so that an invoice never disappears
    na hate. */
+function computeEntryPaidInvoices(entry) {
+  const invoices = [];
+  invoices.push(...extractPaidInvoicesFromSheet(normalizeFeeSheet(entry.feeChart), entry, null, null, false));
+  (entry.feeChartArchive || []).forEach(a => {
+    invoices.push(...extractPaidInvoicesFromSheet(normalizeFeeSheet(a.chart), entry, a.session, a.className, true));
+  });
+  (entry.paidInvoiceHistory || []).forEach(inv => invoices.push(inv));
+  return invoices;
+}
 function computeAllPaidInvoices() {
   const invoices = [];
-  (state.entries || []).forEach(entry => {
-    invoices.push(...extractPaidInvoicesFromSheet(normalizeFeeSheet(entry.feeChart), entry, null, null, false));
-    (entry.feeChartArchive || []).forEach(a => {
-      invoices.push(...extractPaidInvoicesFromSheet(normalizeFeeSheet(a.chart), entry, a.session, a.className, true));
-    });
-    (entry.paidInvoiceHistory || []).forEach(inv => invoices.push(inv));
-  });
+  (state.entries || []).forEach(entry => invoices.push(...computeEntryPaidInvoices(entry)));
+  (state.deletedInvoiceHistory || []).forEach(inv => invoices.push(inv));
   invoices.sort((a, b) => (b.paidAt || 0) - (a.paidAt || 0));
   return invoices;
 }
@@ -2834,6 +2973,142 @@ async function cancelArchiveFeeChartPaidReceipt(entryId, archiveId, category) {
   state.saving = false;
   renderAll();
 }
+/* Whether an archived (previous-session) chart is still "Active" — i.e.
+   editable directly from the student card so old dues can be marked Paid
+   there (generating a proper invoice), rather than only from Edit. Older
+   archive records saved before this flag existed have no `active` key at
+   all, so they're treated as Active by default (undefined !== false). */
+function isArchiveActive(a) {
+  return a.active !== false;
+}
+/* Marks ONE ROW of an ARCHIVED (previous-session) chart Paid/Pending/Close
+   directly from the student card (no need to open Edit) — mirrors what the
+   Edit page's archive editor already does (assign invoice no., roll up
+   same-head rows, etc.) but writes straight to Supabase. Only allowed while
+   the archived chart is still marked Active (see isArchiveActive) and
+   editUnlocked is on, matching every other direct card-level write. */
+async function markArchiveFeeRowStatus(entryId, archiveId, ri, status) {
+  if (!state.editUnlocked) return;
+  const entry = state.entries.find(x => x.id === entryId);
+  if (!entry) return;
+  const archiveList = (entry.feeChartArchive || []).map(a => ({ ...a, chart: cloneFeeSheet(a.chart) }));
+  const idx = archiveList.findIndex(a => a.id === archiveId);
+  if (idx === -1 || !isArchiveActive(archiveList[idx])) return;
+  const archiveEntry = archiveList[idx];
+  const sheet = archiveEntry.chart;
+  if (!sheet.statuses) sheet.statuses = [];
+  if (!sheet.paidAt) sheet.paidAt = [];
+  if (!sheet.invoiceNo) sheet.invoiceNo = [];
+  sheet.statuses[ri] = status;
+  if (status === "paid") {
+    sheet.paidAt[ri] = Date.now();
+    const invoiceNo = await assignInvoiceNoForRow(sheet, ri, archiveEntry.className || entry.className);
+    sheet.invoiceNo[ri] = invoiceNo;
+    autoMarkPriorSameHeadRowsPaid(sheet, ri, invoiceNo);
+  } else {
+    sheet.paidAt[ri] = null;
+    sheet.invoiceNo[ri] = null;
+  }
+  if (status === "close") {
+    autoMarkFollowingSameMadRowsClose(sheet, ri);
+  } else if (status === "pending") {
+    autoMarkAllSameMadRowsPending(sheet, ri);
+  }
+  archiveEntry.chart = sheet;
+  state.saving = true; renderHeader();
+  const { error } = await supabaseClient.from("admission_entries").update({ fee_chart_archive: archiveList }).eq("id", entryId);
+  if (error) {
+    state.error = "Couldn't update the archived chart. Please try again.";
+  } else {
+    state.error = "";
+    await refreshEntries();
+    await createBackup();
+  }
+  state.saving = false;
+  renderAll();
+}
+/* Saves the "Closed" note text for one row of an archived chart, straight
+   from the card view (same idea as markArchiveFeeRowStatus above). */
+async function saveArchiveCloseNote(entryId, archiveId, ri, value) {
+  if (!state.editUnlocked) return;
+  const entry = state.entries.find(x => x.id === entryId);
+  if (!entry) return;
+  const archiveList = (entry.feeChartArchive || []).map(a => ({ ...a, chart: cloneFeeSheet(a.chart) }));
+  const idx = archiveList.findIndex(a => a.id === archiveId);
+  if (idx === -1 || !isArchiveActive(archiveList[idx])) return;
+  const sheet = archiveList[idx].chart;
+  if (!sheet.closeNote) sheet.closeNote = [];
+  sheet.closeNote[ri] = value;
+  archiveList[idx].chart = sheet;
+  state.saving = true; renderHeader();
+  const { error } = await supabaseClient.from("admission_entries").update({ fee_chart_archive: archiveList }).eq("id", entryId);
+  if (error) {
+    state.error = "Couldn't save the note. Please try again.";
+  } else {
+    state.error = "";
+    await refreshEntries();
+    await createBackup();
+  }
+  state.saving = false;
+  renderAll();
+}
+/* Saves ONE CELL's value (e.g. Amount, Month, Head) for a still-PENDING row
+   of an archived chart, straight from the card view. Only pending rows are
+   ever editable this way — once a row is Paid or Closed its values are
+   locked (it's already tied to an issued invoice). */
+async function saveArchiveCellValue(entryId, archiveId, ri, ci, value) {
+  if (!state.editUnlocked) return;
+  const entry = state.entries.find(x => x.id === entryId);
+  if (!entry) return;
+  const archiveList = (entry.feeChartArchive || []).map(a => ({ ...a, chart: cloneFeeSheet(a.chart) }));
+  const idx = archiveList.findIndex(a => a.id === archiveId);
+  if (idx === -1 || !isArchiveActive(archiveList[idx])) return;
+  const sheet = archiveList[idx].chart;
+  const status = (sheet.statuses || [])[ri];
+  if (status === "paid" || status === "close") return; // settled rows stay locked
+  if (!sheet.rows[ri]) return;
+  sheet.rows[ri][ci] = value;
+  archiveList[idx].chart = sheet;
+  state.saving = true; renderHeader();
+  const { error } = await supabaseClient.from("admission_entries").update({ fee_chart_archive: archiveList }).eq("id", entryId);
+  if (error) {
+    state.error = "Couldn't save the change. Please try again.";
+  } else {
+    state.error = "";
+    await refreshEntries();
+    await createBackup();
+  }
+  state.saving = false;
+  renderAll();
+}
+/* Flips an archived chart between Active (editable — dues can still be
+   marked Paid there, from the card) and Inactive (locked back to view-only,
+   for once all its dues are cleared/closed and there's nothing left to
+   collect on it). Either state can always be reversed. */
+async function toggleArchiveActiveStatus(entryId, archiveId) {
+  if (!state.editUnlocked) return;
+  const entry = state.entries.find(x => x.id === entryId);
+  if (!entry) return;
+  const archiveList = (entry.feeChartArchive || []).map(a => ({ ...a, chart: cloneFeeSheet(a.chart) }));
+  const idx = archiveList.findIndex(a => a.id === archiveId);
+  if (idx === -1) return;
+  const nowActive = !isArchiveActive(archiveList[idx]);
+  if (!nowActive) {
+    if (!confirm("Mark this old session's chart Inactive? It will go back to view-only until reactivated.")) return;
+  }
+  archiveList[idx].active = nowActive;
+  state.saving = true; renderHeader();
+  const { error } = await supabaseClient.from("admission_entries").update({ fee_chart_archive: archiveList }).eq("id", entryId);
+  if (error) {
+    state.error = "Couldn't update the archived chart. Please try again.";
+  } else {
+    state.error = "";
+    await refreshEntries();
+    await createBackup();
+  }
+  state.saving = false;
+  renderAll();
+}
 /* Compact inline form to set Institute Name + Authority Signature, remembered
    on this device (localStorage) and stamped onto every Paid Receipt. */
 function renderReceiptSettingsForm() {
@@ -3005,8 +3280,8 @@ function renderPaidReceiptBlock(e, receipt) {
    moment a row's status is switched to Paid from the Edit screen. Renders
    Fee and Transport as separate blocks (each with its own invoice number)
    whenever both were paid within the window. */
-function renderFeeChartPaidReceipt(e, sheet, archiveMeta) {
-  const receipts = computeFeeChartPaidReceipts(sheet, archiveMeta);
+function renderFeeChartPaidReceipt(e, sheet, archiveMeta, extraSheets) {
+  const receipts = computeFeeChartPaidReceipts(sheet, archiveMeta, extraSheets);
   const settingsOpen = state.receiptSettingsOpenId === e.id;
   const rs = state.receiptSettings;
   const header = `
@@ -3907,6 +4182,114 @@ function renderVivaranModal() {
   }
 }
 
+/* ---------- Bulk Message Queue (WhatsApp/SMS to many selected students) ----------
+   wa.me / sms: links can only ever open ONE chat per click/tap — there's no
+   way to fire off WhatsApp messages to many numbers in a single action
+   (that's a WhatsApp/OS limitation, not something this app can work around).
+   So instead this walks the user through the selected students one at a
+   time: the message is already typed out and the link pre-built — they just
+   tap WhatsApp or SMS to open it and hit Send in that app — and it
+   auto-advances to the next student right after. */
+function openBulkMessageQueue() {
+  const selected = state.entries.filter(e => state.selectedIds.has(e.id));
+  const list = [];
+  const skipped = [];
+  selected.forEach(e => {
+    const sheet = normalizeFeeSheet(e.feeChart);
+    if (!sheet.rows.length) { skipped.push({ entry: e, reason: "No fee chart" }); return; }
+    const allPending = getFeeChartPendingRowIndices(sheet);
+    if (!allPending.length) { skipped.push({ entry: e, reason: "All rows are Paid/Close" }); return; }
+    const pending = getFeeChartBillSelectableRowIndices(sheet);
+    if (!pending.length) { skipped.push({ entry: e, reason: "Nothing due right now" }); return; }
+    if (isMessageLocked(e.id)) { skipped.push({ entry: e, reason: "Message locked" }); return; }
+    const mobile = (e.mobile || "").trim();
+    if (!mobile) { skipped.push({ entry: e, reason: "No mobile number on file" }); return; }
+    const draft = getFeeChartBillDraft(e.id, sheet);
+    if (draft.fromIdx === -1) { skipped.push({ entry: e, reason: "Nothing due right now" }); return; }
+    const bill = computeFeeChartBill(sheet, draft.fromIdx, draft.toIdx);
+    const msgTpl = state.messageTemplate || "";
+    const text = msgTpl.trim() ? fillMsgTemplate(msgTpl, e, bill) : buildFeeChartBillText(e, bill);
+    list.push({ entry: e, bill, text, mobile });
+  });
+  state.bulkMessageQueue = { list, idx: 0, skipped, sentCount: 0 };
+  renderBulkMessageModal();
+}
+function closeBulkMessageQueue() {
+  state.bulkMessageQueue = null;
+  renderBulkMessageModal();
+}
+function advanceBulkMessageQueue(sent) {
+  const q = state.bulkMessageQueue;
+  if (!q) return;
+  if (sent) q.sentCount++;
+  q.idx++;
+  renderBulkMessageModal();
+}
+function renderBulkMessageModal() {
+  const el = document.getElementById("bulkMessageModalOverlay");
+  const q = state.bulkMessageQueue;
+  if (!q) { el.style.display = "none"; el.innerHTML = ""; return; }
+  el.style.display = "flex";
+  const total = q.list.length;
+  const done = q.idx >= total;
+  const cardWrap = (inner) => `
+    <div style="width:100%;max-width:480px;max-height:90vh;overflow-y:auto;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:6px;border-top:3px solid #9B3437;padding:20px;box-sizing:border-box;">
+      ${inner}
+    </div>`;
+  if (!total && !q.skipped.length) {
+    el.innerHTML = cardWrap(`
+      <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;margin-bottom:10px;">Send Messages</div>
+      <p style="font-size:13px;color:#6B5F4B;margin:0 0 14px;">No students selected.</p>
+      <div style="display:flex;justify-content:flex-end;"><button id="bulkMsgCloseBtn" style="background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Close</button></div>
+    `);
+    document.getElementById("bulkMsgCloseBtn").addEventListener("click", closeBulkMessageQueue);
+    el.addEventListener("click", (ev) => { if (ev.target === el) closeBulkMessageQueue(); }, { once: true });
+    return;
+  }
+  if (done) {
+    el.innerHTML = cardWrap(`
+      <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;margin-bottom:10px;">Send Messages — Done</div>
+      <p style="font-size:13px;color:#1F2A44;margin:0 0 6px;">✅ Sent to <b>${q.sentCount}</b> of ${total} eligible student(s).</p>
+      ${q.skipped.length ? `
+        <p style="font-size:12px;color:#9B3437;margin:12px 0 6px;text-transform:uppercase;letter-spacing:0.5px;">Skipped (${q.skipped.length})</p>
+        <div style="max-height:180px;overflow-y:auto;border:1px solid #D9CBA3;border-radius:4px;">
+          ${q.skipped.map(s => `<div style="padding:6px 10px;font-size:12.5px;border-bottom:1px solid #EDE3C8;display:flex;justify-content:space-between;gap:8px;"><span>${escapeHtml(s.entry.name || "—")}</span><span style="color:#6B5F4B;">${escapeHtml(s.reason)}</span></div>`).join("")}
+        </div>` : ""}
+      <div style="display:flex;justify-content:flex-end;margin-top:16px;"><button id="bulkMsgCloseBtn" style="background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Close</button></div>
+    `);
+    document.getElementById("bulkMsgCloseBtn").addEventListener("click", closeBulkMessageQueue);
+    return;
+  }
+  const item = q.list[q.idx];
+  const e = item.entry;
+  el.innerHTML = cardWrap(`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+      <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;">Send Messages</div>
+      <span class="stamp" style="font-size:12px;color:#6B5F4B;">${q.idx + 1} of ${total}</span>
+    </div>
+    <p style="font-size:13.5px;color:#1F2A44;margin:4px 0 2px;font-weight:600;">${escapeHtml(e.name || "—")} <span style="color:#6B5F4B;font-weight:400;">— Class ${escapeHtml(e.className || "—")}, Mobile ${escapeHtml(item.mobile)}</span></p>
+    <div style="padding:8px;background:#fff;border:1px solid #D9CBA3;border-radius:4px;margin:10px 0;">
+      <div style="font-size:12px;color:#1F2A44;white-space:pre-wrap;">${escapeHtml(item.text)}</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <a href="${buildWhatsAppLink(item.mobile, item.text)}" target="_blank" rel="noopener" id="bulkMsgWaBtn" style="display:flex;align-items:center;gap:6px;background:#25D366;color:#fff;border-radius:3px;padding:8px 14px;font-size:13px;font-family:'IBM Plex Mono',monospace;text-decoration:none;">WhatsApp</a>
+      <a href="${buildSmsLink(item.mobile, item.text)}" id="bulkMsgSmsBtn" style="display:flex;align-items:center;gap:6px;background:#1F2A44;color:#F3ECDA;border-radius:3px;padding:8px 14px;font-size:13px;font-family:'IBM Plex Mono',monospace;text-decoration:none;">SMS</a>
+      <button id="bulkMsgSkipBtn" style="background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;border-radius:3px;padding:8px 14px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Skip this student</button>
+      <button id="bulkMsgCloseBtn" style="margin-left:auto;background:transparent;color:#9B3437;border:none;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Stop</button>
+    </div>
+  `);
+  document.getElementById("bulkMsgWaBtn").addEventListener("click", () => {
+    logMessageSend(e, "whatsapp");
+    advanceBulkMessageQueue(true);
+  });
+  document.getElementById("bulkMsgSmsBtn").addEventListener("click", () => {
+    logMessageSend(e, "sms");
+    advanceBulkMessageQueue(true);
+  });
+  document.getElementById("bulkMsgSkipBtn").addEventListener("click", () => advanceBulkMessageQueue(false));
+  document.getElementById("bulkMsgCloseBtn").addEventListener("click", closeBulkMessageQueue);
+}
+
 /* ---------- Access control ----------
    Real Supabase Auth now decides who can do what — there is no shared
    password anywhere in this file any more. Every person gets their own
@@ -3948,15 +4331,24 @@ const state = {
   entries: [], loading: true, form: { ...EMPTY }, showForm: false,
   editingId: null, editForm: { ...EMPTY }, editOriginal: null, query: "", classFilter: "all", sectionFilter: "all",
   editOpenDemographic: false, editOpenChart: false,
-  sessionFilter: "all", fMonthFilter: "all", notPaidTillFilter: "all", starFilter: "all", addressFilter: "", notesFilter: "", updatedFrom: "", updatedTo: "", saving: false, error: "", showBackups: false,
+  sessionFilter: "all", fMonthFilter: "all", notPaidTillFilter: "all", starFilter: "all", whatsappFilter: "all", admTypeFilter: "all", transportFilter: "all", addressFilter: "all", notesFilter: "", updatedFrom: "", updatedTo: "", saving: false, error: "", showBackups: false,
   backups: [], restoring: false, selectMode: false, selectedIds: new Set(),
+  /* Bulk WhatsApp/SMS send queue — built from the current selection (see
+     openBulkMessageQueue). null when the modal is closed. Shape:
+     { list: [{entry, sheet, text, mobile}], idx, sent: [], skipped: [{entry, reason}] } */
+  bulkMessageQueue: null,
+  /* Permanent copies of paid invoices, snapshotted right before a student is
+     deleted (see removeEntry()), so the Invoice Report keeps showing them
+     forever even though the student record itself is gone. Loaded once at
+     startup from the `deleted_invoice_history` table (see loadDeletedInvoiceHistory). */
+  deletedInvoiceHistory: [],
   showExportColumns: false,
   /* Order matters here: this array is both the "which columns are on"
      list AND the left-to-right order they'll appear in the PDF. Ticking a
      new column appends it to the end; unticking removes it from wherever
      it sits. Re-ticking the same column later puts it at the end again. */
   exportColumnOrder: ["serial", "name", "fatherName", "motherName", "dob", "rollNo", "mobile", "className", "session", "fMonth", "tMonth", "address", "notes"],
-  showNotifications: false, eventFormOpenId: null, eventDraft: { title: "", date: "", repeatYearly: false },
+  showNotifications: false, eventFormOpenId: null, eventDraft: { title: "", date: "", repeatYearly: false }, showMoreFilters: false,
   showChatPanel: false, chatView: "list" /* 'list' | 'thread' */, chatThreads: [], chatThreadsLoading: false,
   chatOpenThreadType: null, chatOpenThreadKey: null, chatOpenThreadLabel: "", chatOpenThreadStudentInfo: null, chatMessages: [], chatMessagesLoading: false,
   chatDraftText: "", chatDraftImageFile: null, chatDraftImagePreview: "", chatSending: false, chatError: "", chatUnreadCount: 0,
@@ -4017,6 +4409,11 @@ const state = {
   reportClassSel: "all",
   reportSectionSel: "all",
   reportCategorySel: "all",
+  showReportColumns: false,
+  /* Which columns appear in the Invoice Report table/PDF/CSV, and in what
+     order (tick order = left-to-right order, same idea as the admission
+     register export columns above). */
+  reportColumnOrder: ["srNo", "date", "invoiceNo", "type", "name", "fatherName", "rollNo", "className", "section", "feeTill", "session", "amount"],
   showMessageReportPanel: false,
   messageReportLoading: false,
   messageReportRows: [],
@@ -4325,9 +4722,33 @@ async function loadEntries() {
   loadIdCardSettingsFromStorage();
   loadReceiptSettingsFromStorage();
   loadMessageLocksFromStorage();
+  await loadDeletedInvoiceHistory();
   state.loading = false;
   await loadBackupManifest();
   renderAll();
+}
+/* Loads the permanent snapshots of paid invoices belonging to students who
+   have since been deleted (see removeEntry()). If the table hasn't been
+   created yet in Supabase, this fails quietly and the app carries on as
+   before — deleted-student invoices just won't show in the Report until the
+   table exists. Run this once in the Supabase SQL editor to create it:
+
+   create table if not exists deleted_invoice_history (
+     id bigint generated always as identity primary key,
+     invoice jsonb not null,
+     created_at timestamptz not null default now()
+   );
+   alter table deleted_invoice_history enable row level security;
+   create policy "Authenticated read" on deleted_invoice_history
+     for select using (auth.role() = 'authenticated');
+   create policy "Authenticated insert" on deleted_invoice_history
+     for insert with check (auth.role() = 'authenticated');
+*/
+async function loadDeletedInvoiceHistory() {
+  const { data, error } = await supabaseClient
+    .from("deleted_invoice_history").select("invoice").order("id", { ascending: false });
+  if (error) { state.deletedInvoiceHistory = []; return; }
+  state.deletedInvoiceHistory = (data || []).map(r => r.invoice).filter(Boolean);
 }
 
 async function refreshEntries() {
@@ -4542,13 +4963,25 @@ async function handleAdd() {
       }
     }
     const { error } = await supabaseClient.from("admission_entries").insert(toDbRow(entry));
-    if (error) {
+    let finalError = error;
+    if (finalError && /(last_update_summary|adm_type|is_transport)/i.test(finalError.message || "")) {
+      // A newer column (last_update_summary and/or adm_type and/or
+      // is_transport) hasn't been added to the DB yet — retry without them
+      // so new entries can still be created.
+      const dbRow = toDbRow(entry);
+      delete dbRow.last_update_summary;
+      delete dbRow.adm_type;
+      delete dbRow.is_transport;
+      const retry = await supabaseClient.from("admission_entries").insert(dbRow);
+      finalError = retry.error;
+    }
+    if (finalError) {
       state.error = "Could not save. Try again.";
     } else {
       state.error = "";
       await refreshEntries();
       await createBackup();
-      state.form = { ...EMPTY, className: state.form.className, section: state.form.section, session: state.form.session };
+      state.form = { ...EMPTY, className: state.form.className, session: state.form.session };
       state.showForm = false;
     }
   } catch (err) {
@@ -4566,8 +4999,16 @@ function startEdit(entry) {
   state.editForm.feeChartArchive = (entry.feeChartArchive || []).map(a => ({ ...a, chart: cloneFeeSheet(a.chart) }));
   state.editForm.paidInvoiceHistory = (entry.paidInvoiceHistory || []).slice();
   state.editOriginal = { className: entry.className, session: entry.session, fMonth: entry.fMonth, tMonth: entry.tMonth };
+  // Full snapshot for the "what changed" summary shown next to Last Updated
+  // (see computeUpdateSummary in saveEdit). Safe to keep as a plain
+  // reference — editForm.feeChart/feeChartArchive are always replaced with
+  // NEW objects as edits happen (see normalizeFeeSheet/cloneFeeSheet call
+  // sites), never mutated in place, so `entry` itself is never touched
+  // until saveEdit() actually persists and refreshEntries() runs.
+  state.editOriginalSnapshot = entry;
   state.editForm._classPromoted = false;
   state.editForm._archivedThisPromotion = false;
+  state.editForm._chartFullEditUnlocked = false;
   state.editOpenDemographic = false;
   state.editOpenChart = false;
   renderEntries();
@@ -4586,6 +5027,7 @@ function archiveCurrentChartForPromotion() {
     session: state.editOriginal.session || state.editForm.session || "",
     className: state.editOriginal.className || state.editForm.className || "",
     archivedAt: Date.now(),
+    active: true,
     chart: cloneFeeSheet(current),
   });
   state.editForm._archivedThisPromotion = true;
@@ -4601,16 +5043,29 @@ function renderEditChartArchivePreview() {
   if (!archive.length) { wrap.innerHTML = ""; return; }
   wrap.innerHTML = archive.map((a, idx) => {
     const sheet = normalizeFeeSheet(a.chart);
+    const active = isArchiveActive(a);
+    const pendingRowIdx = active ? sheet.rows.map((r, ri) => ri).filter(ri => sheet.statuses[ri] !== "paid" && sheet.statuses[ri] !== "close") : [];
     return `
       <div class="archiveChartBox" data-archive-idx="${idx}" style="margin-top:12px;padding:10px;background:#FBF3D9;border:1px solid #D9CBA3;border-radius:4px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap;">
           <span class="stamp" style="font-size:10.5px;color:#9B3437;text-transform:uppercase;letter-spacing:0.5px;">📦 Last Session: ${escapeHtml(a.session || "—")} (Class ${escapeHtml(a.className || "—")})</span>
-          <button type="button" class="removeArchiveChartBtn" data-archive-idx="${idx}" style="flex-shrink:0;background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:3px 8px;font-size:10.5px;cursor:pointer;">Remove</button>
+          <div style="display:flex;gap:8px;flex-shrink:0;">
+            <button type="button" class="toggleArchiveActiveDraftBtn" data-archive-idx="${idx}" style="display:flex;align-items:center;gap:5px;background:${active ? "#1E7A3E" : "transparent"};color:${active ? "#F3ECDA" : "#6B5F4B"};border:1px solid ${active ? "#1E7A3E" : "#B7A97E"};border-radius:3px;padding:3px 10px;font-size:10.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${active ? "🟢 Active" : "⚪ Inactive"}</button>
+            <button type="button" class="removeArchiveChartBtn" data-archive-idx="${idx}" style="flex-shrink:0;background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:3px 8px;font-size:10.5px;cursor:pointer;">Remove</button>
+          </div>
         </div>
-        ${feeSheetTableHtml(sheet, { editable: false, structureEditable: false, statusToggle: true, statusEditable: true, cellClass: "", headerClass: "", statusClass: "editArchiveStatusBtn", reprintEntryId: state.editForm.id, reprintArchiveId: a.id })}
+        ${feeSheetTableHtml(sheet, { editable: false, structureEditable: false, statusToggle: true, statusEditable: active, cellClass: "editArchiveCellInput", headerClass: "", statusClass: "editArchiveStatusBtn", editableRows: pendingRowIdx, reprintEntryId: state.editForm.id, reprintArchiveId: a.id, totalRow: !sheet.passbookMode ? { colIdx: getFeeChartAmountColIndex(sheet), value: fmtINR(computeFeeChartTotal(sheet)) } : null })}
       </div>`;
   }).join("");
   bindReprintInvoiceButtons(wrap);
+  wrap.querySelectorAll(".toggleArchiveActiveDraftBtn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.dataset.archiveIdx, 10);
+      const archiveEntry = state.editForm.feeChartArchive[idx];
+      archiveEntry.active = !isArchiveActive(archiveEntry);
+      renderEditChartArchivePreview();
+    });
+  });
   wrap.querySelectorAll(".editArchiveStatusBtn").forEach(sel => {
     sel.addEventListener("change", async () => {
       const box = sel.closest(".archiveChartBox");
@@ -4626,7 +5081,11 @@ function renderEditChartArchivePreview() {
       if (status === "paid") {
         sheet.paidAt[ri] = Date.now();
         sel.disabled = true;
-        const invoiceNo = await assignInvoiceNoForRow(sheet, ri, archiveEntry.className || state.editForm.className);
+        const otherSheets = [normalizeFeeSheet(state.editForm.feeChart)]
+          .concat((state.editForm.feeChartArchive || [])
+            .filter((a, ai) => ai !== idx)
+            .map(a => normalizeFeeSheet(a.chart)));
+        const invoiceNo = await assignInvoiceNoForRow(sheet, ri, archiveEntry.className || state.editForm.className, otherSheets);
         sheet.invoiceNo[ri] = invoiceNo;
         autoMarkPriorSameHeadRowsPaid(sheet, ri, invoiceNo);
       } else {
@@ -4651,6 +5110,19 @@ function renderEditChartArchivePreview() {
       const sheet = normalizeFeeSheet(archiveEntry.chart);
       if (!sheet.closeNote) sheet.closeNote = [];
       sheet.closeNote[ri] = e.target.value;
+      archiveEntry.chart = sheet;
+    });
+  });
+  wrap.querySelectorAll(".editArchiveCellInput").forEach(inp => {
+    inp.addEventListener("input", (e) => {
+      const box = e.target.closest(".archiveChartBox");
+      const idx = parseInt(box.dataset.archiveIdx, 10);
+      const ri = parseInt(e.target.dataset.row, 10);
+      const ci = parseInt(e.target.dataset.col, 10);
+      const archiveEntry = state.editForm.feeChartArchive[idx];
+      const sheet = normalizeFeeSheet(archiveEntry.chart);
+      if (!sheet.rows[ri]) return;
+      sheet.rows[ri][ci] = e.target.value;
       archiveEntry.chart = sheet;
     });
   });
@@ -4680,6 +5152,7 @@ async function saveEdit() {
   try {
     renderHeader(); renderEntries();
     state.editForm.updatedAt = new Date().toISOString();
+    state.editForm.lastUpdateSummary = computeUpdateSummary(state.editOriginalSnapshot, state.editForm);
     const classChanged = (state.editForm.className || "").trim() !== (state.editOriginal.className || "").trim();
     const sessionChanged = (state.editForm.session || "").trim() !== (state.editOriginal.session || "").trim();
     if (classChanged || sessionChanged) {
@@ -4699,7 +5172,19 @@ async function saveEdit() {
       }
     }
     const { error } = await supabaseClient.from("admission_entries").update(toDbRow(state.editForm)).eq("id", editedId);
-    if (error) {
+    let finalError = error;
+    if (finalError && /(last_update_summary|adm_type|is_transport)/i.test(finalError.message || "")) {
+      // A newer column (last_update_summary and/or adm_type and/or
+      // is_transport) hasn't been added to the DB yet — retry without them
+      // so the rest of the edit still saves successfully.
+      const dbRow = toDbRow(state.editForm);
+      delete dbRow.last_update_summary;
+      delete dbRow.adm_type;
+      delete dbRow.is_transport;
+      const retry = await supabaseClient.from("admission_entries").update(dbRow).eq("id", editedId);
+      finalError = retry.error;
+    }
+    if (finalError) {
       state.error = "Could not save. Try again.";
     } else {
       if (!photoFile) state.error = "";
@@ -4725,7 +5210,24 @@ function cancelEdit() {
 }
 async function removeEntry(id) {
   if (!state.editUnlocked) return;
+  const entry = state.entries.find(x => x.id === id);
   state.saving = true; renderHeader();
+  // Snapshot this student's paid invoices permanently before deleting them,
+  // so the Invoice Report can still show they happened even after the
+  // student record itself is gone. If the snapshot table doesn't exist yet
+  // (see loadDeletedInvoiceHistory for the SQL) this just logs and moves on
+  // — it never blocks the delete itself.
+  if (entry) {
+    const invoices = computeEntryPaidInvoices(entry);
+    if (invoices.length) {
+      const rows = invoices.map(inv => ({
+        invoice: { ...inv, name: inv.name || entry.name || "", fatherName: inv.fatherName || entry.fatherName || "", deletedStudentAt: Date.now() },
+      }));
+      const { error: snapErr } = await supabaseClient.from("deleted_invoice_history").insert(rows);
+      if (snapErr) console.error("Could not snapshot invoices before delete:", snapErr);
+      else state.deletedInvoiceHistory = [...rows.map(r => r.invoice), ...state.deletedInvoiceHistory];
+    }
+  }
   const { error } = await supabaseClient.from("admission_entries").delete().eq("id", id);
   if (error) {
     state.error = "Could not delete. Try again.";
@@ -4851,9 +5353,12 @@ function getSectionList() {
   const set = new Set(state.entries.map(e => (e.section || "").trim()).filter(Boolean));
   return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
+function getAddressList() {
+  const set = new Set(state.entries.map(e => (e.address || "").trim()).filter(Boolean));
+  return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
 function getFiltered() {
   const q = state.query.trim().toLowerCase();
-  const addrQ = state.addressFilter.trim().toLowerCase();
   const noteQ = state.notesFilter.trim().toLowerCase();
   return state.entries.filter(e => {
     const matchesClass = state.classFilter === "all" || (e.className || "").trim() === state.classFilter;
@@ -4866,13 +5371,20 @@ function getFiltered() {
     const matchesNotPaidTill = state.notPaidTillFilter === "all" || entryMonthIdx === -1 || entryMonthIdx < notPaidFilterIdx;
     const matchesQuery = !q || [e.name, e.fatherName, e.motherName, e.rollNo, e.mobile, e.address, e.className, e.section, e.session, e.notes]
       .some(v => (v || "").toLowerCase().includes(q));
-    const matchesAddress = !addrQ || (e.address || "").toLowerCase().includes(addrQ);
+    const matchesAddress = state.addressFilter === "all" || (e.address || "").trim() === state.addressFilter;
     const matchesNotes = !noteQ || (e.notes || "").toLowerCase().includes(noteQ);
     const updatedDate = e.updatedAt ? e.updatedAt.slice(0, 10) : "";
     const matchesUpdatedFrom = !state.updatedFrom || (updatedDate && updatedDate >= state.updatedFrom);
     const matchesUpdatedTo = !state.updatedTo || (updatedDate && updatedDate <= state.updatedTo);
     const matchesStar = state.starFilter === "all" || !!(e.starMarks && e.starMarks[state.starFilter]);
-    return matchesClass && matchesSection && matchesSession && matchesFMonth && matchesNotPaidTill && matchesQuery && matchesAddress && matchesNotes && matchesUpdatedFrom && matchesUpdatedTo && matchesStar;
+    const matchesWhatsapp = state.whatsappFilter === "all"
+      || (state.whatsappFilter === "yes" && !!e.isWhatsapp && !!(e.mobile || "").trim())
+      || (state.whatsappFilter === "no" && (!e.isWhatsapp || !(e.mobile || "").trim()));
+    const matchesAdmType = state.admTypeFilter === "all" || (e.admType || "old") === state.admTypeFilter;
+    const matchesTransport = state.transportFilter === "all"
+      || (state.transportFilter === "yes" && !!e.isTransport)
+      || (state.transportFilter === "no" && !e.isTransport);
+    return matchesClass && matchesSection && matchesSession && matchesFMonth && matchesNotPaidTill && matchesQuery && matchesAddress && matchesNotes && matchesUpdatedFrom && matchesUpdatedTo && matchesStar && matchesWhatsapp && matchesAdmType && matchesTransport;
   });
 }
 
@@ -4885,6 +5397,13 @@ function renderHeader() {
       : `${state.entries.length} ${T(state.entries.length === 1 ? "entry" : "entries")} ${T("on record")}${state.saving ? " · " + T("saving…") : ""}`;
   document.getElementById("icon-bookopen").innerHTML = icon("bookopen", { size: 22, color: "#9B3437" });
   document.getElementById("icon-search").innerHTML = icon("search", { size: 16, color: "#6B5F4B" });
+  document.getElementById("icon-moreFilters").innerHTML = icon(state.showMoreFilters ? "x" : "grid", { size: 14 });
+  document.getElementById("moreFiltersToggleLabel").textContent = state.showMoreFilters ? T("Less") : T("More");
+  const toggleMoreFiltersBtn = document.getElementById("toggleMoreFiltersBtn");
+  toggleMoreFiltersBtn.style.background = state.showMoreFilters ? "#1F2A44" : "transparent";
+  toggleMoreFiltersBtn.style.color = state.showMoreFilters ? "#F3ECDA" : "#1F2A44";
+  document.getElementById("moreFiltersWrap").style.display = state.showMoreFilters ? "flex" : "none";
+  document.getElementById("moreFiltersWrap2").style.display = state.showMoreFilters ? "flex" : "none";
   document.getElementById("icon-history").innerHTML = icon("history", { size: 15 });
   document.getElementById("icon-bell").innerHTML = icon("bell", { size: 15 });
   const toggleNotifBtn = document.getElementById("toggleNotificationsBtn");
@@ -5010,6 +5529,20 @@ function renderFilters() {
   starSel.innerHTML = `<option value="all">All Stars</option>` +
     [1, 2, 3, 4].map(n => `<option value="${n}">${STAR_NAMES[n]} Star</option>`).join("");
   starSel.value = state.starFilter;
+  const whatsappSel = document.getElementById("whatsappFilterSel");
+  whatsappSel.innerHTML = `<option value="all">All (WhatsApp)</option><option value="yes">Has WhatsApp No.</option><option value="no">No WhatsApp No.</option>`;
+  whatsappSel.value = state.whatsappFilter;
+  const admTypeSel = document.getElementById("admTypeFilterSel");
+  admTypeSel.innerHTML = `<option value="all">All (New/Old)</option><option value="new">🆕 New</option><option value="old">Old</option>`;
+  admTypeSel.value = state.admTypeFilter;
+  const transportSel = document.getElementById("transportFilterSel");
+  transportSel.innerHTML = `<option value="all">All (Transport)</option><option value="yes">T · Transport</option><option value="no">N · Non-Transport</option>`;
+  transportSel.value = state.transportFilter;
+  const addressSel = document.getElementById("addressFilterSel");
+  const addressList = getAddressList();
+  addressSel.innerHTML = `<option value="all">All Addresses</option>` +
+    addressList.map(a => `<option value="${escapeAttr(a)}">${escapeHtml(a)}</option>`).join("");
+  addressSel.value = state.addressFilter;
 }
 
 function renderFormPanel() {
@@ -5017,9 +5550,17 @@ function renderFormPanel() {
   if (!state.showForm || !state.editUnlocked) { el.innerHTML = ""; el.className = ""; return; }
   el.className = "panel";
   el.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
       <span class="stamp" style="background:#1F2A44;color:#F3ECDA;font-size:12px;padding:4px 10px;border-radius:3px;">Enroll No. ${previewRoll()}</span>
       <span style="font-size:11.5px;color:#6B5F4B;">assigned automatically, class-wise</span>
+      <div style="display:flex;gap:0;margin-left:auto;border:1px solid #1F2A44;border-radius:3px;overflow:hidden;">
+        <button type="button" id="formAdmTypeNewBtn" style="background:${state.form.admType === "new" ? "#1E7A3E" : "transparent"};color:${state.form.admType === "new" ? "#F3ECDA" : "#1F2A44"};border:none;padding:6px 12px;font-size:11.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">🆕 New</button>
+        <button type="button" id="formAdmTypeOldBtn" style="background:${(state.form.admType || "old") === "old" ? "#6B5F4B" : "transparent"};color:${(state.form.admType || "old") === "old" ? "#F3ECDA" : "#1F2A44"};border:none;padding:6px 12px;font-size:11.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Old</button>
+      </div>
+      <div style="display:flex;gap:0;border:1px solid #1F2A44;border-radius:3px;overflow:hidden;">
+        <button type="button" id="formTransportYesBtn" title="Transport" style="background:${state.form.isTransport ? "#1F2A44" : "transparent"};color:${state.form.isTransport ? "#F3ECDA" : "#1F2A44"};border:none;padding:6px 12px;font-size:11.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">T</button>
+        <button type="button" id="formTransportNoBtn" title="Non-Transport" style="background:${!state.form.isTransport ? "#B7A97E" : "transparent"};color:${!state.form.isTransport ? "#F3ECDA" : "#1F2A44"};border:none;padding:6px 12px;font-size:11.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">N</button>
+      </div>
     </div>
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;">
       <div id="formPhotoPreviewWrap" style="width:64px;height:64px;flex-shrink:0;border-radius:50%;overflow:hidden;background:#EFE6C8;border:1px solid #D9CBA3;display:flex;align-items:center;justify-content:center;">
@@ -5126,6 +5667,14 @@ function renderFormPanel() {
       state.form.isWhatsapp = e.target.checked;
     });
   }
+  const formAdmTypeNewBtn = document.getElementById("formAdmTypeNewBtn");
+  if (formAdmTypeNewBtn) formAdmTypeNewBtn.addEventListener("click", () => { state.form.admType = "new"; renderFormPanel(); });
+  const formAdmTypeOldBtn = document.getElementById("formAdmTypeOldBtn");
+  if (formAdmTypeOldBtn) formAdmTypeOldBtn.addEventListener("click", () => { state.form.admType = "old"; renderFormPanel(); });
+  const formTransportYesBtn = document.getElementById("formTransportYesBtn");
+  if (formTransportYesBtn) formTransportYesBtn.addEventListener("click", () => { state.form.isTransport = true; renderFormPanel(); });
+  const formTransportNoBtn = document.getElementById("formTransportNoBtn");
+  if (formTransportNoBtn) formTransportNoBtn.addEventListener("click", () => { state.form.isTransport = false; renderFormPanel(); });
   const galInput = document.getElementById("formPhotoGalleryInput");
   document.getElementById("formPhotoGalleryBtn").addEventListener("click", () => galInput.click());
   async function handlePhotoPick(e) {
@@ -6478,6 +7027,23 @@ function renderIdCardPanel() {
 }
 
 /* ---------- Receipt / Invoice Report panel ---------- */
+const REPORT_COLUMN_DEFS = [
+  // "srNo" is a fresh running Sr. No. (1, 2, 3…) based on this report's own
+  // print/row order — unrelated to any student's register/admission serial
+  // number. Included by default (see state.reportColumnOrder below).
+  { key: "srNo",       label: "Sr. No.",      width: 18, halign: "left",  get: (inv, idx) => String(idx + 1) },
+  { key: "date",       label: "Date",         width: 30, halign: "left",  get: inv => new Date(inv.paidAt).toLocaleDateString("en-IN") },
+  { key: "invoiceNo",  label: "Invoice No.",  width: 32, halign: "left",  get: inv => inv.invoiceNo },
+  { key: "type",       label: "Type",         width: 22, halign: "left",  get: inv => inv.category === "transport" ? "Transport" : "Fee" },
+  { key: "name",       label: "Student",      width: 40, halign: "left",  get: inv => inv.name || "—" },
+  { key: "fatherName", label: "Father's Name",width: 40, halign: "left",  get: inv => inv.fatherName || "—" },
+  { key: "rollNo",     label: "Enroll No.",   width: 30, halign: "left",  get: inv => inv.rollNo || "—" },
+  { key: "className",  label: "Class",        width: 26, halign: "left",  get: inv => inv.className || "—" },
+  { key: "section",    label: "Section",      width: 24, halign: "left",  get: inv => inv.section || "—" },
+  { key: "feeTill",    label: "Fee Till",     width: 28, halign: "left",  get: inv => inv.feeTill || "—" },
+  { key: "session",    label: "Session",      width: 30, halign: "left",  get: inv => inv.session || "—" },
+  { key: "amount",     label: "Amount",       width: 30, halign: "right", get: inv => fmtINR(inv.total) },
+];
 function reportPeriodLabel() {
   const pt = state.reportPeriodType;
   if (pt === "daily") return `Date: ${state.reportDate || new Date().toISOString().slice(0, 10)}`;
@@ -6487,6 +7053,11 @@ function reportPeriodLabel() {
   return "All Time";
 }
 function downloadReportPdf(invoices) {
+  const cols = state.reportColumnOrder
+    .map(key => REPORT_COLUMN_DEFS.find(c => c.key === key))
+    .filter(Boolean);
+  if (!cols.length) { alert("Please tick at least one column to include in the PDF."); return; }
+
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
   doc.setFont("helvetica", "bold");
@@ -6496,28 +7067,21 @@ function downloadReportPdf(invoices) {
   doc.setFontSize(9.5);
   doc.text(`Period: ${reportPeriodLabel()}     Generated: ${new Date().toLocaleString("en-IN")}`, 30, 52);
 
-  const body = invoices.map(inv => [
-    new Date(inv.paidAt).toLocaleDateString("en-IN"),
-    inv.invoiceNo,
-    inv.category === "transport" ? "Transport" : "Fee",
-    inv.name || "—",
-    inv.rollNo || "—",
-    inv.className || "—",
-    inv.section || "—",
-    inv.feeTill || "—",
-    inv.session || "—",
-    fmtINR(inv.total),
-  ]);
-  if (!body.length) body.push(["—", "—", "—", "No invoices in this period", "—", "—", "—", "—", "—", fmtINR(0)]);
+  const body = invoices.map((inv, idx) => cols.map(c => c.get(inv, idx)));
+  if (!body.length) body.push(cols.map(c => c.key === "name" ? "No invoices in this period" : "—"));
+
+  const columnStyles = {};
+  const amountIdx = cols.findIndex(c => c.key === "amount");
+  if (amountIdx !== -1) columnStyles[amountIdx] = { halign: "right" };
 
   doc.autoTable({
-    head: [["Date", "Invoice No.", "Type", "Student", "Enroll No.", "Class", "Section", "Fee Till", "Session", "Amount"]],
+    head: [cols.map(c => c.label)],
     body,
     startY: 66,
     styles: { font: "helvetica", fontSize: 8.5, cellPadding: 5 },
     headStyles: { fillColor: [155, 52, 55], textColor: 255, fontStyle: "bold" },
     bodyStyles: { textColor: [31, 42, 68] },
-    columnStyles: { 9: { halign: "right" } },
+    columnStyles,
     margin: { left: 30, right: 30 },
   });
 
@@ -6532,22 +7096,13 @@ function downloadReportPdf(invoices) {
   doc.save(`invoice-report-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 function exportReportCsv(invoices) {
+  const cols = state.reportColumnOrder
+    .map(key => REPORT_COLUMN_DEFS.find(c => c.key === key))
+    .filter(Boolean);
+  if (!cols.length) { alert("Please tick at least one column to include in the CSV."); return; }
   const esc = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
-  const rows = [["Date", "Invoice No.", "Type", "Student", "Enroll No.", "Class", "Section", "Fee Till", "Session", "Amount"]];
-  invoices.forEach(inv => {
-    rows.push([
-      new Date(inv.paidAt).toLocaleDateString("en-IN"),
-      inv.invoiceNo,
-      inv.category === "transport" ? "Transport" : "Fee",
-      inv.name || "",
-      inv.rollNo || "",
-      inv.className || "",
-      inv.section || "",
-      inv.feeTill || "",
-      inv.session || "",
-      inv.total,
-    ]);
-  });
+  const rows = [cols.map(c => c.label)];
+  invoices.forEach((inv, idx) => rows.push(cols.map(c => c.key === "amount" ? inv.total : c.get(inv, idx))));
   const csv = rows.map(r => r.map(esc).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
@@ -6567,6 +7122,9 @@ function renderReportPanel() {
   const sectionList = getSectionList();
   const sessionList = getSessionList();
   const invoices = getFilteredReportInvoices();
+  const reportCols = state.reportColumnOrder
+    .map(key => REPORT_COLUMN_DEFS.find(c => c.key === key))
+    .filter(Boolean);
   const total = invoices.reduce((s, inv) => s + inv.total, 0);
   const feeTotal = invoices.filter(i => i.category !== "transport").reduce((s, inv) => s + inv.total, 0);
   const transportTotal = invoices.filter(i => i.category === "transport").reduce((s, inv) => s + inv.total, 0);
@@ -6624,39 +7182,49 @@ function renderReportPanel() {
         <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:18px;color:#FFFFFF;">${fmtINR(total)}</div>
       </div>
     </div>
-    <div style="display:flex;gap:8px;margin-bottom:14px;">
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
       <button type="button" id="repDownloadPdfBtn" class="btn" style="background:#9B3437;color:#F3ECDA;border:none;">${icon("download", { size: 14 })} Download PDF</button>
       <button type="button" id="repExportCsvBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;">${icon("filetext", { size: 14 })} Export CSV</button>
+      <button type="button" id="toggleReportColumnsBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;">${icon("filetext", { size: 14 })} Columns (${state.reportColumnOrder.length})</button>
     </div>
+    ${state.showReportColumns ? `
+      <div style="background:#F3ECDA;border:1px solid #D9CBA3;border-radius:4px;padding:12px 14px;margin-bottom:14px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+          <span class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;">Report Columns</span>
+          <div style="display:flex;gap:12px;">
+            <button id="repColsAllBtn" style="background:none;border:none;color:#1F2A44;font-size:11.5px;text-decoration:underline;cursor:pointer;font-family:'IBM Plex Mono',monospace;padding:0;">All</button>
+            <button id="repColsNoneBtn" style="background:none;border:none;color:#1F2A44;font-size:11.5px;text-decoration:underline;cursor:pointer;font-family:'IBM Plex Mono',monospace;padding:0;">None</button>
+          </div>
+        </div>
+        <p style="font-size:11px;color:#6B5F4B;margin:0 0 10px;">Untick to remove a column you don't need. Tick order sets the left-to-right order in the PDF/CSV.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;">
+          ${REPORT_COLUMN_DEFS.map(c => {
+            const pos = state.reportColumnOrder.indexOf(c.key);
+            const checked = pos !== -1;
+            return `
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#1F2A44;cursor:pointer;">
+              <input type="checkbox" class="repColChk" data-key="${c.key}" ${checked ? "checked" : ""} style="width:15px;height:15px;flex-shrink:0;" />
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;flex-shrink:0;font-family:'IBM Plex Mono',monospace;font-size:10px;background:${checked ? "#9B3437" : "transparent"};color:${checked ? "#F3ECDA" : "#B7A97E"};border:${checked ? "none" : "1px dashed #B7A97E"};">${checked ? pos + 1 : ""}</span>
+              ${escapeHtml(c.label)}
+            </label>
+          `;
+          }).join("")}
+        </div>
+      </div>
+    ` : ""}
     <div style="max-height:420px;overflow:auto;border:1px solid #D9CBA3;border-radius:4px;">
       <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
         <thead style="position:sticky;top:0;background:#1F2A44;color:#F3ECDA;">
           <tr>
-            <th style="text-align:left;padding:8px 10px;">Date</th>
-            <th style="text-align:left;padding:8px 10px;">Invoice No.</th>
-            <th style="text-align:left;padding:8px 10px;">Type</th>
-            <th style="text-align:left;padding:8px 10px;">Student</th>
-            <th style="text-align:left;padding:8px 10px;">Class</th>
-            <th style="text-align:left;padding:8px 10px;">Section</th>
-            <th style="text-align:left;padding:8px 10px;">Fee Till</th>
-            <th style="text-align:left;padding:8px 10px;">Session</th>
-            <th style="text-align:right;padding:8px 10px;">Amount</th>
+            ${reportCols.map(c => `<th style="text-align:${c.halign === "right" ? "right" : "left"};padding:8px 10px;">${escapeHtml(c.label)}</th>`).join("")}
           </tr>
         </thead>
         <tbody>
-          ${invoices.length ? invoices.map(inv => `
+          ${invoices.length ? invoices.map((inv, idx) => `
             <tr class="ledger-row">
-              <td style="padding:7px 10px;white-space:nowrap;">${new Date(inv.paidAt).toLocaleDateString("en-IN")}</td>
-              <td style="padding:7px 10px;white-space:nowrap;font-family:'IBM Plex Mono',monospace;">${escapeHtml(inv.invoiceNo)}</td>
-              <td style="padding:7px 10px;">${inv.category === "transport" ? "Transport" : "Fee"}</td>
-              <td style="padding:7px 10px;">${escapeHtml(inv.name || "—")}${inv.rollNo ? ` <span style="color:#6B5F4B;">(#${escapeHtml(inv.rollNo)})</span>` : ""}</td>
-              <td style="padding:7px 10px;">${escapeHtml(inv.className || "—")}</td>
-              <td style="padding:7px 10px;">${escapeHtml(inv.section || "—")}</td>
-              <td style="padding:7px 10px;">${escapeHtml(inv.feeTill || "—")}</td>
-              <td style="padding:7px 10px;">${escapeHtml(inv.session || "—")}${inv.isArchived ? ` <span style="background:#9B3437;color:#F3ECDA;font-size:9px;letter-spacing:0.3px;text-transform:uppercase;padding:1px 5px;border-radius:3px;">Last Session</span>` : ""}</td>
-              <td style="padding:7px 10px;text-align:right;font-weight:600;">${fmtINR(inv.total)}</td>
+              ${reportCols.map(c => `<td style="padding:7px 10px;text-align:${c.halign === "right" ? "right" : "left"};${c.key === "invoiceNo" ? "white-space:nowrap;font-family:'IBM Plex Mono',monospace;" : ""}${c.key === "date" ? "white-space:nowrap;" : ""}${c.key === "amount" ? "font-weight:600;" : ""}">${escapeHtml(String(c.get(inv, idx)))}${c.key === "session" && inv.isArchived ? ` <span style="background:#9B3437;color:#F3ECDA;font-size:9px;letter-spacing:0.3px;text-transform:uppercase;padding:1px 5px;border-radius:3px;">Last Session</span>` : ""}${c.key === "name" && inv.deletedStudentAt ? ` <span title="This student's record has since been deleted" style="background:#6B5F4B;color:#F3ECDA;font-size:9px;letter-spacing:0.3px;text-transform:uppercase;padding:1px 5px;border-radius:3px;">Deleted Student</span>` : ""}</td>`).join("")}
             </tr>
-          `).join("") : `<tr><td colspan="9" style="padding:16px;text-align:center;color:#6B5F4B;">No invoice found for this period/filter.</td></tr>`}
+          `).join("") : `<tr><td colspan="${reportCols.length || 1}" style="padding:16px;text-align:center;color:#6B5F4B;">No invoice found for this period/filter.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -6686,6 +7254,26 @@ function renderReportPanel() {
   if (pdfBtn) pdfBtn.addEventListener("click", () => downloadReportPdf(invoices));
   const csvBtn = document.getElementById("repExportCsvBtn");
   if (csvBtn) csvBtn.addEventListener("click", () => exportReportCsv(invoices));
+  const toggleColsBtn = document.getElementById("toggleReportColumnsBtn");
+  if (toggleColsBtn) toggleColsBtn.addEventListener("click", () => { state.showReportColumns = !state.showReportColumns; renderReportPanel(); });
+  const colsAllBtn = document.getElementById("repColsAllBtn");
+  if (colsAllBtn) colsAllBtn.addEventListener("click", () => {
+    REPORT_COLUMN_DEFS.forEach(c => { if (!state.reportColumnOrder.includes(c.key)) state.reportColumnOrder.push(c.key); });
+    renderReportPanel();
+  });
+  const colsNoneBtn = document.getElementById("repColsNoneBtn");
+  if (colsNoneBtn) colsNoneBtn.addEventListener("click", () => { state.reportColumnOrder = []; renderReportPanel(); });
+  el.querySelectorAll(".repColChk").forEach(chk => {
+    chk.addEventListener("change", (e) => {
+      const key = e.target.dataset.key;
+      if (e.target.checked) {
+        if (!state.reportColumnOrder.includes(key)) state.reportColumnOrder.push(key);
+      } else {
+        state.reportColumnOrder = state.reportColumnOrder.filter(k => k !== key);
+      }
+      renderReportPanel();
+    });
+  });
 }
 
 function exportMessageReportCsv(summary, detailRows) {
@@ -6870,7 +7458,12 @@ function renderNotificationsPanel() {
    entry field (except "serial") and is referenced by state.exportColumnOrder.
    Order here is the order columns appear in the PDF when checked. */
 const EXPORT_COLUMN_DEFS = [
-  { key: "serial",     label: "Sr. No.",         width: 18, get: e => String(e.serial).padStart(3, "0") },
+  // "serial" here is a fresh running Sr. No. (1, 2, 3…) based on the PRINT
+  // ORDER of this report — NOT the student's stored register/admission
+  // serial number (see nextSerial()/e.serial elsewhere in the app). Every
+  // print of this report starts back at 1, regardless of each student's
+  // actual register number.
+  { key: "serial",     label: "Sr. No.",         width: 18, get: (e, idx) => String(idx + 1).padStart(3, "0") },
   { key: "name",       label: "Name",            width: 55, get: e => e.name || "" },
   { key: "fatherName", label: "Father's Name",   width: 55, get: e => e.fatherName || "" },
   { key: "motherName", label: "Mother's Name",   width: 40, get: e => e.motherName || "" },
@@ -6909,6 +7502,7 @@ function renderSelectionPanel() {
         <button id="toggleExportColumnsBtn" style="display:flex;align-items:center;gap:6px;background:transparent;color:#1F2A44;border:1px solid #B7A97E;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${icon("filetext", { size: 14 })} Columns (${colCount})</button>
         <button id="exportPdfBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#9B3437;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("filetext", { size: 14 })} Save as PDF</button>
         <button id="shareImageBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("image", { size: 14 })} Share as Image</button>
+        <button id="bulkMsgBtn" ${count === 0 ? "disabled" : ""} title="Opens each selected student's WhatsApp/SMS one by one — you just tap Send in each" style="display:flex;align-items:center;gap:6px;background:#25D366;color:#fff;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("messageCircle", { size: 14 })} Send Messages</button>
       </div>
     </div>
     ${state.showExportColumns ? `
@@ -6947,6 +7541,8 @@ function renderSelectionPanel() {
   if (exportBtn) exportBtn.addEventListener("click", exportSelectedToPdf);
   const shareBtn = document.getElementById("shareImageBtn");
   if (shareBtn) shareBtn.addEventListener("click", shareSelectedAsImages);
+  const bulkMsgBtn = document.getElementById("bulkMsgBtn");
+  if (bulkMsgBtn) bulkMsgBtn.addEventListener("click", openBulkMessageQueue);
   const toggleColsBtn = document.getElementById("toggleExportColumnsBtn");
   if (toggleColsBtn) toggleColsBtn.addEventListener("click", () => { state.showExportColumns = !state.showExportColumns; renderSelectionPanel(); });
   const colsAllBtn = document.getElementById("exportColsAllBtn");
@@ -6993,7 +7589,7 @@ function buildCardNode(entry) {
       ${row("Address", entry.address)}
       ${row("Notes", entry.notes)}
     </div>
-    ${entry.updatedAt ? `<div style="font-size:11px;color:#A69B82;margin-top:12px;">Last updated: ${new Date(entry.updatedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>` : ""}
+    ${entry.updatedAt ? `<div style="font-size:11px;color:#A69B82;margin-top:12px;">Last updated: ${new Date(entry.updatedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}${entry.lastUpdateSummary ? ` — <span title="What changed in the last save">${escapeHtml(entry.lastUpdateSummary)}</span> updated` : ""}</div>` : ""}
     <div style="font-size:11px;color:#9B3437;margin-top:8px;font-style:italic;">This is provided only to show a provisional summary.</div>
   `;
   return wrap;
@@ -7080,7 +7676,7 @@ function exportSelectedToPdf() {
   doc.text(`Generated ${new Date().toLocaleString()} · ${selected.length} ${selected.length === 1 ? "entry" : "entries"}`, 30, 50);
 
   const head = [cols.map(c => c.label)];
-  const body = selected.map(e => cols.map(c => c.get(e)));
+  const body = selected.map((e, idx) => cols.map(c => c.get(e, idx)));
   const columnStyles = {};
   cols.forEach((c, i) => { columnStyles[i] = { cellWidth: c.width }; });
 
@@ -7165,13 +7761,19 @@ function renderBillReceiptButtonsInline(e) {
       </button>
     </div>
     ${billOpen && !billDisabled ? renderFeeChartBillCalculator(e, sheet) : ""}
-    ${receiptOpen ? renderFeeChartPaidReceipt(e, sheet) : ""}
+    ${receiptOpen ? renderFeeChartPaidReceipt(e, sheet, null, (e.feeChartArchive || []).map(a => ({ sheet: normalizeFeeSheet(a.chart), sessionLabel: a.session }))) : ""}
     ${messageOpen ? renderFeeChartMessageBox(e, sheet) : ""}`;
 }
-/* Read-only view of any PREVIOUS-SESSION fee charts kept when a student was
-   promoted with dues still pending (see archiveCurrentChartForPromotion()).
-   Values/status can only be changed from Edit; a "Paid Receipt" button here
-   shows a receipt clearly tagged "Last Session". */
+/* Previous-session fee charts kept when a student was promoted with dues
+   still pending (see archiveCurrentChartForPromotion()). Editable directly
+   from the card — marking a row Paid here creates a proper invoice (see
+   markArchiveFeeRowStatus) — as long as the chart is still "Active". Once
+   all its dues are cleared, toggle it to "Inactive" to lock it back to
+   view-only; this can always be reversed. Requires editUnlocked, same as
+   every other direct card-level write in the app. While Active, every cell
+   of a still-PENDING row (amount, month, head, etc.) is directly editable
+   too — Paid/Closed rows stay locked since they're already tied to an
+   issued invoice. */
 function renderArchivedChartsInline(e) {
   const archive = e.feeChartArchive || [];
   if (!archive.length) return "";
@@ -7181,16 +7783,26 @@ function renderArchivedChartsInline(e) {
     if (!hasRows) return "";
     const key = `${e.id}::${a.id}`;
     const receiptOpen = state.openArchiveReceiptKey === key;
+    const active = isArchiveActive(a);
+    const allSettled = sheet.statuses && sheet.statuses.length && sheet.statuses.every(s => s === "paid" || s === "close" || !s);
+    const canEdit = active && state.editUnlocked;
+    const pendingRowIdx = canEdit ? sheet.rows.map((r, ri) => ri).filter(ri => sheet.statuses[ri] !== "paid" && sheet.statuses[ri] !== "close") : [];
     return `
-      <div style="margin-top:14px;padding:10px;background:#FBF3D9;border:1px dashed #B7A97E;border-radius:4px;">
-        <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#9B3437;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">📦 Last Session Due — ${escapeHtml(a.session || "—")} (Class ${escapeHtml(a.className || "—")})</div>
-        ${feeSheetTableHtml(sheet, { editable: false, structureEditable: false, statusToggle: true, statusEditable: false, cellClass: "", headerClass: "", reprintEntryId: e.id, reprintArchiveId: a.id })}
+      <div class="archiveInlineBox" data-entry-id="${e.id}" data-archive-id="${escapeAttr(a.id)}" style="margin-top:14px;padding:10px;background:#FBF3D9;border:1px dashed #B7A97E;border-radius:4px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#9B3437;text-transform:uppercase;letter-spacing:0.5px;">📦 Last Session Due — ${escapeHtml(a.session || "—")} (Class ${escapeHtml(a.className || "—")})</div>
+          ${state.editUnlocked
+            ? `<button class="toggleArchiveActiveBtn" data-entry-id="${e.id}" data-archive-id="${escapeAttr(a.id)}" style="flex-shrink:0;display:flex;align-items:center;gap:5px;background:${active ? "#1E7A3E" : "transparent"};color:${active ? "#F3ECDA" : "#6B5F4B"};border:1px solid ${active ? "#1E7A3E" : "#B7A97E"};border-radius:3px;padding:4px 10px;font-size:10.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${active ? "🟢 Active" : "⚪ Inactive"}</button>`
+            : `<span style="flex-shrink:0;font-size:10.5px;font-family:'IBM Plex Mono',monospace;color:${active ? "#1E7A3E" : "#6B5F4B"};">${active ? "🟢 Active" : "⚪ Inactive"}</span>`}
+        </div>
+        ${active && allSettled ? `<p style="font-size:11px;color:#6B5F4B;margin:0 0 8px;">All dues here are cleared — mark it Inactive above once you're done with it.</p>` : ""}
+        ${feeSheetTableHtml(sheet, { editable: false, structureEditable: false, statusToggle: true, statusEditable: canEdit, cellClass: "archiveFeeRowCellInput", headerClass: "", statusClass: "archiveFeeRowStatusSelect", editableRows: pendingRowIdx, reprintEntryId: e.id, reprintArchiveId: a.id, totalRow: !sheet.passbookMode ? { colIdx: getFeeChartAmountColIndex(sheet), value: fmtINR(computeFeeChartTotal(sheet)) } : null })}
         ${state.isGuestMode ? "" : `<div style="margin-top:8px;">
           <button class="toggleArchiveReceiptBtn" data-entry-id="${e.id}" data-archive-id="${escapeAttr(a.id)}" style="display:flex;align-items:center;gap:5px;background:${receiptOpen ? "#1E7A3E" : "transparent"};color:${receiptOpen ? "#F3ECDA" : "#1E7A3E"};border:1px solid #1E7A3E;border-radius:3px;padding:6px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">
             ✅ ${receiptOpen ? "Hide Paid Receipt" : "Paid Receipt (Last Session)"}
           </button>
         </div>
-        ${receiptOpen ? renderFeeChartPaidReceipt(e, sheet, { isArchived: true, session: a.session, className: a.className, archiveId: a.id }) : ""}`}
+        ${receiptOpen ? renderFeeChartPaidReceipt(e, sheet, { isArchived: true, session: a.session, className: a.className, archiveId: a.id }, [{ sheet: normalizeFeeSheet(e.feeChart), sessionLabel: null }].concat(archive.filter(x => x.id !== a.id).map(x => ({ sheet: normalizeFeeSheet(x.chart), sessionLabel: x.session })))) : ""}`}
       </div>`;
   }).join("");
 }
@@ -7236,6 +7848,18 @@ function renderOneEntryRow(e) {
             <button type="button" class="toggleEditDemographicBtn" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;background:${state.editOpenDemographic ? "#1F2A44" : "transparent"};color:${state.editOpenDemographic ? "#F3ECDA" : "#1F2A44"};border:1px solid #1F2A44;border-radius:3px;padding:8px 12px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;margin-bottom:${state.editOpenDemographic ? "12px" : "0"};">
               <span>🧑 ${T("Demographic Details")}</span><span>${state.editOpenDemographic ? "▾" : "▸"}</span>
             </button>
+            <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
+              <span style="font-size:11px;color:#6B5F4B;">Admission Status:</span>
+              <div style="display:flex;gap:0;border:1px solid #1F2A44;border-radius:3px;overflow:hidden;">
+                <button type="button" class="editAdmTypeNewBtn" data-entry-id="${e.id}" style="background:${state.editForm.admType === "new" ? "#1E7A3E" : "transparent"};color:${state.editForm.admType === "new" ? "#F3ECDA" : "#1F2A44"};border:none;padding:5px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">🆕 New</button>
+                <button type="button" class="editAdmTypeOldBtn" data-entry-id="${e.id}" style="background:${(state.editForm.admType || "old") === "old" ? "#6B5F4B" : "transparent"};color:${(state.editForm.admType || "old") === "old" ? "#F3ECDA" : "#1F2A44"};border:none;padding:5px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Old</button>
+              </div>
+              <span style="font-size:11px;color:#6B5F4B;margin-left:10px;">Transport:</span>
+              <div style="display:flex;gap:0;border:1px solid #1F2A44;border-radius:3px;overflow:hidden;">
+                <button type="button" class="editTransportYesBtn" data-entry-id="${e.id}" title="Transport" style="background:${state.editForm.isTransport ? "#1F2A44" : "transparent"};color:${state.editForm.isTransport ? "#F3ECDA" : "#1F2A44"};border:none;padding:5px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">T</button>
+                <button type="button" class="editTransportNoBtn" data-entry-id="${e.id}" title="Non-Transport" style="background:${!state.editForm.isTransport ? "#B7A97E" : "transparent"};color:${!state.editForm.isTransport ? "#F3ECDA" : "#1F2A44"};border:none;padding:5px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">N</button>
+              </div>
+            </div>
             ${state.editOpenDemographic ? `
             <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
               <div id="editPhotoPreviewWrap-${e.id}" style="width:64px;height:64px;flex-shrink:0;border-radius:50%;overflow:hidden;background:#EFE6C8;border:1px solid #D9CBA3;display:flex;align-items:center;justify-content:center;">
@@ -7282,14 +7906,21 @@ function renderOneEntryRow(e) {
             ${state.editOpenChart ? `
             <div>
               <label class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;">${T("Chart Type")}</label>
-              <div style="display:flex;gap:6px;align-items:center;">
-                <select id="editChartTemplateSel" class="rule-input" style="width:100%;box-sizing:border-box;"></select>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <select id="editChartTemplateSel" class="rule-input" style="width:100%;box-sizing:border-box;flex-basis:100%;"></select>
                 <button type="button" id="refreshChartFromTplBtn" title="Bring the latest changes from the master template into this student's chart (Paid/Pending/Close status will be preserved)" style="flex-shrink:0;display:flex;align-items:center;gap:4px;background:transparent;color:#1F2A44;border:1px solid #B7A97E;border-radius:3px;padding:6px 10px;font-size:12px;cursor:pointer;white-space:nowrap;">${icon("rotateccw", { size: 13 })} ${T("Refresh")}</button>
                 <button type="button" id="shareEditChartBtn" title="Create an image of this student's fee chart and share it" style="flex-shrink:0;display:flex;align-items:center;gap:4px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:6px 10px;font-size:12px;cursor:pointer;white-space:nowrap;">${icon("share", { size: 13 })} ${T("Share Chart")}</button>
+                <button type="button" id="toggleChartFullEditBtn" title="${state.editForm._chartFullEditUnlocked ? "Lock the chart back to normal (only Paid/Pending/Close + the first two rows stay editable)" : "Unlock to edit the WHOLE chart — headers, all rows/amounts, add/remove rows & columns"}" style="flex-shrink:0;display:flex;align-items:center;gap:4px;background:${state.editForm._chartFullEditUnlocked ? "#9B3437" : "transparent"};color:${state.editForm._chartFullEditUnlocked ? "#F3ECDA" : "#9B3437"};border:1px solid #9B3437;border-radius:3px;padding:6px 10px;font-size:12px;cursor:pointer;white-space:nowrap;">${icon(state.editForm._chartFullEditUnlocked ? "unlock" : "lock", { size: 13 })} ${state.editForm._chartFullEditUnlocked ? T("Lock Chart") : T("Edit Chart")}</button>
                 ${!isFeeChartPassbookMode(state.editForm.feeChart) ? `<button type="button" id="archiveCurrentChartBtn" title="When promoting the session, keep the old chart (including dues) safely archived so a new chart can be started" style="flex-shrink:0;display:flex;align-items:center;gap:4px;background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:6px 10px;font-size:12px;cursor:pointer;white-space:nowrap;">📦 ${T("Archive")}</button>` : ""}
               </div>
               <p id="editChartTemplateHint" style="font-size:11px;color:#6B5F4B;margin:4px 0 0;"></p>
+              ${state.editForm._chartFullEditUnlocked ? `<p style="font-size:11px;color:#9B3437;margin:6px 0 0;">🔓 ${T("Full edit unlocked")} — ${T("headers, all rows and structure can be changed. Click \"Lock Chart\" when done.")}</p>` : ""}
               <div id="editChartPreviewWrap"></div>
+              ${state.editForm._chartFullEditUnlocked ? `
+              <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                <button type="button" id="addEditChartRowBtn" style="background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">+ ${T("Add Row")}</button>
+                <button type="button" id="addEditChartColBtn" style="background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">+ ${T("Add Column")}</button>
+              </div>` : ""}
               ${!isFeeChartPassbookMode(state.editForm.feeChart) ? `<div id="editChartArchiveWrap"></div>` : ""}
             </div>` : ""}
             <div style="display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap;">
@@ -7301,6 +7932,7 @@ function renderOneEntryRow(e) {
         </div>`;
     }
     const cardPassbookLock = isFeeChartPassbookMode(e.feeChart);
+    const cardHasTransport = !!e.isTransport;
     return `
       <div class="ledger-row" data-row-id="${e.id}" style="display:flex;padding:16px 18px;gap:14px;align-items:flex-start;">
         ${state.selectMode ? `
@@ -7314,7 +7946,11 @@ function renderOneEntryRow(e) {
         <div style="flex:1;min-width:0;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
             <div style="min-width:0;flex:1;">
-              <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;">${escapeHtml(TN(e.name)) || "—"}</div>
+              <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span>${escapeHtml(TN(e.name)) || "—"}</span>
+                <span class="stamp" style="background:${e.admType === "new" ? "#1E7A3E" : "#6B5F4B"};color:#F3ECDA;font-size:10px;font-weight:600;letter-spacing:0.4px;padding:2px 7px;border-radius:3px;">${e.admType === "new" ? "🆕 NEW" : "OLD"}</span>
+                <span class="stamp" title="${cardHasTransport ? "Transport" : "Non-Transport"}" style="background:${cardHasTransport ? "#1F2A44" : "#B7A97E"};color:#F3ECDA;font-size:10px;font-weight:700;letter-spacing:0.4px;padding:2px 7px;border-radius:3px;">${cardHasTransport ? "T" : "N"}</span>
+              </div>
               <div style="font-size:13px;margin-top:2px;"><span style="color:#1F2A44;font-weight:600;">${escapeHtml(TN(e.fatherName)) || "—"}</span></div>
               ${(!cardPassbookLock && e.motherName) ? `<div style="font-size:13px;margin-top:2px;"><span style="color:#6B5F4B;">${T("d/o m/o")}</span> <span style="color:#1F2A44;font-weight:600;">${escapeHtml(TN(e.motherName))}</span></div>` : ""}
               <div style="display:flex;gap:6px;margin-top:5px;">
@@ -7360,7 +7996,7 @@ function renderOneEntryRow(e) {
             ${state.openFeeChartId === e.id ? renderFeeChartBoxInline(e) : ""}
           </div>
           ${renderBillReceiptButtonsInline(e)}
-          ${e.updatedAt ? `<div style="font-size:11px;color:#A69B82;margin-top:8px;">Last updated: ${new Date(e.updatedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>` : ""}
+          ${e.updatedAt ? `<div style="font-size:11px;color:#A69B82;margin-top:8px;">Last updated: ${new Date(e.updatedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}${e.lastUpdateSummary ? ` — <span title="What changed in the last save">${escapeHtml(e.lastUpdateSummary)}</span> updated` : ""}</div>` : ""}
           <div style="font-size:11px;color:#9B3437;margin-top:8px;font-style:italic;">This is provided only to show a provisional summary.</div>
         </div>
       </div>`;
@@ -7442,6 +8078,18 @@ function wireUpEntryRowEvents(el) {
       state.editForm.isWhatsapp = e.target.checked;
     });
   });
+  el.querySelectorAll(".editAdmTypeNewBtn").forEach(btn => {
+    btn.addEventListener("click", () => { state.editForm.admType = "new"; renderEntries(); });
+  });
+  el.querySelectorAll(".editAdmTypeOldBtn").forEach(btn => {
+    btn.addEventListener("click", () => { state.editForm.admType = "old"; renderEntries(); });
+  });
+  el.querySelectorAll(".editTransportYesBtn").forEach(btn => {
+    btn.addEventListener("click", () => { state.editForm.isTransport = true; renderEntries(); });
+  });
+  el.querySelectorAll(".editTransportNoBtn").forEach(btn => {
+    btn.addEventListener("click", () => { state.editForm.isTransport = false; renderEntries(); });
+  });
   el.querySelectorAll("[data-edit-field]").forEach(inp => {
     inp.addEventListener("input", (e) => {
       state.editForm[e.target.dataset.editField] = e.target.value;
@@ -7495,11 +8143,43 @@ function wireUpEntryRowEvents(el) {
       state.editForm.feeChart = normalizeFeeSheet(state.editForm.feeChart);
       const sheetForPreview = state.editForm.feeChart;
       const isPassbookChart = isFeeChartPassbookMode(sheetForPreview);
-      preview.innerHTML = feeSheetTableHtml(sheetForPreview, { editable: false, structureEditable: false, statusToggle: true, statusEditable: true, cellClass: "editFeeChartCellInput", headerClass: "", statusClass: "editFeeChartStatusBtn", editableRows: [0, 1], reprintEntryId: state.editForm.id, totalRow: !isPassbookChart ? { colIdx: getFeeChartAmountColIndex(sheetForPreview), value: fmtINR(computeFeeChartTotal(sheetForPreview)) } : null });
+      const unlocked = !!state.editForm._chartFullEditUnlocked;
+      preview.innerHTML = unlocked
+        ? feeSheetTableHtml(sheetForPreview, { editable: true, structureEditable: true, statusToggle: true, statusEditable: true, cellClass: "editFeeChartCellInput", headerClass: "editFeeChartHeaderInput", removeRowClass: "editFeeChartRemoveRowBtn", removeColClass: "editFeeChartRemoveColBtn", statusClass: "editFeeChartStatusBtn", editableRows: sheetForPreview.rows.map((_, i) => i), reprintEntryId: state.editForm.id, totalRow: !isPassbookChart ? { colIdx: getFeeChartAmountColIndex(sheetForPreview), value: fmtINR(computeFeeChartTotal(sheetForPreview)) } : null })
+        : feeSheetTableHtml(sheetForPreview, { editable: false, structureEditable: false, statusToggle: true, statusEditable: true, cellClass: "editFeeChartCellInput", headerClass: "", statusClass: "editFeeChartStatusBtn", editableRows: [0, 1], reprintEntryId: state.editForm.id, totalRow: !isPassbookChart ? { colIdx: getFeeChartAmountColIndex(sheetForPreview), value: fmtINR(computeFeeChartTotal(sheetForPreview)) } : null });
     } else {
       preview.innerHTML = "";
     }
     bindReprintInvoiceButtons(preview);
+    preview.querySelectorAll(".editFeeChartHeaderInput").forEach(inp => {
+      inp.addEventListener("input", (e) => {
+        const ci = parseInt(e.target.dataset.col, 10);
+        state.editForm.feeChart.columns[ci] = e.target.value;
+        refreshPassbookBalanceCells(preview, state.editForm.feeChart);
+      });
+    });
+    preview.querySelectorAll(".editFeeChartRemoveRowBtn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const ri = parseInt(btn.dataset.row, 10);
+        const sheet = state.editForm.feeChart;
+        sheet.rows.splice(ri, 1);
+        if (sheet.statuses) sheet.statuses.splice(ri, 1);
+        if (sheet.paidAt) sheet.paidAt.splice(ri, 1);
+        if (sheet.invoiceNo) sheet.invoiceNo.splice(ri, 1);
+        if (sheet.closeNote) sheet.closeNote.splice(ri, 1);
+        refreshEditChartTypeSelect();
+      });
+    });
+    preview.querySelectorAll(".editFeeChartRemoveColBtn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const ci = parseInt(btn.dataset.col, 10);
+        const sheet = state.editForm.feeChart;
+        if (sheet.columns.length <= 1) return;
+        sheet.columns.splice(ci, 1);
+        sheet.rows.forEach(r => r.splice(ci, 1));
+        refreshEditChartTypeSelect();
+      });
+    });
     preview.querySelectorAll(".editFeeChartCellInput").forEach(inp => {
       inp.addEventListener("input", (e) => {
         const ri = parseInt(e.target.dataset.row, 10), ci = parseInt(e.target.dataset.col, 10);
@@ -7527,7 +8207,8 @@ function wireUpEntryRowEvents(el) {
         if (status === "paid") {
           sheet.paidAt[ri] = Date.now();
           sel.disabled = true; // don't touch again until the invoice number arrives from the cloud
-          const invoiceNo = await assignInvoiceNoForRow(sheet, ri, state.editForm.className);
+          const otherSheets = (state.editForm.feeChartArchive || []).map(a => normalizeFeeSheet(a.chart));
+          const invoiceNo = await assignInvoiceNoForRow(sheet, ri, state.editForm.className, otherSheets);
           sheet.invoiceNo[ri] = invoiceNo;
           autoMarkPriorSameHeadRowsPaid(sheet, ri, invoiceNo);
         } else {
@@ -7555,6 +8236,36 @@ function wireUpEntryRowEvents(el) {
       });
     });
     renderEditChartArchivePreview();
+  }
+  const toggleChartFullEditBtn = document.getElementById("toggleChartFullEditBtn");
+  if (toggleChartFullEditBtn) {
+    toggleChartFullEditBtn.addEventListener("click", () => {
+      state.editForm._chartFullEditUnlocked = !state.editForm._chartFullEditUnlocked;
+      renderEntries();
+    });
+  }
+  const addEditChartRowBtn = document.getElementById("addEditChartRowBtn");
+  if (addEditChartRowBtn) {
+    addEditChartRowBtn.addEventListener("click", () => {
+      const sheet = state.editForm.feeChart;
+      sheet.rows.push(new Array(sheet.columns.length).fill(""));
+      if (!sheet.statuses) sheet.statuses = [];
+      sheet.statuses.push("pending");
+      if (!sheet.paidAt) sheet.paidAt = [];
+      sheet.paidAt.push(null);
+      if (!sheet.invoiceNo) sheet.invoiceNo = [];
+      sheet.invoiceNo.push(null);
+      refreshEditChartTypeSelect();
+    });
+  }
+  const addEditChartColBtn = document.getElementById("addEditChartColBtn");
+  if (addEditChartColBtn) {
+    addEditChartColBtn.addEventListener("click", () => {
+      const sheet = state.editForm.feeChart;
+      sheet.columns.push(`Column ${sheet.columns.length + 1}`);
+      sheet.rows.forEach(r => r.push(""));
+      refreshEditChartTypeSelect();
+    });
   }
   const editChartSel = document.getElementById("editChartTemplateSel");
   if (editChartSel) {
@@ -7669,6 +8380,33 @@ function wireUpEntryRowEvents(el) {
       renderEntries();
     });
   });
+  el.querySelectorAll(".toggleArchiveActiveBtn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      toggleArchiveActiveStatus(btn.dataset.entryId, btn.dataset.archiveId);
+    });
+  });
+  el.querySelectorAll(".archiveInlineBox .archiveFeeRowStatusSelect").forEach(sel => {
+    sel.addEventListener("change", (e) => {
+      const box = e.target.closest(".archiveInlineBox");
+      const ri = parseInt(e.target.dataset.row, 10);
+      markArchiveFeeRowStatus(box.dataset.entryId, box.dataset.archiveId, ri, e.target.value);
+    });
+  });
+  el.querySelectorAll(".archiveInlineBox .feeChartCloseNoteInput").forEach(inp => {
+    inp.addEventListener("change", (e) => {
+      const box = e.target.closest(".archiveInlineBox");
+      const ri = parseInt(e.target.dataset.row, 10);
+      saveArchiveCloseNote(box.dataset.entryId, box.dataset.archiveId, ri, e.target.value);
+    });
+  });
+  el.querySelectorAll(".archiveInlineBox .archiveFeeRowCellInput").forEach(inp => {
+    inp.addEventListener("change", (e) => {
+      const box = e.target.closest(".archiveInlineBox");
+      const ri = parseInt(e.target.dataset.row, 10);
+      const ci = parseInt(e.target.dataset.col, 10);
+      saveArchiveCellValue(box.dataset.entryId, box.dataset.archiveId, ri, ci, e.target.value);
+    });
+  });
   el.querySelectorAll(".feeChartBillFromSel").forEach(sel => {
     sel.addEventListener("change", (e) => {
       const entry = state.entries.find(x => x.id === e.target.dataset.entryId);
@@ -7714,21 +8452,28 @@ function wireUpEntryRowEvents(el) {
     if (!entry) return null;
     const archiveId = btn.dataset.archiveId;
     if (archiveId) {
-      const archiveEntry = (entry.feeChartArchive || []).find(a => a.id === archiveId);
+      const archiveList = entry.feeChartArchive || [];
+      const archiveEntry = archiveList.find(a => a.id === archiveId);
       if (!archiveEntry) return null;
       return {
         entry,
         sheet: normalizeFeeSheet(archiveEntry.chart),
         archiveMeta: { isArchived: true, session: archiveEntry.session, className: archiveEntry.className, archiveId: archiveEntry.id },
+        extraSheets: [{ sheet: normalizeFeeSheet(entry.feeChart), sessionLabel: null }].concat(archiveList.filter(a => a.id !== archiveId).map(a => ({ sheet: normalizeFeeSheet(a.chart), sessionLabel: a.session }))),
       };
     }
-    return { entry, sheet: normalizeFeeSheet(entry.feeChart), archiveMeta: null };
+    return {
+      entry,
+      sheet: normalizeFeeSheet(entry.feeChart),
+      archiveMeta: null,
+      extraSheets: (entry.feeChartArchive || []).map(a => ({ sheet: normalizeFeeSheet(a.chart), sessionLabel: a.session })),
+    };
   }
   el.querySelectorAll(".downloadFeeChartPaidReceiptPdfBtn").forEach(btn => {
     btn.addEventListener("click", () => {
       const ctx = resolveReceiptSheetAndMeta(btn);
       if (!ctx) return;
-      const receipts = computeFeeChartPaidReceipts(ctx.sheet, ctx.archiveMeta);
+      const receipts = computeFeeChartPaidReceipts(ctx.sheet, ctx.archiveMeta, ctx.extraSheets);
       const receipt = receipts[btn.dataset.category];
       if (!receipt) return;
       downloadFeeChartPaidReceiptPdf(ctx.entry, receipt);
@@ -7739,7 +8484,7 @@ function wireUpEntryRowEvents(el) {
     btn.addEventListener("click", () => {
       const ctx = resolveReceiptSheetAndMeta(btn);
       if (!ctx) return;
-      const receipts = computeFeeChartPaidReceipts(ctx.sheet, ctx.archiveMeta);
+      const receipts = computeFeeChartPaidReceipts(ctx.sheet, ctx.archiveMeta, ctx.extraSheets);
       const receipt = receipts[btn.dataset.category];
       if (!receipt) return;
       shareFeeChartPaidReceiptAsImage(ctx.entry, receipt);
@@ -8276,7 +9021,19 @@ document.getElementById("starFilterSel").addEventListener("change", (e) => {
   state.starFilter = e.target.value;
   renderEntries();
 });
-document.getElementById("addressFilterInput").addEventListener("input", (e) => {
+document.getElementById("whatsappFilterSel").addEventListener("change", (e) => {
+  state.whatsappFilter = e.target.value;
+  renderEntries();
+});
+document.getElementById("admTypeFilterSel").addEventListener("change", (e) => {
+  state.admTypeFilter = e.target.value;
+  renderEntries();
+});
+document.getElementById("transportFilterSel").addEventListener("change", (e) => {
+  state.transportFilter = e.target.value;
+  renderEntries();
+});
+document.getElementById("addressFilterSel").addEventListener("change", (e) => {
   state.addressFilter = e.target.value;
   renderEntries();
 });
@@ -8426,6 +9183,10 @@ document.getElementById("toggleNotificationsBtn").addEventListener("click", () =
   closeOtherPanels(next ? "notifications" : null);
   state.showNotifications = next;
   renderAll();
+});
+document.getElementById("toggleMoreFiltersBtn").addEventListener("click", () => {
+  state.showMoreFilters = !state.showMoreFilters;
+  renderHeader();
 });
 document.getElementById("toggleChatBtn").addEventListener("click", toggleChatPanelOpen);
 document.getElementById("toggleSelectBtn").addEventListener("click", () => {
