@@ -3608,7 +3608,7 @@ function getPassbookEligibleEntries() {
 }
 function renderPassbookStatementPanel() {
   const el = document.getElementById("passbookStatementPanel");
-  if (!state.showPassbookStatementPanel) { el.innerHTML = ""; el.className = ""; return; }
+  if (!state.showPassbookStatementPanel || state.isGuestMode) { el.innerHTML = ""; el.className = ""; return; }
   el.className = "panel";
   const eligible = getPassbookEligibleEntries();
   if (state.passbookStatementEntryId && !eligible.some(e => e.id === state.passbookStatementEntryId)) {
@@ -4752,12 +4752,24 @@ async function loadDeletedInvoiceHistory() {
 }
 
 async function refreshEntries() {
-  // No client-side class/session filtering any more — Postgres Row Level
-  // Security on admission_entries already only returns rows a teacher's
-  // profile is allowed to see, enforced at the database, not just the UI.
+  // Postgres Row Level Security on admission_entries is *meant* to already
+  // only return rows a teacher's profile is allowed to see — but that can't
+  // be relied on alone (RLS may be missing/misconfigured). So a Class
+  // Teacher (guest) login with a specific class/section/session assigned is
+  // ALSO filtered here on the client, matching against their profile. A
+  // teacher created with "All Classes" access (guestClass/guestSection/
+  // guestSession all blank) still sees everyone, as intended.
   const { data, error } = await supabaseClient.from("admission_entries").select("*").order("serial", { ascending: true });
   if (error) { state.error = "Could not load entries. Check your connection."; return; }
-  state.entries = data.map(fromDbRow);
+  let entries = data.map(fromDbRow);
+  if (state.isGuestMode && (state.guestClass || state.guestSection || state.guestSession)) {
+    entries = entries.filter(e =>
+      (!state.guestClass || (e.className || "").trim() === state.guestClass.trim()) &&
+      (!state.guestSection || (e.section || "").trim() === state.guestSection.trim()) &&
+      (!state.guestSession || (e.session || "").trim() === state.guestSession.trim())
+    );
+  }
+  state.entries = entries;
 }
 
 /* ---------- Guest (class teacher) logins ---------- */
@@ -5460,6 +5472,7 @@ function renderHeader() {
   const togglePassbookStatementBtn = document.getElementById("togglePassbookStatementBtn");
   togglePassbookStatementBtn.style.background = state.showPassbookStatementPanel ? "#1F2A44" : "transparent";
   togglePassbookStatementBtn.style.color = state.showPassbookStatementPanel ? "#F3ECDA" : "#1F2A44";
+  togglePassbookStatementBtn.style.display = state.isGuestMode ? "none" : "";
   document.getElementById("icon-reportMenu").innerHTML = icon("report", { size: 15 });
   const toggleReportBtn = document.getElementById("toggleReportBtn");
   toggleReportBtn.style.background = state.showReportPanel ? "#1F2A44" : "transparent";
