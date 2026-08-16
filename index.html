@@ -4860,9 +4860,22 @@ async function loadAppSettings() {
    sees access lock/unlock within a few seconds without reloading. */
 async function setGuestEditUnlocked(next) {
   if (!state.editUnlocked || state.isGuestMode) return;
-  const { error } = await supabaseClient
-    .from("app_settings").upsert({ key: "guest_edit_unlocked", value: next });
+  // .select() so we can tell a real success apart from a silent RLS block:
+  // if the UPDATE policy's condition evaluates false (e.g. the admin can't
+  // read their own row in `profiles`, which the app_settings policy
+  // subquery depends on), Postgres/PostgREST update 0 rows and return
+  // success with no error — the row just never came back changed. Trusting
+  // `next` blindly in that case makes the switch flip ON locally and then
+  // silently revert to OFF the next time loadAppSettings() runs.
+  const { data, error } = await supabaseClient
+    .from("app_settings").upsert({ key: "guest_edit_unlocked", value: next }).select();
   if (error) { state.error = "Could not update Guest Edit — " + (error.message || "unknown error") + (error.code ? ` (code: ${error.code})` : ""); renderAll(); return; }
+  if (!data || !data.length || !!data[0].value !== next) {
+    state.error = "Guest Edit didn't actually update — this is usually a Supabase permissions (RLS) issue, not a bug in the app. Check that the admin's row in 'profiles' is readable by the 'Admins can update' policy on app_settings.";
+    await loadAppSettings();
+    renderAll();
+    return;
+  }
   state.guestEditUnlocked = next;
   renderAll();
 }
