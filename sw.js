@@ -1,4 +1,4 @@
-const CACHE_NAME = "admission-register-v1";
+const CACHE_NAME = "admission-register-v2"; // bumped: drops the old stale-index.html cache
 const APP_SHELL = [
   "./index.html",
   "./manifest.json",
@@ -23,7 +23,10 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// Network-first for Supabase API calls, cache-first for app shell files.
+// Network-first for Supabase API calls, network-first for the HTML shell
+// (so app updates take effect on the very next reload instead of being
+// served from a stale cached copy), cache-first for other static assets
+// (icons, manifest) since those rarely change.
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
@@ -34,6 +37,20 @@ self.addEventListener("fetch", (event) => {
           headers: { "Content-Type": "application/json" },
         })
       )
+    );
+    return;
+  }
+
+  const isHtmlShell = event.request.mode === "navigate" || url.pathname.endsWith("index.html");
+  if (isHtmlShell) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          return response;
+        })
+        .catch(() => caches.match(event.request))
     );
     return;
   }

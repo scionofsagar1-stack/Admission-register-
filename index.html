@@ -54,6 +54,15 @@
 </head>
 <body>
 
+<!-- Global error banner: state.error is set in many places throughout the
+     app but previously had nowhere to display, so failures (e.g. a blocked
+     database update) happened silently with no feedback. This makes them
+     visible with a dismiss button. -->
+<div id="globalErrorBanner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:2000;background:#9B3437;color:#F3ECDA;padding:10px 14px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;display:flex;align-items:center;gap:10px;box-shadow:0 2px 8px rgba(0,0,0,0.25);">
+  <span id="globalErrorBannerText" style="flex:1;line-height:1.4;"></span>
+  <button id="globalErrorBannerClose" style="background:transparent;border:1px solid #F3ECDA;color:#F3ECDA;border-radius:3px;padding:4px 10px;font-family:inherit;font-size:12px;cursor:pointer;flex-shrink:0;">Dismiss</button>
+</div>
+
 <!-- Login Screen -->
 <div id="loginScreen" style="position:fixed;inset:0;background:#F3ECDA;z-index:1000;display:flex;align-items:center;justify-content:center;font-family:'Source Serif 4',Georgia,serif;overflow-y:auto;padding:24px 0;box-sizing:border-box;">
   <div style="width:320px;max-width:90vw;padding:32px 28px;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:6px;border-top:3px solid #9B3437;margin:auto;">
@@ -128,7 +137,7 @@
       <button id="toggleSettingsMenuBtn" class="btn" title="Settings" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;padding:8px 12px;">
         <span id="icon-settingsMenu"></span>
       </button>
-      <div id="settingsMenuPanel" style="display:none;position:fixed;z-index:50;min-width:230px;max-height:min(70vh,520px);overflow-y:auto;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:4px;box-shadow:0 4px 14px rgba(31,42,68,0.18);padding:8px;">
+      <div id="settingsMenuPanel" style="display:none;position:fixed;z-index:50;width:min(270px,86vw);max-width:min(270px,86vw);max-height:min(70vh,520px);overflow-y:auto;overflow-x:hidden;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:4px;box-shadow:0 4px 14px rgba(31,42,68,0.18);padding:8px;box-sizing:border-box;">
         <button id="toggleBackupsBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-history"></span>Backups
         </button>
@@ -164,6 +173,13 @@
         </button>
         <button id="toggleGuestBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-users"></span>Staff Access
+        </button>
+        <button id="toggleGuestEditLockBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;display:flex;align-items:center;gap:8px;text-align:left;white-space:normal;">
+          <span id="icon-guestEditLock" style="flex-shrink:0;"></span>
+          <span id="guestEditLockToggleLabel" style="flex:1;">Guest Edit</span>
+          <span id="guestEditLockToggleSwitch" style="flex-shrink:0;display:inline-flex;align-items:center;gap:5px;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:0.5px;">
+            <span style="position:relative;display:inline-block;width:34px;height:18px;border-radius:9px;transition:background 0.15s;"></span>
+          </span>
         </button>
         <button id="toggleLangBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-language"></span><span id="langToggleLabel">Language: English</span>
@@ -776,6 +792,30 @@ function computeUpdateSummary(original, updated) {
   } catch (err) { /* ignore */ }
   return changes.join(", ");
 }
+/* Some optional columns (added to the schema after the table was first
+   created) may not exist yet on a given deployment's DB. If an insert/update
+   fails because ONE of these is missing, we used to strip ALL of them before
+   retrying — which silently threw away perfectly good columns (like
+   last_update_summary) that DID exist, just because a DIFFERENT column (like
+   adm_type) didn't. That meant "Last updated — X updated" could stop
+   appearing with no visible error, even though the DB had the column.
+   Fix: only ever strip the column actually named in the error message, and
+   keep retrying (one column at a time) until it either succeeds or fails for
+   an unrelated reason. */
+const OPTIONAL_SCHEMA_COLUMNS = ["last_update_summary", "last_update_by", "adm_type", "is_transport"];
+async function insertOrUpdateWithOptionalColumns(dbRowIn, tableCall) {
+  let dbRow = { ...dbRowIn };
+  for (let attempt = 0; attempt < OPTIONAL_SCHEMA_COLUMNS.length + 1; attempt++) {
+    const { error } = await tableCall(dbRow);
+    if (!error) return { error: null };
+    const msg = error.message || "";
+    const missingCol = OPTIONAL_SCHEMA_COLUMNS.find(c => c in dbRow && new RegExp(c, "i").test(msg));
+    if (!missingCol) return { error }; // real error, not a missing-optional-column case
+    console.warn(`Supabase column "${missingCol}" not found — retrying without it. Add this column to your DB so it can be saved.`, error);
+    delete dbRow[missingCol];
+  }
+  return { error: { message: "Repeated schema mismatch" } };
+}
 function toDbRow(e) {
   return {
     id: e.id, serial: e.serial, name: e.name, father_name: e.fatherName,
@@ -790,6 +830,7 @@ function toDbRow(e) {
     paid_invoice_history: e.paidInvoiceHistory || [],
     star_marks: e.starMarks || {},
     last_update_summary: e.lastUpdateSummary || "",
+    last_update_by: e.lastUpdateBy || "",
     adm_type: e.admType || "old",
     is_transport: !!e.isTransport,
   };
@@ -803,6 +844,7 @@ function fromDbRow(r) {
     notes: r.notes, photoUrl: r.photo_url || "",
     createdAt: r.created_at, updatedAt: r.updated_at, events: r.events || [],
     lastUpdateSummary: r.last_update_summary || "",
+    lastUpdateBy: r.last_update_by || "",
     admType: r.adm_type === "new" ? "new" : "old",
     isTransport: !!r.is_transport,
     feeChart: normalizeFeeSheet(r.fee_chart),
@@ -1022,6 +1064,11 @@ const ADD_FIELDS = FIELDS.filter(f => f.key !== "rollNo");
    gets disabled. Without a Passbook chart, everything stays normally
    editable as before. */
 const PASSBOOK_ALWAYS_EDITABLE_FIELDS = ["name", "fatherName", "address", "mobile"];
+/* Fields a Class Teacher (guest) login is allowed to change, when the admin
+   has switched "Guest Edit" on (see state.guestEditUnlocked / canGuestEdit()
+   below). Photo is handled separately outside the FIELDS loop, so it's not
+   listed here — see the editPhotoGalleryBtn / editPhotoRemoveBtn markup. */
+const GUEST_EDITABLE_FIELDS = ["motherName", "dob"];
 function isFeeChartPassbookMode(feeChart) {
   return !!normalizeFeeSheet(feeChart).passbookMode;
 }
@@ -4353,6 +4400,7 @@ const state = {
   chatOpenThreadType: null, chatOpenThreadKey: null, chatOpenThreadLabel: "", chatOpenThreadStudentInfo: null, chatMessages: [], chatMessagesLoading: false,
   chatDraftText: "", chatDraftImageFile: null, chatDraftImagePreview: "", chatSending: false, chatError: "", chatUnreadCount: 0,
   editUnlocked: false, isGuestMode: false, guestClass: "", guestSection: "", guestSession: "",
+  guestEditUnlocked: false,
   guestAccounts: [], showGuestPanel: false, guestForm: { email: "", className: "", section: "", session: "", password: "", accessType: "class" },
   guestPanelError: "", guestSaving: false, guestLastCreated: null,
   showSettingsMenu: false,
@@ -4473,6 +4521,12 @@ async function saveMsgTemplateToStorage() {
    this polls every few seconds while the panel is open, matching the rest
    of the app's refresh pattern. */
 function chatChannelIsAdmin() { return state.editUnlocked && !state.isGuestMode; }
+/* Whether the currently logged-in Class Teacher (guest) is allowed to edit
+   right now — true only while the admin has "Guest Edit" switched on from
+   the Settings menu (toggleGuestEditLockBtn / state.guestEditUnlocked,
+   loaded from the shared app_settings table, see loadAppSettings()). The
+   admin's own edit access (state.editUnlocked) is never affected by this. */
+function canGuestEdit() { return state.isGuestMode && !!state.guestEditUnlocked; }
 async function loadChatThreadsForAdmin() {
   state.chatThreadsLoading = true;
   renderChatPanel();
@@ -4723,6 +4777,7 @@ async function loadEntries() {
   loadReceiptSettingsFromStorage();
   loadMessageLocksFromStorage();
   await loadDeletedInvoiceHistory();
+  await loadAppSettings();
   state.loading = false;
   await loadBackupManifest();
   renderAll();
@@ -4749,6 +4804,67 @@ async function loadDeletedInvoiceHistory() {
     .from("deleted_invoice_history").select("invoice").order("id", { ascending: false });
   if (error) { state.deletedInvoiceHistory = []; return; }
   state.deletedInvoiceHistory = (data || []).map(r => r.invoice).filter(Boolean);
+}
+
+/* Loads the single shared app-wide setting that controls whether Class
+   Teacher (guest) logins are currently allowed to edit (Mother's Name /
+   DOB / Photo only — see canGuestEdit(), GUEST_EDITABLE_FIELDS, and the
+   FIELDS.map() lock logic in the edit-form renderer). The admin flips this
+   from the Settings menu ("Guest Edit: Locked/Unlocked"); it applies to
+   every guest login at once. If the table hasn't been created yet in
+   Supabase, this fails quietly and guest edit simply stays locked. Run
+   this once in the Supabase SQL editor to create it:
+
+   create table if not exists app_settings (
+     key text primary key,
+     value boolean not null default false
+   );
+   insert into app_settings (key, value) values ('guest_edit_unlocked', false)
+     on conflict (key) do nothing;
+   alter table app_settings enable row level security;
+   create policy "Authenticated read" on app_settings
+     for select using (auth.role() = 'authenticated');
+   -- Only admins should be able to change it. If you don't already have an
+   -- is_admin() helper, this policy checks the profiles table directly:
+   create policy "Admins can update" on app_settings
+     for update using (
+       exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+     );
+*/
+async function loadAppSettings() {
+  // Bypass any caching layer (browser HTTP cache or the PWA service worker)
+  // that might otherwise serve a stale value here — this setting needs to
+  // always reflect the live DB row, never a cached snapshot. A random
+  // cache-busting query param plus cache:"no-store" forces a fresh network
+  // request every time.
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/app_settings?key=eq.guest_edit_unlocked&select=value&_cb=${Date.now()}`;
+    const res = await fetch(url, {
+      cache: "no-store",
+      headers: {
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": `Bearer ${(await supabaseClient.auth.getSession()).data.session?.access_token || SUPABASE_ANON_KEY}`,
+      },
+    });
+    if (!res.ok) { state.guestEditUnlocked = false; return; }
+    const rows = await res.json();
+    state.guestEditUnlocked = !!(rows && rows[0] && rows[0].value);
+  } catch (err) {
+    console.error("loadAppSettings fetch error:", err);
+    state.guestEditUnlocked = false;
+  }
+}
+/* Admin-only: flips the shared guest-edit lock. Guests picking up the new
+   value happens via the periodic poll near the bottom of the file (same
+   pattern as the chat unread-badge poll), so a teacher already on the page
+   sees access lock/unlock within a few seconds without reloading. */
+async function setGuestEditUnlocked(next) {
+  if (!state.editUnlocked || state.isGuestMode) return;
+  const { error } = await supabaseClient
+    .from("app_settings").upsert({ key: "guest_edit_unlocked", value: next });
+  if (error) { state.error = "Could not update Guest Edit — " + (error.message || "unknown error") + (error.code ? ` (code: ${error.code})` : ""); renderAll(); return; }
+  state.guestEditUnlocked = next;
+  renderAll();
 }
 
 async function refreshEntries() {
@@ -4974,19 +5090,10 @@ async function handleAdd() {
         return;
       }
     }
-    const { error } = await supabaseClient.from("admission_entries").insert(toDbRow(entry));
-    let finalError = error;
-    if (finalError && /(last_update_summary|adm_type|is_transport)/i.test(finalError.message || "")) {
-      // A newer column (last_update_summary and/or adm_type and/or
-      // is_transport) hasn't been added to the DB yet — retry without them
-      // so new entries can still be created.
-      const dbRow = toDbRow(entry);
-      delete dbRow.last_update_summary;
-      delete dbRow.adm_type;
-      delete dbRow.is_transport;
-      const retry = await supabaseClient.from("admission_entries").insert(dbRow);
-      finalError = retry.error;
-    }
+    const { error: finalError } = await insertOrUpdateWithOptionalColumns(
+      toDbRow(entry),
+      (row) => supabaseClient.from("admission_entries").insert(row)
+    );
     if (finalError) {
       state.error = "Could not save. Try again.";
     } else {
@@ -5005,7 +5112,7 @@ async function handleAdd() {
 }
 
 function startEdit(entry) {
-  if (!state.editUnlocked) return;
+  if (!state.editUnlocked && !canGuestEdit()) return;
   state.editingId = entry.id;
   state.editForm = { ...entry };
   state.editForm.feeChartArchive = (entry.feeChartArchive || []).map(a => ({ ...a, chart: cloneFeeSheet(a.chart) }));
@@ -5021,7 +5128,7 @@ function startEdit(entry) {
   state.editForm._classPromoted = false;
   state.editForm._archivedThisPromotion = false;
   state.editForm._chartFullEditUnlocked = false;
-  state.editOpenDemographic = false;
+  state.editOpenDemographic = state.isGuestMode; // guest edit only touches demographic fields, so open it by default
   state.editOpenChart = false;
   renderEntries();
 }
@@ -5158,13 +5265,39 @@ function renderEditChartArchivePreview() {
   });
 }
 async function saveEdit() {
-  if (!state.editUnlocked) return;
+  if (!state.editUnlocked && !canGuestEdit()) return;
+  if (state.isGuestMode && !state.editUnlocked) {
+    // Re-check the live value right before writing, in case the admin
+    // locked Guest Edit after this teacher already had the form open —
+    // the cached state.guestEditUnlocked could still say ON.
+    await loadAppSettings();
+    if (!canGuestEdit()) {
+      state.error = "Guest Edit has been turned off. Your changes were not saved.";
+      cancelEdit();
+      return;
+    }
+  }
   state.saving = true;
   const editedId = state.editingId;
   try {
     renderHeader(); renderEntries();
+    // Defense in depth for a guest (Class Teacher) save: even if the form
+    // markup were somehow bypassed, force every field back to its original
+    // value except Mother's Name, DOB, and the photo (handled separately
+    // below) before anything is sent to Supabase.
+    if (!state.editUnlocked && canGuestEdit() && state.editOriginalSnapshot) {
+      const orig = state.editOriginalSnapshot;
+      FIELDS.forEach(f => {
+        if (!GUEST_EDITABLE_FIELDS.includes(f.key)) state.editForm[f.key] = orig[f.key];
+      });
+      state.editForm.admType = orig.admType;
+      state.editForm.isTransport = orig.isTransport;
+      state.editForm.isWhatsapp = orig.isWhatsapp;
+      state.editForm.feeChart = orig.feeChart;
+      state.editForm.feeChartArchive = orig.feeChartArchive;
+    }
     state.editForm.updatedAt = new Date().toISOString();
-    state.editForm.lastUpdateSummary = computeUpdateSummary(state.editOriginalSnapshot, state.editForm);
+    state.editForm.lastUpdateBy = (!state.editUnlocked && canGuestEdit()) ? "guest" : "admin";
     const classChanged = (state.editForm.className || "").trim() !== (state.editOriginal.className || "").trim();
     const sessionChanged = (state.editForm.session || "").trim() !== (state.editOriginal.session || "").trim();
     if (classChanged || sessionChanged) {
@@ -5183,19 +5316,14 @@ async function saveEdit() {
         state.error = "Couldn't upload the photo (" + (err && err.message ? err.message : "unknown error") + "). Saving the other changes.";
       }
     }
-    const { error } = await supabaseClient.from("admission_entries").update(toDbRow(state.editForm)).eq("id", editedId);
-    let finalError = error;
-    if (finalError && /(last_update_summary|adm_type|is_transport)/i.test(finalError.message || "")) {
-      // A newer column (last_update_summary and/or adm_type and/or
-      // is_transport) hasn't been added to the DB yet — retry without them
-      // so the rest of the edit still saves successfully.
-      const dbRow = toDbRow(state.editForm);
-      delete dbRow.last_update_summary;
-      delete dbRow.adm_type;
-      delete dbRow.is_transport;
-      const retry = await supabaseClient.from("admission_entries").update(dbRow).eq("id", editedId);
-      finalError = retry.error;
-    }
+    // Computed AFTER the photo upload finishes (photoUrl is only known at
+    // this point) — computing it earlier meant a new/changed photo never
+    // showed up in "Last updated: ... — Photo updated" below the card.
+    state.editForm.lastUpdateSummary = computeUpdateSummary(state.editOriginalSnapshot, state.editForm);
+    const { error: finalError } = await insertOrUpdateWithOptionalColumns(
+      toDbRow(state.editForm),
+      (row) => supabaseClient.from("admission_entries").update(row).eq("id", editedId)
+    );
     if (finalError) {
       state.error = "Could not save. Try again.";
     } else {
@@ -5499,6 +5627,22 @@ function renderHeader() {
   toggleGuestBtn.style.display = (state.editUnlocked && !state.isGuestMode) ? "" : "none";
   toggleGuestBtn.style.background = state.showGuestPanel ? "#1F2A44" : "transparent";
   toggleGuestBtn.style.color = state.showGuestPanel ? "#F3ECDA" : "#1F2A44";
+  document.getElementById("icon-guestEditLock").innerHTML = icon(state.guestEditUnlocked ? "unlock" : "lock", { size: 14 });
+  document.getElementById("guestEditLockToggleLabel").textContent = "Guest Edit";
+  const toggleGuestEditLockBtn = document.getElementById("toggleGuestEditLockBtn");
+  toggleGuestEditLockBtn.style.display = (state.editUnlocked && !state.isGuestMode) ? "" : "none";
+  toggleGuestEditLockBtn.style.background = state.guestEditUnlocked ? "#E6F2EA" : "transparent";
+  toggleGuestEditLockBtn.style.color = "#1F2A44";
+  toggleGuestEditLockBtn.style.borderColor = state.guestEditUnlocked ? "#1E7A3E" : "#B7A97E";
+  toggleGuestEditLockBtn.title = state.guestEditUnlocked ? "Guest Edit is ON — teachers can edit Mother's Name/DOB/Photo. Tap to turn OFF." : "Guest Edit is OFF. Tap to turn ON.";
+  const guestEditSwitch = document.getElementById("guestEditLockToggleSwitch");
+  const on = state.guestEditUnlocked;
+  guestEditSwitch.innerHTML = `
+    <span style="color:${on ? "#1E7A3E" : "#8A7F63"};">${on ? "ON" : "OFF"}</span>
+    <span style="position:relative;display:inline-block;width:34px;height:18px;border-radius:9px;background:${on ? "#1E7A3E" : "#C9BC94"};transition:background 0.15s;">
+      <span style="position:absolute;top:2px;left:${on ? "18px" : "2px"};width:14px;height:14px;border-radius:50%;background:#FBF7EC;transition:left 0.15s;box-shadow:0 1px 2px rgba(0,0,0,0.3);"></span>
+    </span>`;
+
   document.getElementById("icon-language").innerHTML = icon("language", { size: 14 });
   i18nUpdateToggleBtn();
 
@@ -7854,13 +7998,22 @@ function renderEntries() {
 }
 function renderOneEntryRow(e) {
     if (state.editingId === e.id) {
+      // A Class Teacher (guest) login only ever reaches this branch when
+      // canGuestEdit() was true at click time (see wireUpEntryRowEvents /
+      // the editBtn visibility check below) — and stays restricted to
+      // Mother's Name, DOB, and Photo even if the admin flips the lock
+      // back on mid-edit, since every non-permitted control below is
+      // gated on guestLimited, not just hidden with CSS.
+      const guestLimited = state.isGuestMode;
       return `
         <div class="ledger-row" data-row-id="${e.id}" style="display:flex;padding:16px 18px;gap:14px;align-items:flex-start;">
           <div class="stamp" style="width:34px;flex-shrink:0;color:#9B3437;font-weight:500;font-size:14px;padding-top:2px;">${String(e.serial).padStart(3, "0")}</div>
           <div style="flex:1;min-width:0;">
+            ${guestLimited ? `<p style="font-size:11px;color:#9B3437;margin:0 0 10px;background:#FBF3D9;border:1px dashed #B7A97E;border-radius:4px;padding:6px 10px;">🔒 ${T("As a Class Teacher login, only Mother's Name, Date of Birth, and Photo can be changed here.")}</p>` : ""}
             <button type="button" class="toggleEditDemographicBtn" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;background:${state.editOpenDemographic ? "#1F2A44" : "transparent"};color:${state.editOpenDemographic ? "#F3ECDA" : "#1F2A44"};border:1px solid #1F2A44;border-radius:3px;padding:8px 12px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;margin-bottom:${state.editOpenDemographic ? "12px" : "0"};">
               <span>🧑 ${T("Demographic Details")}</span><span>${state.editOpenDemographic ? "▾" : "▸"}</span>
             </button>
+            ${guestLimited ? "" : `
             <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
               <span style="font-size:11px;color:#6B5F4B;">Admission Status:</span>
               <div style="display:flex;gap:0;border:1px solid #1F2A44;border-radius:3px;overflow:hidden;">
@@ -7872,7 +8025,7 @@ function renderOneEntryRow(e) {
                 <button type="button" class="editTransportYesBtn" data-entry-id="${e.id}" title="Transport" style="background:${state.editForm.isTransport ? "#1F2A44" : "transparent"};color:${state.editForm.isTransport ? "#F3ECDA" : "#1F2A44"};border:none;padding:5px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">T</button>
                 <button type="button" class="editTransportNoBtn" data-entry-id="${e.id}" title="Non-Transport" style="background:${!state.editForm.isTransport ? "#B7A97E" : "transparent"};color:${!state.editForm.isTransport ? "#F3ECDA" : "#1F2A44"};border:none;padding:5px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">N</button>
               </div>
-            </div>
+            </div>`}
             ${state.editOpenDemographic ? `
             <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
               <div id="editPhotoPreviewWrap-${e.id}" style="width:64px;height:64px;flex-shrink:0;border-radius:50%;overflow:hidden;background:#EFE6C8;border:1px solid #D9CBA3;display:flex;align-items:center;justify-content:center;">
@@ -7892,7 +8045,7 @@ function renderOneEntryRow(e) {
               ${(() => {
                 const passbookLock = isFeeChartPassbookMode(state.editForm.feeChart);
                 return (passbookLock ? `<p style="grid-column:1 / -1;font-size:11px;color:#9B3437;margin:0 0 2px;">📖 A Passbook Mode chart is selected — only Name / Father's Name / Address / Mobile No. are editable, other fields are locked.</p>` : "") + FIELDS.map(f => {
-                  const locked = passbookLock && !PASSBOOK_ALWAYS_EDITABLE_FIELDS.includes(f.key);
+                  const locked = guestLimited ? !GUEST_EDITABLE_FIELDS.includes(f.key) : (passbookLock && !PASSBOOK_ALWAYS_EDITABLE_FIELDS.includes(f.key));
                   return `
                 <div style="grid-column:${f.key === "address" || f.key === "notes" ? "1 / -1" : "auto"};">
                   <label class="stamp">${T(f.label)}</label>
@@ -7907,12 +8060,13 @@ function renderOneEntryRow(e) {
                         ? `<input class="rule-input" type="date" data-edit-field="${f.key}" value="${escapeAttr(state.editForm[f.key])}" ${locked ? "disabled" : ""} />`
                         : `<input class="rule-input" type="${f.type === "number" ? "number" : "text"}" data-edit-field="${f.key}" value="${escapeAttr(state.editForm[f.key])}" ${locked ? "disabled" : ""} />`}
                   ${f.key === "mobile" ? `<label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:#6B5F4B;margin-top:5px;">
-                    <input type="checkbox" class="editIsWhatsappChk" data-entry-id="${e.id}" ${state.editForm.isWhatsapp ? "checked" : ""} /> This is a WhatsApp number
+                    <input type="checkbox" class="editIsWhatsappChk" data-entry-id="${e.id}" ${state.editForm.isWhatsapp ? "checked" : ""} ${locked ? "disabled" : ""} /> This is a WhatsApp number
                   </label>` : ""}
                 </div>`;
                 }).join("");
               })()}
             </div>` : ""}
+            ${guestLimited ? "" : `
             <button type="button" class="toggleEditChartBtn" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;background:${state.editOpenChart ? "#1F2A44" : "transparent"};color:${state.editOpenChart ? "#F3ECDA" : "#1F2A44"};border:1px solid #1F2A44;border-radius:3px;padding:8px 12px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;margin-top:12px;margin-bottom:${state.editOpenChart ? "12px" : "0"};">
               <span>📊 ${T("Fee Chart")}</span><span>${state.editOpenChart ? "▾" : "▸"}</span>
             </button>
@@ -7935,7 +8089,7 @@ function renderOneEntryRow(e) {
                 <button type="button" id="addEditChartColBtn" style="background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">+ ${T("Add Column")}</button>
               </div>` : ""}
               ${!isFeeChartPassbookMode(state.editForm.feeChart) ? `<div id="editChartArchiveWrap"></div>` : ""}
-            </div>` : ""}
+            </div>` : ""}`}
             <div style="display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap;">
               <button class="saveEditBtn" ${state.saving ? "disabled" : ""} style="display:flex;align-items:center;gap:4px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:6px 12px;font-size:12px;cursor:${state.saving ? "not-allowed" : "pointer"};opacity:${state.saving ? 0.6 : 1};">${icon("check", { size: 13 })} ${T(state.saving ? "Saving…" : "Save")}</button>
               <button class="cancelEditBtn" style="display:flex;align-items:center;gap:4px;background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;border-radius:3px;padding:6px 12px;font-size:12px;cursor:pointer;">${icon("x", { size: 13 })} ${T("Cancel")}</button>
@@ -7973,10 +8127,10 @@ function renderOneEntryRow(e) {
                 }).join("")}
               </div>
             </div>
-            ${!state.selectMode && state.editUnlocked ? `
+            ${!state.selectMode && (state.editUnlocked || canGuestEdit()) ? `
             <div style="display:flex;gap:8px;flex-shrink:0;align-items:flex-start;">
               <button class="editBtn" aria-label="Edit" style="background:none;border:none;cursor:pointer;color:#6B5F4B;">${icon("pencil", { size: 16 })}</button>
-              <button class="deleteBtn" aria-label="Delete" style="background:none;border:none;cursor:pointer;color:#9B3437;">${icon("trash2", { size: 16 })}</button>
+              ${state.editUnlocked ? `<button class="deleteBtn" aria-label="Delete" style="background:none;border:none;cursor:pointer;color:#9B3437;">${icon("trash2", { size: 16 })}</button>` : ""}
             </div>` : ""}
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:8px;font-size:12.5px;">
@@ -8021,8 +8175,16 @@ function wireUpEntryRowEvents(el) {
     });
   });
   el.querySelectorAll(".editBtn").forEach(btn => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       const id = btn.closest("[data-row-id]").dataset.rowId;
+      // For a guest (Class Teacher) login, don't trust the locally cached
+      // guestEditUnlocked value — it's only refreshed by a ~6s background
+      // poll, so a teacher could open the edit form for a brief window
+      // right after an admin locks it. Re-check the live value first.
+      if (state.isGuestMode && !state.editUnlocked) {
+        await loadAppSettings();
+        if (!canGuestEdit()) { renderAll(); return; }
+      }
       const entry = state.entries.find(x => x.id === id);
       if (entry) startEdit(entry);
     });
@@ -8763,6 +8925,13 @@ function wireUpEntryRowEvents(el) {
 }
 
 function renderAll() {
+  const errBanner = document.getElementById("globalErrorBanner");
+  if (state.error) {
+    document.getElementById("globalErrorBannerText").textContent = state.error;
+    errBanner.style.display = "flex";
+  } else {
+    errBanner.style.display = "none";
+  }
   renderHeader();
   renderFilters();
   renderGuestPanel();
@@ -9249,6 +9418,14 @@ document.getElementById("toggleGuestBtn").addEventListener("click", async () => 
   renderHeader();
   renderGuestPanel();
 });
+document.getElementById("toggleGuestEditLockBtn").addEventListener("click", async () => {
+  await setGuestEditUnlocked(!state.guestEditUnlocked);
+});
+document.getElementById("globalErrorBannerClose").addEventListener("click", () => {
+  state.error = "";
+  renderAll();
+});
+
 document.getElementById("fileInput").addEventListener("change", handleImportFile);
 
 let studentLookupEntries = [];
@@ -9547,6 +9724,7 @@ document.getElementById("logoutBtn").addEventListener("click", async () => {
   state.guestClass = "";
   state.guestSection = "";
   state.guestSession = "";
+  state.guestEditUnlocked = false;
   state.classFilter = "all";
   state.sectionFilter = "all";
   state.sessionFilter = "all";
@@ -9590,6 +9768,38 @@ setInterval(() => {
     else if (state.chatView === "thread" && state.chatOpenThreadType) loadChatMessages(state.chatOpenThreadType, state.chatOpenThreadKey);
   }
 }, 6000);
+/* For a Class Teacher (guest) login only: polls the shared app_settings row
+   so that if the admin locks Guest Edit while a teacher already has the
+   page open, their access (and the "Edit" pencil on each card) disappears
+   within a few seconds — they don't need to log out/in to pick it up. */
+setInterval(async () => {
+  if (!currentUser || !state.isGuestMode) return;
+  const before = state.guestEditUnlocked;
+  await loadAppSettings();
+  if (state.guestEditUnlocked !== before) {
+    if (!state.guestEditUnlocked && state.editingId) cancelEdit();
+    renderAll();
+  }
+}, 6000);
+/* Real-time backup for the guest-edit lock: as soon as the admin flips the
+   toggle, this pushes the new value to any teacher with the page open,
+   instead of waiting for the ~6s poll above. If Realtime isn't enabled on
+   this Supabase project for this table, the subscription simply never
+   fires and the 6s poll above still covers it as a fallback. */
+function subscribeToGuestEditLock() {
+  if (!state.isGuestMode) return;
+  supabaseClient
+    .channel("app_settings_guest_edit_lock")
+    .on("postgres_changes", { event: "*", schema: "public", table: "app_settings", filter: "key=eq.guest_edit_unlocked" }, (payload) => {
+      const newVal = payload.new && typeof payload.new.value !== "undefined" ? !!payload.new.value : false;
+      if (newVal !== state.guestEditUnlocked) {
+        state.guestEditUnlocked = newVal;
+        if (!state.guestEditUnlocked && state.editingId) cancelEdit();
+        renderAll();
+      }
+    })
+    .subscribe();
+}
 i18nStartObserver();
 (async () => {
   const ok = await loadSessionAndProfile();
@@ -9598,6 +9808,7 @@ i18nStartObserver();
     document.getElementById("mainApp").style.display = "";
     loadEntries();
     refreshChatUnreadBadge();
+    subscribeToGuestEditLock();
   } else {
     showLogin();
   }
