@@ -78,6 +78,12 @@
     <div style="text-align:center;margin-top:10px;">
       <button id="showStudentLookupBtn" style="background:none;border:none;color:#6B5F4B;font-size:12px;text-decoration:underline;cursor:pointer;font-family:'IBM Plex Mono',monospace;padding:4px;">Are you a student? View your details</button>
     </div>
+
+    <button id="candidateAttendanceRegisterBtn" type="button"
+       style="display:block;width:100%;text-align:center;margin-top:10px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:10px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">
+      🎓 Candidate Attendance Register
+    </button>
+
     <div id="studentLookupBox" style="display:none;margin-top:10px;padding-top:14px;border-top:1px solid #D9CBA3;">
       <p style="font-size:12.5px;color:#6B5F4B;margin:0 0 10px;">Enter your mobile number to view your details without logging in.</p>
       <input type="tel" id="studentMobileInput" class="rule-input" placeholder="Mobile Number" style="margin-bottom:10px;" />
@@ -85,6 +91,61 @@
       <button id="studentLookupSubmitBtn" style="width:100%;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:10px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">View Details</button>
       <div id="studentLookupResults" style="margin-top:12px;"></div>
       <div id="studentChatBox" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid #D9CBA3;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Candidate Attendance Portal — integrated in-page, connects to the
+     separate Attendance app's own Supabase project via its own client
+     (attendanceClient, defined below). Reuses the same RPC functions the
+     Attendance app's own candidate tab calls: find_checkin_student and
+     self_checkin_by_pin. Never touches the Fee Register's own Supabase
+     project or any of its data. -->
+<div id="candidatePortalScreen" style="position:fixed;inset:0;background:#F3ECDA;z-index:1000;display:none;align-items:center;justify-content:center;font-family:'Source Serif 4',Georgia,serif;overflow-y:auto;padding:24px 0;box-sizing:border-box;">
+  <div style="width:320px;max-width:90vw;padding:32px 28px;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:6px;border-top:3px solid #1F2A44;margin:auto;">
+
+    <!-- Candidate login sub-screen -->
+    <div id="candidateLoginBox">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
+        <span style="font-size:20px;line-height:1;">🎓</span>
+        <h1 style="font-family:'Zilla Slab',serif;font-weight:700;font-size:19px;margin:0;color:#1F2A44;">Candidate Attendance Register</h1>
+      </div>
+      <p style="font-size:12.5px;color:#6B5F4B;margin:0 0 14px;">Enter your name and 4-digit PIN to mark your attendance.</p>
+      <input type="text" id="candidateNameInput" class="rule-input" placeholder="Your full name" style="margin-bottom:10px;" />
+      <input type="password" inputmode="numeric" maxlength="4" id="candidatePinInput" class="rule-input" placeholder="PIN" style="margin-bottom:10px;text-align:center;letter-spacing:8px;" />
+      <p id="candidateLoginError" style="color:#9B3437;font-size:12.5px;min-height:16px;margin:0 0 12px;"></p>
+      <button id="candidateLoginSubmitBtn" style="width:100%;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:10px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Login</button>
+      <div style="text-align:center;margin-top:10px;">
+        <button id="candidatePortalBackBtn" style="background:none;border:none;color:#6B5F4B;font-size:12px;text-decoration:underline;cursor:pointer;font-family:'IBM Plex Mono',monospace;padding:4px;">← Back to Fee Register login</button>
+      </div>
+    </div>
+
+    <!-- Candidate check-in sub-screen (shown after successful login) -->
+    <div id="candidateCheckinBox" style="display:none;">
+      <h1 id="candidateCheckinTitle" style="font-family:'Zilla Slab',serif;font-weight:700;font-size:19px;margin:0 0 16px;color:#1F2A44;text-align:center;">🎓</h1>
+      <p id="candidateCheckinMsg" style="font-size:12.5px;text-align:center;margin:0 0 14px;min-height:16px;color:#6B5F4B;"></p>
+      <button id="candidateMarkPresentBtn" style="width:100%;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:10px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Mark Present</button>
+      <button id="candidateTryAgainBtn" style="display:none;width:100%;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:10px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Try again</button>
+      <div style="text-align:center;margin-top:14px;">
+        <button id="candidateLogoutBtn" style="background:none;border:none;color:#6B5F4B;font-size:12px;text-decoration:underline;cursor:pointer;font-family:'IBM Plex Mono',monospace;padding:4px;">← Logout</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Candidate selfie capture modal -->
+<div id="candidateSelfieModal" style="display:none;position:fixed;inset:0;background:rgba(31,24,15,0.72);z-index:1100;align-items:center;justify-content:center;padding:18px;">
+  <div style="background:#FBF7EC;border-radius:10px;padding:18px;width:100%;max-width:320px;box-shadow:0 10px 30px rgba(0,0,0,0.35);">
+    <div style="font-size:14px;font-weight:700;color:#1F2A44;margin-bottom:4px;text-align:center;">📸 Selfie proof</div>
+    <div style="font-size:11px;color:#6B5F4B;text-align:center;margin-bottom:12px;line-height:1.4;">A photo will be saved as soon as you tap Present (for proof only — this is not liveness-verified).</div>
+    <div style="position:relative;width:100%;aspect-ratio:1/1;border-radius:8px;overflow:hidden;background:#20180f;display:flex;align-items:center;justify-content:center;">
+      <video id="candidateSelfieVideo" playsinline muted style="width:100%;height:100%;object-fit:cover;transform:scaleX(-1);"></video>
+      <div id="candidateSelfieStatus" style="position:absolute;bottom:8px;left:0;right:0;text-align:center;color:#fdfaf0;font-size:11px;font-family:'IBM Plex Mono',monospace;"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px;">
+      <button id="candidateSelfieCancelBtn" style="flex:0 0 auto;background:transparent;border:1.5px solid #D9CBA3;color:#6B5F4B;border-radius:6px;padding:10px 14px;font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:12px;cursor:pointer;">Cancel</button>
+      <button id="candidateSelfieCaptureBtn" style="flex:1;background:#1F2A44;border:none;color:#F3ECDA;border-radius:6px;padding:10px 14px;font-family:'IBM Plex Mono',monospace;font-weight:700;font-size:12px;cursor:pointer;">Capture &amp; Mark Present</button>
     </div>
   </div>
 </div>
@@ -181,6 +242,7 @@
             <span style="position:relative;display:inline-block;width:34px;height:18px;border-radius:9px;transition:background 0.15s;"></span>
           </span>
         </button>
+
         <button id="toggleLangBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-language"></span><span id="langToggleLabel">Language: English</span>
         </button>
@@ -230,6 +292,7 @@
 <input type="file" id="fileInput" accept="application/json" style="display:none;" />
 <div id="vivaranModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;"></div>
 <div id="bulkMessageModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;"></div>
+<div id="externalExportModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -4472,6 +4535,11 @@ const state = {
   messageReportRangeFrom: "",
   messageReportRangeTo: "",
   messageReportClassSel: "all",
+  /* Export selected students' data into a DIFFERENT app's Supabase project
+     (that app's own URL + anon key) — see externalExport* functions below. */
+  externalExport: null,
+  externalExportTarget: { url: "", anonKey: "", table: "students", useUpsert: true },
+  externalExportColumns: ["name", "fatherName", "motherName", "dob", "rollNo", "mobile", "className", "section", "session"],
 };
 
 /* Message template now lives in Supabase (table: message_template, single row id=1),
@@ -4778,6 +4846,7 @@ async function loadEntries() {
   loadMessageLocksFromStorage();
   await loadDeletedInvoiceHistory();
   await loadAppSettings();
+  await loadExternalExportTarget();
   state.loading = false;
   await loadBackupManifest();
   renderAll();
@@ -4804,6 +4873,221 @@ async function loadDeletedInvoiceHistory() {
     .from("deleted_invoice_history").select("invoice").order("id", { ascending: false });
   if (error) { state.deletedInvoiceHistory = []; return; }
   state.deletedInvoiceHistory = (data || []).map(r => r.invoice).filter(Boolean);
+}
+
+/* ==================== Export to Another App's Supabase ====================
+   Lets the admin push selected students' basic details (name, father's
+   name, mobile, etc.) straight into a DIFFERENT app's own Supabase project
+   — the admin types that other project's URL + anon (public) key in, this
+   never touches this app's own database credentials above.
+   The connection (URL/key/table/columns) is remembered in THIS app's own
+   Supabase — table: external_export_target, single row id=1 — the same
+   pattern as message_template, so it survives reloads/other devices. If
+   that table doesn't exist yet on this deployment, load/save just fail
+   quietly and the fields have to be typed again each time. Run this once
+   in the Supabase SQL editor to persist it:
+
+   create table if not exists external_export_target (
+     id int primary key,
+     target_url text,
+     target_anon_key text,
+     target_table text,
+     columns jsonb
+   );
+   alter table external_export_target enable row level security;
+   create policy "Authenticated read" on external_export_target
+     for select using (auth.role() = 'authenticated');
+   create policy "Authenticated write" on external_export_target
+     for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+*/
+const EXTERNAL_EXPORT_COLUMN_DEFS = [
+  { key: "name",       label: "Name",             column: "name",           get: e => e.name || "" },
+  { key: "fatherName", label: "Father's Name",    column: "father_name",    get: e => e.fatherName || "" },
+  { key: "motherName", label: "Mother's Name",    column: "mother_name",    get: e => e.motherName || "" },
+  { key: "dob",        label: "DOB",              column: "dob",            get: e => e.dob || "" },
+  { key: "rollNo",     label: "Enroll No.",       column: "roll_no",        get: e => e.rollNo || "" },
+  { key: "mobile",     label: "Mobile",           column: "mobile",         get: e => e.mobile || "" },
+  { key: "isWhatsapp", label: "Is WhatsApp No.",  column: "is_whatsapp",    get: e => !!e.isWhatsapp },
+  { key: "className",  label: "Class",            column: "class_name",    get: e => e.className || "" },
+  { key: "section",    label: "Section",          column: "section",       get: e => e.section || "" },
+  { key: "session",    label: "Session",          column: "session",       get: e => e.session || "" },
+  { key: "fMonth",     label: "Fee Till",         column: "fee_till",      get: e => e.fMonth || "" },
+  { key: "tMonth",     label: "Transport Till",   column: "transport_till", get: e => e.tMonth || "" },
+  { key: "address",    label: "Address",          column: "address",       get: e => e.address || "" },
+  { key: "notes",      label: "Notes",            column: "notes",         get: e => e.notes || "" },
+];
+function buildExternalExportRow(e, columnKeys) {
+  // source_id is always included (the entry's own id here) so the target
+  // app's table can put a unique constraint on it and use it as the
+  // upsert conflict key — otherwise re-sending the same student would just
+  // keep creating duplicate rows over there.
+  const row = { source_id: e.id };
+  columnKeys.forEach(key => {
+    const def = EXTERNAL_EXPORT_COLUMN_DEFS.find(c => c.key === key);
+    if (def) row[def.column] = def.get(e);
+  });
+  return row;
+}
+async function loadExternalExportTarget() {
+  try {
+    const { data, error } = await supabaseClient.from("external_export_target").select("*").eq("id", 1).maybeSingle();
+    if (error || !data) return;
+    state.externalExportTarget = {
+      url: data.target_url || "",
+      anonKey: data.target_anon_key || "",
+      table: data.target_table || "students",
+      useUpsert: state.externalExportTarget.useUpsert,
+    };
+    if (Array.isArray(data.columns) && data.columns.length) state.externalExportColumns = data.columns;
+  } catch (err) { /* table probably doesn't exist yet — fine, just won't persist */ }
+}
+async function saveExternalExportTarget() {
+  try {
+    await supabaseClient.from("external_export_target").upsert({
+      id: 1,
+      target_url: state.externalExportTarget.url || "",
+      target_anon_key: state.externalExportTarget.anonKey || "",
+      target_table: state.externalExportTarget.table || "students",
+      columns: state.externalExportColumns,
+    });
+  } catch (err) { console.warn("Could not save export-target settings (table may not exist yet):", err); }
+}
+function openExternalExportModal(ids) {
+  if (!ids || !ids.length) return;
+  state.externalExport = { ids: ids.slice(), sending: false, status: "" };
+  renderExternalExportModal();
+}
+function closeExternalExportModal() {
+  // Save whatever URL/Key/Table/columns are currently filled in, even if
+  // Send was never clicked or failed — previously this only saved AFTER a
+  // successful send, so a failed send (e.g. blocked by RLS) meant the
+  // fields silently reset on next reload.
+  const target = state.externalExportTarget;
+  if ((target.url || "").trim() || (target.anonKey || "").trim()) {
+    saveExternalExportTarget();
+  }
+  state.externalExport = null;
+  renderExternalExportModal();
+}
+async function sendExternalExport() {
+  const ex = state.externalExport;
+  if (!ex || ex.sending) return;
+  const target = state.externalExportTarget;
+  const url = (target.url || "").trim().replace(/\/+$/, "");
+  const key = (target.anonKey || "").trim();
+  const table = (target.table || "").trim();
+  if (!url || !key || !table) {
+    ex.status = "❌ Project URL, Anon Key, and Table Name are all required.";
+    renderExternalExportModal();
+    return;
+  }
+  const columnKeys = state.externalExportColumns.length ? state.externalExportColumns : EXTERNAL_EXPORT_COLUMN_DEFS.map(c => c.key);
+  const entries = state.entries.filter(en => ex.ids.includes(en.id));
+  const rows = entries.map(en => buildExternalExportRow(en, columnKeys));
+  ex.sending = true; ex.status = "Sending…";
+  renderExternalExportModal();
+  try {
+    const endpoint = `${url}/rest/v1/${encodeURIComponent(table)}${target.useUpsert ? "?on_conflict=source_id" : ""}`;
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        Prefer: target.useUpsert ? "resolution=merge-duplicates,return=minimal" : "return=minimal",
+      },
+      body: JSON.stringify(rows),
+    });
+    if (!resp.ok) {
+      // Capture the FULL PostgREST error body (code/details/hint), not just
+      // `.message` — the hint field usually names the exact missing grant,
+      // policy, or column so problems like this don't need round-trip SQL
+      // debugging next time.
+      let bodyText = "";
+      let body = null;
+      try { bodyText = await resp.text(); body = bodyText ? JSON.parse(bodyText) : null; } catch (parseErr) { /* body wasn't JSON */ }
+      console.error("External export failed — full response:", { status: resp.status, endpoint, body: body || bodyText });
+      const parts = [];
+      parts.push(`HTTP ${resp.status}`);
+      if (body && body.code) parts.push(`code: ${body.code}`);
+      if (body && body.message) parts.push(body.message);
+      if (body && body.details) parts.push(`details: ${body.details}`);
+      if (body && body.hint) parts.push(`hint: ${body.hint}`);
+      if (!body && bodyText) parts.push(bodyText.slice(0, 300));
+      const err = new Error(parts.join(" — "));
+      err.raw = body || bodyText;
+      throw err;
+    }
+    ex.status = `✅ ${rows.length} student${rows.length !== 1 ? "s" : ""} sent successfully.`;
+    ex.sending = false;
+    await saveExternalExportTarget();
+  } catch (err) {
+    console.error("External export failed:", err);
+    ex.status = `❌ Error while sending: ${err.message || err}`;
+    ex.sending = false;
+  }
+  renderExternalExportModal();
+}
+function renderExternalExportModal() {
+  const el = document.getElementById("externalExportModalOverlay");
+  if (!state.externalExport) { el.style.display = "none"; el.innerHTML = ""; return; }
+  const ex = state.externalExport;
+  const target = state.externalExportTarget;
+  const count = ex.ids.length;
+  el.style.display = "flex";
+  el.innerHTML = `
+    <div style="width:100%;max-width:480px;max-height:88vh;overflow-y:auto;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:6px;border-top:3px solid #9B3437;padding:20px;box-sizing:border-box;">
+      <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;margin-bottom:4px;">📤 Send Data to Another App</div>
+
+      <div style="margin-bottom:12px;">
+        <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:4px;">Target Supabase Project URL</label>
+        <input id="extExpUrl" class="rule-input" placeholder="https://xxxxxxxx.supabase.co" value="${escapeAttr(target.url || "")}" />
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:4px;">Target Anon (Public) API Key</label>
+        <input id="extExpKey" class="rule-input" placeholder="eyJhbGciOi..." value="${escapeAttr(target.anonKey || "")}" />
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:4px;">Table Name (in that app's Supabase)</label>
+        <input id="extExpTable" class="rule-input" placeholder="students" value="${escapeAttr(target.table || "students")}" />
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#1F2A44;cursor:pointer;margin-bottom:14px;">
+        <input type="checkbox" id="extExpUpsert" ${target.useUpsert ? "checked" : ""} style="width:15px;height:15px;flex-shrink:0;" />
+        Upsert
+      </label>
+
+      <div style="margin-bottom:14px;">
+        <span style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;">Fields to send</span>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;margin-top:8px;">
+          ${EXTERNAL_EXPORT_COLUMN_DEFS.map(c => `
+            <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:#1F2A44;cursor:pointer;">
+              <input type="checkbox" class="extExpColChk" data-key="${c.key}" ${state.externalExportColumns.includes(c.key) ? "checked" : ""} style="width:14px;height:14px;flex-shrink:0;" />
+              ${escapeHtml(c.label)}
+            </label>`).join("")}
+        </div>
+      </div>
+
+      ${ex.status ? `<p style="font-size:12.5px;color:${ex.status.startsWith("✅") ? "#1E7A3E" : ex.status.startsWith("❌") ? "#9B3437" : "#6B5F4B"};margin:0 0 12px;">${escapeHtml(ex.status)}</p>` : ""}
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button id="extExpCancelBtn" style="background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;border-radius:3px;padding:8px 14px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Close</button>
+        <button id="extExpSendBtn" ${ex.sending ? "disabled" : ""} style="background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:${ex.sending ? "not-allowed" : "pointer"};opacity:${ex.sending ? 0.6 : 1};">${ex.sending ? "Sending…" : `Send (${count})`}</button>
+      </div>
+    </div>`;
+  document.getElementById("extExpCancelBtn").addEventListener("click", closeExternalExportModal);
+  el.addEventListener("click", (ev) => { if (ev.target === el) closeExternalExportModal(); });
+  document.getElementById("extExpUrl").addEventListener("input", (e2) => { state.externalExportTarget.url = e2.target.value; });
+  document.getElementById("extExpKey").addEventListener("input", (e2) => { state.externalExportTarget.anonKey = e2.target.value; });
+  document.getElementById("extExpTable").addEventListener("input", (e2) => { state.externalExportTarget.table = e2.target.value; });
+  document.getElementById("extExpUpsert").addEventListener("change", (e2) => { state.externalExportTarget.useUpsert = e2.target.checked; });
+  el.querySelectorAll(".extExpColChk").forEach(chk => {
+    chk.addEventListener("change", () => {
+      const key = chk.dataset.key;
+      if (chk.checked) { if (!state.externalExportColumns.includes(key)) state.externalExportColumns.push(key); }
+      else { state.externalExportColumns = state.externalExportColumns.filter(k => k !== key); }
+    });
+  });
+  document.getElementById("extExpSendBtn").addEventListener("click", sendExternalExport);
 }
 
 /* Loads the single shared app-wide setting that controls whether Class
@@ -4838,7 +5122,15 @@ async function loadAppSettings() {
   // cache-busting query param plus cache:"no-store" forces a fresh network
   // request every time.
   try {
-    const url = `${SUPABASE_URL}/rest/v1/app_settings?key=eq.guest_edit_unlocked&select=value&_cb=${Date.now()}`;
+    // NOTE: previously had a "&_cb=<timestamp>" cache-busting param here.
+    // PostgREST treats every query param it doesn't recognize as a column
+    // filter, so "_cb=<number>" was parsed as an invalid filter and made
+    // EVERY request to this endpoint fail with a 400 (PGRST100). That 400
+    // was silently swallowed below, always forcing guestEditUnlocked to
+    // false — which is exactly why the switch looked like it "turned
+    // itself off". cache: "no-store" below already prevents stale caching,
+    // so the param is simply removed rather than replaced.
+    const url = `${SUPABASE_URL}/rest/v1/app_settings?key=eq.guest_edit_unlocked&select=value`;
     const res = await fetch(url, {
       cache: "no-store",
       headers: {
@@ -4848,7 +5140,17 @@ async function loadAppSettings() {
     });
     if (!res.ok) { state.guestEditUnlocked = false; return; }
     const rows = await res.json();
-    state.guestEditUnlocked = !!(rows && rows[0] && rows[0].value);
+    // ROOT CAUSE FIX: the `value` column in Supabase's app_settings table is
+    // type TEXT (confirmed via Table Editor: "value  text"), not boolean.
+    // So a "false" row comes back as the STRING "false" — and in
+    // JavaScript any non-empty string, including "false", is truthy!
+    // `!!("false")` evaluates to `true`. That's exactly why the switch kept
+    // showing/reverting to ON: every read of a stored "false" was being
+    // coerced to true. Compare against the literal string/boolean instead
+    // of relying on truthiness, so it works correctly whether the column
+    // holds a real boolean or the text "true"/"false".
+    const rawVal = rows && rows[0] ? rows[0].value : false;
+    state.guestEditUnlocked = rawVal === true || rawVal === "true";
   } catch (err) {
     console.error("loadAppSettings fetch error:", err);
     state.guestEditUnlocked = false;
@@ -4860,22 +5162,9 @@ async function loadAppSettings() {
    sees access lock/unlock within a few seconds without reloading. */
 async function setGuestEditUnlocked(next) {
   if (!state.editUnlocked || state.isGuestMode) return;
-  // .select() so we can tell a real success apart from a silent RLS block:
-  // if the UPDATE policy's condition evaluates false (e.g. the admin can't
-  // read their own row in `profiles`, which the app_settings policy
-  // subquery depends on), Postgres/PostgREST update 0 rows and return
-  // success with no error — the row just never came back changed. Trusting
-  // `next` blindly in that case makes the switch flip ON locally and then
-  // silently revert to OFF the next time loadAppSettings() runs.
-  const { data, error } = await supabaseClient
-    .from("app_settings").upsert({ key: "guest_edit_unlocked", value: next }).select();
+  const { error } = await supabaseClient
+    .from("app_settings").upsert({ key: "guest_edit_unlocked", value: next });
   if (error) { state.error = "Could not update Guest Edit — " + (error.message || "unknown error") + (error.code ? ` (code: ${error.code})` : ""); renderAll(); return; }
-  if (!data || !data.length || !!data[0].value !== next) {
-    state.error = "Guest Edit didn't actually update — this is usually a Supabase permissions (RLS) issue, not a bug in the app. Check that the admin's row in 'profiles' is readable by the 'Admins can update' policy on app_settings.";
-    await loadAppSettings();
-    renderAll();
-    return;
-  }
   state.guestEditUnlocked = next;
   renderAll();
 }
@@ -7673,6 +7962,7 @@ function renderSelectionPanel() {
         <button id="exportPdfBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#9B3437;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("filetext", { size: 14 })} Save as PDF</button>
         <button id="shareImageBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("image", { size: 14 })} Share as Image</button>
         <button id="bulkMsgBtn" ${count === 0 ? "disabled" : ""} title="Opens each selected student's WhatsApp/SMS one by one — you just tap Send in each" style="display:flex;align-items:center;gap:6px;background:#25D366;color:#fff;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("messageCircle", { size: 14 })} Send Messages</button>
+        <button id="externalExportBtn" ${count === 0 ? "disabled" : ""} title="Selected students ka data ek doosre app ke Supabase project mein bhejo" style="display:flex;align-items:center;gap:6px;background:#6B5F4B;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("share", { size: 14 })} Export to App</button>
       </div>
     </div>
     ${state.showExportColumns ? `
@@ -7713,6 +8003,8 @@ function renderSelectionPanel() {
   if (shareBtn) shareBtn.addEventListener("click", shareSelectedAsImages);
   const bulkMsgBtn = document.getElementById("bulkMsgBtn");
   if (bulkMsgBtn) bulkMsgBtn.addEventListener("click", openBulkMessageQueue);
+  const externalExportBtn = document.getElementById("externalExportBtn");
+  if (externalExportBtn) externalExportBtn.addEventListener("click", () => openExternalExportModal(Array.from(state.selectedIds)));
   const toggleColsBtn = document.getElementById("toggleExportColumnsBtn");
   if (toggleColsBtn) toggleColsBtn.addEventListener("click", () => { state.showExportColumns = !state.showExportColumns; renderSelectionPanel(); });
   const colsAllBtn = document.getElementById("exportColsAllBtn");
@@ -8142,6 +8434,7 @@ function renderOneEntryRow(e) {
             </div>
             ${!state.selectMode && (state.editUnlocked || canGuestEdit()) ? `
             <div style="display:flex;gap:8px;flex-shrink:0;align-items:flex-start;">
+              <button class="externalExportOneBtn" data-id="${e.id}" aria-label="Export to another app" title="Export to another app" style="background:none;border:none;cursor:pointer;color:#6B5F4B;">${icon("share", { size: 16 })}</button>
               <button class="editBtn" aria-label="Edit" style="background:none;border:none;cursor:pointer;color:#6B5F4B;">${icon("pencil", { size: 16 })}</button>
               ${state.editUnlocked ? `<button class="deleteBtn" aria-label="Delete" style="background:none;border:none;cursor:pointer;color:#9B3437;">${icon("trash2", { size: 16 })}</button>` : ""}
             </div>` : ""}
@@ -8201,6 +8494,9 @@ function wireUpEntryRowEvents(el) {
       const entry = state.entries.find(x => x.id === id);
       if (entry) startEdit(entry);
     });
+  });
+  el.querySelectorAll(".externalExportOneBtn").forEach(btn => {
+    btn.addEventListener("click", () => openExternalExportModal([btn.dataset.id]));
   });
   el.querySelectorAll(".deleteBtn").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -9804,7 +10100,8 @@ function subscribeToGuestEditLock() {
   supabaseClient
     .channel("app_settings_guest_edit_lock")
     .on("postgres_changes", { event: "*", schema: "public", table: "app_settings", filter: "key=eq.guest_edit_unlocked" }, (payload) => {
-      const newVal = payload.new && typeof payload.new.value !== "undefined" ? !!payload.new.value : false;
+      const rawNewVal = payload.new && typeof payload.new.value !== "undefined" ? payload.new.value : false;
+      const newVal = rawNewVal === true || rawNewVal === "true";
       if (newVal !== state.guestEditUnlocked) {
         state.guestEditUnlocked = newVal;
         if (!state.guestEditUnlocked && state.editingId) cancelEdit();
@@ -9828,6 +10125,251 @@ i18nStartObserver();
   i18nApplyAll();
   i18nUpdateToggleBtn();
 })();
+/* ============================================================
+   CANDIDATE ATTENDANCE PORTAL — integrated in-page. Connects to the
+   Attendance app's own Supabase project (a different project from
+   this Fee Register app) via its own separate client. Only ever
+   calls the two candidate-facing RPC functions the Attendance app's
+   own candidate login already relies on (find_checkin_student /
+   self_checkin_by_pin) — never touches the Fee Register's own
+   Supabase project or any of its tables.
+   ============================================================ */
+const ATTENDANCE_SUPABASE_URL = "https://lccfkksasrhvvtgknqhs.supabase.co";
+const ATTENDANCE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxjY2Zra3Nhc3JodnZ0Z2tucWhzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MzkzODksImV4cCI6MjEwMjAxNTM4OX0.K6aUFls10jlfIuvPU1Br__gKXdOzOKfklWMT6zZTNVM";
+const attendanceClient = supabase.createClient(ATTENDANCE_SUPABASE_URL, ATTENDANCE_SUPABASE_ANON_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+
+let candidateState = { name: "", pin: "", classInfo: null, coords: null, selfieStream: null };
+
+function candidateTodayISO() {
+  const d = new Date();
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10);
+}
+function candidateDistanceMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function showCandidatePortal() {
+  document.getElementById("loginScreen").style.display = "none";
+  document.getElementById("candidatePortalScreen").style.display = "flex";
+  document.getElementById("candidateLoginBox").style.display = "";
+  document.getElementById("candidateCheckinBox").style.display = "none";
+  document.getElementById("candidateNameInput").focus();
+}
+function hideCandidatePortal() {
+  document.getElementById("candidatePortalScreen").style.display = "none";
+  document.getElementById("loginScreen").style.display = "flex";
+  candidateState = { name: "", pin: "", classInfo: null, coords: null, selfieStream: null };
+  document.getElementById("candidateNameInput").value = "";
+  document.getElementById("candidatePinInput").value = "";
+  document.getElementById("candidateLoginError").textContent = "";
+}
+
+async function candidateLogin() {
+  const errEl = document.getElementById("candidateLoginError");
+  errEl.textContent = "";
+  const name = document.getElementById("candidateNameInput").value.trim();
+  const pin = document.getElementById("candidatePinInput").value.trim();
+  if (!name || pin.length !== 4) return;
+  const btn = document.getElementById("candidateLoginSubmitBtn");
+  btn.disabled = true;
+  btn.textContent = "Please wait…";
+  try {
+    const { data, error } = await attendanceClient.rpc("find_checkin_student", { p_name: name, p_pin: pin, p_date: candidateTodayISO() });
+    if (error) {
+      errEl.textContent = "Something went wrong — try again.";
+    } else if (!data || data.found === false) {
+      errEl.textContent = "Name or PIN did not match.";
+    } else {
+      candidateState.name = name;
+      candidateState.pin = pin;
+      candidateState.classInfo = data;
+      showCandidateCheckin();
+    }
+  } catch (e) {
+    errEl.textContent = "Something went wrong: " + (e && e.message ? e.message : e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Login";
+  }
+}
+
+function showCandidateCheckin() {
+  document.getElementById("candidateLoginBox").style.display = "none";
+  document.getElementById("candidateCheckinBox").style.display = "";
+  document.getElementById("candidateCheckinTitle").textContent = "🎓 " + candidateState.name;
+
+  const info = candidateState.classInfo;
+  const alreadyMarked = info && info.alreadyPresent;
+  const markedAbsent = info && !alreadyMarked && info.attendanceStatus === "A";
+  const msgEl = document.getElementById("candidateCheckinMsg");
+  const markBtn = document.getElementById("candidateMarkPresentBtn");
+  const tryAgainBtn = document.getElementById("candidateTryAgainBtn");
+  tryAgainBtn.style.display = "none";
+
+  if (alreadyMarked) {
+    msgEl.textContent = "ℹ️ You're already marked Present today" + (info.presentTime ? ` (${info.presentTime})` : "") + ".";
+    markBtn.style.display = "none";
+  } else if (markedAbsent) {
+    msgEl.textContent = "🔒 You've been marked Absent today. Contact your Admin/Custodian to change this.";
+    markBtn.style.display = "none";
+  } else {
+    msgEl.textContent = "";
+    markBtn.style.display = "";
+    markBtn.disabled = false;
+    markBtn.textContent = "Mark Present";
+  }
+}
+
+async function candidateStartCheckin() {
+  const msgEl = document.getElementById("candidateCheckinMsg");
+  const markBtn = document.getElementById("candidateMarkPresentBtn");
+  const tryAgainBtn = document.getElementById("candidateTryAgainBtn");
+  msgEl.textContent = "";
+  tryAgainBtn.style.display = "none";
+
+  const info = candidateState.classInfo;
+  const needsGeo = info && info.locationOn !== false && info.geoCenter && info.geoCenter.lat != null;
+  const needsSelfie = !info || info.selfieOn !== false;
+
+  if (needsGeo) {
+    markBtn.disabled = true;
+    msgEl.textContent = "📍 Checking your location, please wait…";
+    try {
+      const pos = await new Promise((resolve, reject) => {
+        if (!navigator.geolocation) { reject(new Error("Geolocation not supported")); return; }
+        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+      });
+      const dist = candidateDistanceMeters(pos.coords.latitude, pos.coords.longitude, info.geoCenter.lat, info.geoCenter.lng);
+      if (dist > (info.geoRadius || 150)) {
+        msgEl.textContent = "You are outside the classroom area — move closer and try again.";
+        markBtn.disabled = false;
+        markBtn.style.display = "none";
+        tryAgainBtn.style.display = "";
+        return;
+      }
+      candidateState.coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    } catch (err) {
+      msgEl.textContent = "Could not get location access — turn on permission and try again.";
+      markBtn.disabled = false;
+      markBtn.style.display = "none";
+      tryAgainBtn.style.display = "";
+      return;
+    }
+  } else {
+    candidateState.coords = null;
+  }
+
+  if (needsSelfie) {
+    openCandidateSelfieModal();
+  } else {
+    candidateFinishCheckin(null);
+  }
+}
+
+function openCandidateSelfieModal() {
+  const modal = document.getElementById("candidateSelfieModal");
+  const video = document.getElementById("candidateSelfieVideo");
+  const statusEl = document.getElementById("candidateSelfieStatus");
+  const captureBtn = document.getElementById("candidateSelfieCaptureBtn");
+  modal.style.display = "flex";
+  statusEl.textContent = "Opening camera…";
+  captureBtn.disabled = true;
+  (navigator.mediaDevices ? navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false }) : Promise.reject(new Error("Camera not supported")))
+    .then((stream) => {
+      candidateState.selfieStream = stream;
+      video.srcObject = stream;
+      video.play().catch(() => {});
+      statusEl.textContent = "";
+      captureBtn.disabled = false;
+    })
+    .catch((err) => {
+      statusEl.textContent = "Camera could not open: " + (err && err.message ? err.message : "");
+      captureBtn.disabled = true;
+    });
+}
+function closeCandidateSelfieStream() {
+  if (candidateState.selfieStream) {
+    candidateState.selfieStream.getTracks().forEach((t) => t.stop());
+    candidateState.selfieStream = null;
+  }
+}
+function candidateSelfieCapture() {
+  const video = document.getElementById("candidateSelfieVideo");
+  if (!video || !video.videoWidth) return;
+  const canvas = document.createElement("canvas");
+  const size = 240;
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const side = Math.min(vw, vh);
+  ctx.save();
+  ctx.translate(size, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, size, size);
+  ctx.restore();
+  const dataUrl = canvas.toDataURL("image/jpeg", 0.55);
+  closeCandidateSelfieStream();
+  document.getElementById("candidateSelfieModal").style.display = "none";
+  candidateFinishCheckin(dataUrl);
+}
+function candidateSelfieCancel() {
+  closeCandidateSelfieStream();
+  document.getElementById("candidateSelfieModal").style.display = "none";
+}
+
+async function candidateFinishCheckin(selfieDataUrl) {
+  const msgEl = document.getElementById("candidateCheckinMsg");
+  const markBtn = document.getElementById("candidateMarkPresentBtn");
+  const tryAgainBtn = document.getElementById("candidateTryAgainBtn");
+  msgEl.textContent = "⏳ Please wait…";
+  markBtn.style.display = "none";
+  tryAgainBtn.style.display = "none";
+  try {
+    const dateStr = candidateTodayISO();
+    const timeStr = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+    const { data, error } = await attendanceClient.rpc("self_checkin_by_pin", {
+      p_name: candidateState.name, p_pin: candidateState.pin, p_date: dateStr, p_time: timeStr,
+      p_lat: candidateState.coords ? candidateState.coords.lat : null,
+      p_lng: candidateState.coords ? candidateState.coords.lng : null,
+      p_selfie: selfieDataUrl || null,
+    });
+    if (error) {
+      msgEl.textContent = "Something went wrong — try again. [" + error.message + "]";
+      tryAgainBtn.style.display = "";
+    } else if (data && data.alreadyPresent) {
+      msgEl.textContent = "ℹ️ You're already marked Present today" + (data.time ? ` (${data.time})` : "") + ".";
+    } else if (data && data.success) {
+      msgEl.textContent = "✅ " + data.name + "'s attendance is marked.";
+    } else {
+      msgEl.textContent = (data && data.message) || "Name or PIN did not match.";
+      tryAgainBtn.style.display = "";
+    }
+  } catch (e) {
+    msgEl.textContent = "Something went wrong: " + (e && e.message ? e.message : e);
+    tryAgainBtn.style.display = "";
+  }
+}
+
+document.getElementById("candidateAttendanceRegisterBtn").addEventListener("click", showCandidatePortal);
+document.getElementById("candidatePortalBackBtn").addEventListener("click", hideCandidatePortal);
+document.getElementById("candidateLoginSubmitBtn").addEventListener("click", candidateLogin);
+document.getElementById("candidatePinInput").addEventListener("keydown", (e) => { if (e.key === "Enter") candidateLogin(); });
+document.getElementById("candidateNameInput").addEventListener("keydown", (e) => { if (e.key === "Enter") document.getElementById("candidatePinInput").focus(); });
+document.getElementById("candidateMarkPresentBtn").addEventListener("click", candidateStartCheckin);
+document.getElementById("candidateTryAgainBtn").addEventListener("click", showCandidateCheckin);
+document.getElementById("candidateLogoutBtn").addEventListener("click", hideCandidatePortal);
+document.getElementById("candidateSelfieCaptureBtn").addEventListener("click", candidateSelfieCapture);
+document.getElementById("candidateSelfieCancelBtn").addEventListener("click", candidateSelfieCancel);
+
 /* ---------- PWA: register service worker ---------- */
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
