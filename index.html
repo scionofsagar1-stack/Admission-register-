@@ -311,6 +311,47 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
    A MutationObserver keeps freshly-rendered panels translated too,
    so existing render*() functions don't need to be touched. */
 const I18N_LANG_KEY = "feeRegisterLang";
+/* ---------- View state persistence ----------
+   On Android (PWABuilder/TWA), switching to WhatsApp and coming back can
+   cause the OS to kill this app's background process to reclaim memory.
+   When that happens the WebView does a full cold reload of this page —
+   the login session survives (Supabase persists that to localStorage on
+   its own), but everything that only lived in the in-memory `state`
+   object — the search box, active filters, select mode — does not, so
+   the student list appeared to "start over". This saves just those
+   filter/search fields to localStorage (survives a process restart,
+   unlike sessionStorage) so they can be restored right after login. */
+const VIEW_STATE_KEY = "adm_reg_view_state_v1";
+const VIEW_STATE_FIELDS = [
+  "query", "classFilter", "sectionFilter", "sessionFilter", "fMonthFilter",
+  "notPaidTillFilter", "starFilter", "whatsappFilter", "admTypeFilter",
+  "transportFilter", "addressFilter", "notesFilter", "updatedFrom", "updatedTo",
+  "showMoreFilters",
+];
+let _viewStateSaveTimer = null;
+function saveViewState() {
+  clearTimeout(_viewStateSaveTimer);
+  _viewStateSaveTimer = setTimeout(() => {
+    try {
+      const snapshot = {};
+      VIEW_STATE_FIELDS.forEach((k) => { snapshot[k] = state[k]; });
+      localStorage.setItem(VIEW_STATE_KEY, JSON.stringify(snapshot));
+    } catch (e) {}
+  }, 250);
+}
+function restoreViewState() {
+  try {
+    const raw = localStorage.getItem(VIEW_STATE_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    VIEW_STATE_FIELDS.forEach((k) => {
+      if (Object.prototype.hasOwnProperty.call(saved, k)) state[k] = saved[k];
+    });
+  } catch (e) {}
+}
+function clearViewState() {
+  try { localStorage.removeItem(VIEW_STATE_KEY); } catch (e) {}
+}
 let APP_LANG = (function () {
   try { return localStorage.getItem(I18N_LANG_KEY) || "en"; } catch (e) { return "en"; }
 })();
@@ -5169,7 +5210,8 @@ async function setGuestEditUnlocked(next) {
   renderAll();
 }
 
-async function refreshEntries() {
+async function refreshEntries(retriesLeft) {
+  if (retriesLeft === undefined) retriesLeft = 2;
   // Postgres Row Level Security on admission_entries is *meant* to already
   // only return rows a teacher's profile is allowed to see — but that can't
   // be relied on alone (RLS may be missing/misconfigured). So a Class
@@ -5178,7 +5220,20 @@ async function refreshEntries() {
   // teacher created with "All Classes" access (guestClass/guestSection/
   // guestSession all blank) still sees everyone, as intended.
   const { data, error } = await supabaseClient.from("admission_entries").select("*").order("serial", { ascending: true });
-  if (error) { state.error = "Could not load entries. Check your connection."; return; }
+  if (error) {
+    // Right after the app resumes from the background (e.g. coming back
+    // from WhatsApp), the device's network connection can take a moment
+    // to be ready again — the very first request can fail even though the
+    // connection is actually fine a second later. Retry quietly a couple
+    // of times before bothering the user with the error banner.
+    if (retriesLeft > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      return refreshEntries(retriesLeft - 1);
+    }
+    state.error = "Could not load entries. Check your connection.";
+    return;
+  }
+  if (state.error === "Could not load entries. Check your connection.") state.error = "";
   let entries = data.map(fromDbRow);
   if (state.isGuestMode && (state.guestClass || state.guestSection || state.guestSession)) {
     entries = entries.filter(e =>
@@ -9258,6 +9313,7 @@ function renderAll() {
   renderChatPanel();
   renderSelectionPanel();
   renderEntries();
+  saveViewState();
 }
 
 /* Shown at the top of a student chat thread (admin side only) so the admin
@@ -9998,6 +10054,7 @@ async function attemptLogin() {
   }
   document.getElementById("loginScreen").style.display = "none";
   document.getElementById("mainApp").style.display = "";
+  restoreViewState();
   loadEntries();
   i18nApplyAll();
   refreshChatUnreadBadge();
@@ -10044,6 +10101,7 @@ document.getElementById("logoutBtn").addEventListener("click", async () => {
   state.chatOpenThreadType = null;
   state.chatOpenThreadKey = null;
   state.chatUnreadCount = 0;
+  clearViewState();
   showLogin();
 });
 
@@ -10116,6 +10174,7 @@ i18nStartObserver();
   if (ok) {
     document.getElementById("loginScreen").style.display = "none";
     document.getElementById("mainApp").style.display = "";
+    restoreViewState();
     loadEntries();
     refreshChatUnreadBadge();
     subscribeToGuestEditLock();
