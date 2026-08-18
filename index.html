@@ -327,6 +327,14 @@ const VIEW_STATE_FIELDS = [
   "notPaidTillFilter", "starFilter", "whatsappFilter", "admTypeFilter",
   "transportFilter", "addressFilter", "notesFilter", "updatedFrom", "updatedTo",
   "showMoreFilters",
+  /* Which student's panel (Fee Chart / Bill / Paid Receipt / Message) is
+     expanded, plus the exact "Kab Se / Kab Tak" row picks inside an open
+     Message panel — without these, coming back mid-way through sending a
+     message (e.g. after tapping WhatsApp) reopened the list at the top
+     with the panel collapsed again, forcing a re-search + re-pick every
+     time. */
+  "openFeeChartId", "openBillId", "openPaidReceiptId", "openMessageId",
+  "openArchiveReceiptKey", "feeChartBillDrafts",
 ];
 let _viewStateSaveTimer = null;
 function saveViewState() {
@@ -335,6 +343,7 @@ function saveViewState() {
     try {
       const snapshot = {};
       VIEW_STATE_FIELDS.forEach((k) => { snapshot[k] = state[k]; });
+      snapshot.scrollY = window.scrollY || 0;
       localStorage.setItem(VIEW_STATE_KEY, JSON.stringify(snapshot));
     } catch (e) {}
   }, 250);
@@ -347,11 +356,27 @@ function restoreViewState() {
     VIEW_STATE_FIELDS.forEach((k) => {
       if (Object.prototype.hasOwnProperty.call(saved, k)) state[k] = saved[k];
     });
+    // The list only exists in the DOM after loadEntries() renders it, so
+    // scrolling back has to wait a beat for that render to actually happen.
+    // Retried a few times since a slow connection can delay that render.
+    if (typeof saved.scrollY === "number" && saved.scrollY > 0) {
+      let tries = 0;
+      const tryScroll = () => {
+        tries++;
+        if (document.body.scrollHeight > saved.scrollY || tries > 20) {
+          window.scrollTo(0, saved.scrollY);
+        } else {
+          setTimeout(tryScroll, 150);
+        }
+      };
+      setTimeout(tryScroll, 150);
+    }
   } catch (e) {}
 }
 function clearViewState() {
   try { localStorage.removeItem(VIEW_STATE_KEY); } catch (e) {}
 }
+window.addEventListener("scroll", saveViewState, { passive: true });
 let APP_LANG = (function () {
   try { return localStorage.getItem(I18N_LANG_KEY) || "en"; } catch (e) { return "en"; }
 })();
@@ -8355,6 +8380,7 @@ function renderEntries() {
     });
   });
   wireUpEntryRowEvents(el);
+  saveViewState();
 }
 function renderOneEntryRow(e) {
     if (state.editingId === e.id) {
