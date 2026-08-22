@@ -11766,7 +11766,7 @@ async function candidateLogin() {
     if (error) {
       errEl.textContent = "Something went wrong — try again.";
     } else if (!data || data.found === false) {
-      errEl.textContent = "Name or PIN did not match.";
+      errEl.textContent = (data && data.message) || "Name or PIN did not match.";
     } else {
       candidateState.name = name;
       candidateState.pin = pin;
