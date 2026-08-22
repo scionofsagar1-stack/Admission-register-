@@ -186,6 +186,15 @@
     <button id="toggleMoreFiltersBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;">
       <span id="icon-moreFilters"></span><span id="moreFiltersToggleLabel">More</span>
     </button>
+    <button id="toggleSelectBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;">
+      <span id="icon-select"></span><span id="selectToggleLabel">Select</span>
+    </button>
+    <button id="toggleLangBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;">
+      <span id="icon-language"></span><span id="langToggleLabel">English</span>
+    </button>
+    <button id="openCandidatePortalFromAppBtn" type="button" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;">
+      🎓
+    </button>
     <div id="moreFiltersWrap" style="display:none;gap:10px;align-items:center;flex-wrap:wrap;">
     <select id="starFilterSel" class="stamp"></select>
     <select id="whatsappFilterSel" class="stamp"></select>
@@ -235,9 +244,6 @@
         <button id="toggleRotateBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-rotate"></span><span id="rotateToggleLabel">Rotate</span>
         </button>
-        <button id="toggleSelectBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
-          <span id="icon-select"></span><span id="selectToggleLabel">Select</span>
-        </button>
         <button id="toggleGuestBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-users"></span>Staff Access
         </button>
@@ -254,10 +260,6 @@
           <span id="chatLockToggleSwitch" style="flex-shrink:0;display:inline-flex;align-items:center;gap:5px;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:0.5px;">
             <span style="position:relative;display:inline-block;width:34px;height:18px;border-radius:9px;transition:background 0.15s;"></span>
           </span>
-        </button>
-
-        <button id="toggleLangBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
-          <span id="icon-language"></span><span id="langToggleLabel">Language: English</span>
         </button>
         <button id="logoutBtn" class="btn" style="background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;width:100%;">
           Logout
@@ -378,6 +380,25 @@ function restoreViewState() {
     VIEW_STATE_FIELDS.forEach((k) => {
       if (Object.prototype.hasOwnProperty.call(saved, k)) state[k] = saved[k];
     });
+    // The fields above restore fine into `state`, and the dropdown filters
+    // pick that up automatically since renderFilters() sets their .value
+    // from state on every render. But the free-text/date filter inputs
+    // (search box, notes filter, updated-date range) are plain inputs whose
+    // .value is only ever set by the user typing — nothing re-syncs their
+    // DOM value from `state`. So after a restore, the box looked empty even
+    // though state.query/notesFilter/updatedFrom/updatedTo still held the
+    // old value and kept silently filtering the list (list looked "stuck"
+    // or empty, with no visible filter text explaining why). Explicitly
+    // push the restored values back into these inputs so what the input
+    // shows always matches what's actually filtering.
+    const searchEl = document.getElementById("searchInput");
+    if (searchEl) searchEl.value = state.query || "";
+    const notesEl = document.getElementById("notesFilterInput");
+    if (notesEl) notesEl.value = state.notesFilter || "";
+    const updatedFromEl = document.getElementById("updatedFromFilter");
+    if (updatedFromEl) updatedFromEl.value = state.updatedFrom || "";
+    const updatedToEl = document.getElementById("updatedToFilter");
+    if (updatedToEl) updatedToEl.value = state.updatedTo || "";
     // The list only exists in the DOM after loadEntries() renders it, so
     // scrolling back has to wait a beat for that render to actually happen.
     // Retried a few times since a slow connection can delay that render.
@@ -1070,7 +1091,7 @@ function i18nStartObserver() {
 
 function i18nUpdateToggleBtn() {
   const label = document.getElementById("langToggleLabel");
-  if (label) label.textContent = APP_LANG === "hi" ? "Language: Hindi" : "Language: English";
+  if (label) label.textContent = APP_LANG === "hi" ? "Hindi" : "English";
   const loginLabel = document.getElementById("loginLangToggleLabel");
   if (loginLabel) loginLabel.textContent = APP_LANG === "hi" ? "🌐 हिन्दी" : "🌐 English";
 }
@@ -1080,6 +1101,15 @@ function setAppLanguage(lang) {
   try { localStorage.setItem(I18N_LANG_KEY, APP_LANG); } catch (e) {}
   i18nApplyAll();
   i18nUpdateToggleBtn();
+  // renderAll() rebuilds panels that assume a logged-in session (mainApp).
+  // The login screen's own language button also calls setAppLanguage(),
+  // and at that point mainApp is still display:none — calling renderAll()
+  // there hits panels/functions that need post-login state and throws,
+  // which is what was freezing the page. Only render when mainApp is
+  // actually visible (i.e. the user is logged in).
+  const mainAppEl = document.getElementById("mainApp");
+  const loggedIn = mainAppEl && mainAppEl.style.display !== "none";
+  if (loggedIn && typeof renderAll === "function") renderAll();
 }
 /* ================= end i18n ================= */
 
@@ -6504,6 +6534,10 @@ async function handleAdd() {
 
 function startEdit(entry) {
   if (!state.editUnlocked && !canGuestEdit()) return;
+  // If another row was already open for editing, remember it so we can
+  // repaint just that one row back to its normal (view) state below —
+  // only one entry can be in edit mode at a time.
+  const previousEditingId = state.editingId;
   state.editingId = entry.id;
   state.editForm = { ...entry };
   state.editForm.feeChartArchive = (entry.feeChartArchive || []).map(a => ({ ...a, chart: cloneFeeSheet(a.chart) }));
@@ -6521,7 +6555,12 @@ function startEdit(entry) {
   state.editForm._chartFullEditUnlocked = false;
   state.editOpenDemographic = state.isGuestMode; // guest edit only touches demographic fields, so open it by default
   state.editOpenChart = false;
-  renderEntries();
+  // Tapping Edit used to call renderEntries(), rebuilding every visible
+  // row (all ~hundreds of entries) just to switch one row into edit mode
+  // — on a big register that made the tap feel slow/unresponsive. Only
+  // the affected row(s) actually change, so patch just those in place.
+  renderRowInPlace(entry.id);
+  if (previousEditingId && previousEditingId !== entry.id) renderRowInPlace(previousEditingId);
 }
 /* Puts the old (previous session's) chart into feeChartArchive — this is
    called when the admin applies a new chart template during promotion, or
@@ -6736,8 +6775,12 @@ async function saveEdit() {
   }
 }
 function cancelEdit() {
+  // Same reasoning as startEdit() above — only the one row being cancelled
+  // needs to repaint, not the entire list.
+  const wasEditingId = state.editingId;
   state.editingId = null;
-  renderEntries();
+  if (wasEditingId) renderRowInPlace(wasEditingId);
+  else renderEntries();
 }
 async function removeEntry(id) {
   if (!state.editUnlocked) return;
@@ -11160,7 +11203,19 @@ document.addEventListener("click", (e) => {
   }
 });
 document.getElementById("toggleLangBtn").addEventListener("click", () => {
-  setAppLanguage(APP_LANG === "hi" ? "en" : "hi");
+  // The actual translate step below (i18nApplyAll + a full renderAll over
+  // however many hundred entries are loaded) runs synchronously and can
+  // take a noticeable moment. Previously the menu-close only happened via
+  // settingsMenuPanel's own bubbled click handler *after* this button's
+  // handler finished — so the dropdown sat open and unresponsive for that
+  // whole duration, feeling like the tap "hung". Closing the menu here
+  // immediately (before the heavy work) and deferring the actual language
+  // switch to the next frame makes the tap feel instant regardless of how
+  // long the translate/render underneath takes.
+  state.showSettingsMenu = false;
+  renderHeader();
+  const nextLang = APP_LANG === "hi" ? "en" : "hi";
+  requestAnimationFrame(() => setAppLanguage(nextLang));
 });
 document.getElementById("toggleBackupsBtn").addEventListener("click", () => {
   togglePanelLite("showBackups", "backups");
@@ -11721,6 +11776,7 @@ const attendanceClient = supabase.createClient(ATTENDANCE_SUPABASE_URL, ATTENDAN
 });
 
 let candidateState = { name: "", pin: "", classInfo: null, coords: null, selfieStream: null };
+let candidatePortalReturnTo = "login";
 
 function candidateTodayISO() {
   const d = new Date();
@@ -11737,7 +11793,16 @@ function candidateDistanceMeters(lat1, lon1, lat2, lon2) {
 }
 
 function showCandidatePortal() {
+  candidatePortalReturnTo = "login";
   document.getElementById("loginScreen").style.display = "none";
+  document.getElementById("candidatePortalScreen").style.display = "flex";
+  document.getElementById("candidateLoginBox").style.display = "";
+  document.getElementById("candidateCheckinBox").style.display = "none";
+  document.getElementById("candidateNameInput").focus();
+}
+function showCandidatePortalFromApp() {
+  candidatePortalReturnTo = "mainApp";
+  document.getElementById("mainApp").style.display = "none";
   document.getElementById("candidatePortalScreen").style.display = "flex";
   document.getElementById("candidateLoginBox").style.display = "";
   document.getElementById("candidateCheckinBox").style.display = "none";
@@ -11745,7 +11810,12 @@ function showCandidatePortal() {
 }
 function hideCandidatePortal() {
   document.getElementById("candidatePortalScreen").style.display = "none";
-  document.getElementById("loginScreen").style.display = "flex";
+  if (candidatePortalReturnTo === "mainApp") {
+    document.getElementById("mainApp").style.display = "";
+  } else {
+    document.getElementById("loginScreen").style.display = "flex";
+  }
+  candidatePortalReturnTo = "login";
   candidateState = { name: "", pin: "", classInfo: null, coords: null, selfieStream: null };
   document.getElementById("candidateNameInput").value = "";
   document.getElementById("candidatePinInput").value = "";
@@ -11940,6 +12010,7 @@ async function candidateFinishCheckin(selfieDataUrl) {
 }
 
 document.getElementById("candidateAttendanceRegisterBtn").addEventListener("click", showCandidatePortal);
+document.getElementById("openCandidatePortalFromAppBtn").addEventListener("click", showCandidatePortalFromApp);
 document.getElementById("candidatePortalBackBtn").addEventListener("click", hideCandidatePortal);
 document.getElementById("candidateLoginSubmitBtn").addEventListener("click", candidateLogin);
 document.getElementById("candidatePinInput").addEventListener("keydown", (e) => { if (e.key === "Enter") candidateLogin(); });
