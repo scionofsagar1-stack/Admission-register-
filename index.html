@@ -2762,17 +2762,38 @@ function getFeeChartBillSelectableRowIndices(sheet) {
 }
 function getFeeChartBillDraft(entryId, sheet) {
   const pending = getFeeChartBillSelectableRowIndices(sheet);
+  const curIdx = getCurrentSessionMonthIndex();
   if (!state.feeChartBillDrafts[entryId]) {
     const fromIdx = pending.length ? pending[0] : -1;
     const toIdx = getDefaultBillToIdx(sheet, pending);
-    state.feeChartBillDrafts[entryId] = { fromIdx, toIdx };
+    state.feeChartBillDrafts[entryId] = { fromIdx, toIdx, toIdxAuto: true, toIdxCurIdx: curIdx };
   }
   // Keep indices valid (pending rows only) if statuses/rows changed since the draft was created.
   // -1 means "nothing due right now" (No Dues) — this is intentional, don't
   // don't treat it as stale and don't switch back to some pending row.
   const draft = state.feeChartBillDrafts[entryId];
   if (draft.fromIdx !== -1 && !pending.includes(draft.fromIdx)) draft.fromIdx = pending.length ? pending[0] : -1;
-  if (draft.toIdx !== -1 && !pending.includes(draft.toIdx)) draft.toIdx = pending.length ? pending[pending.length - 1] : -1;
+  // Bug fix: when the previously-selected "Kab Tak" row gets paid/closed
+  // (e.g. current month's dues just got settled), don't blindly jump to
+  // whatever is now the LAST pending row (which could be a future month,
+  // e.g. March) — that would wrongly show future months as due. Re-derive
+  // via getDefaultBillToIdx so the selection stays capped at the current
+  // month, same as a fresh draft would be.
+  if (draft.toIdx !== -1 && !pending.includes(draft.toIdx)) {
+    draft.toIdx = getDefaultBillToIdx(sheet, pending);
+    draft.toIdxAuto = true;
+    draft.toIdxCurIdx = curIdx;
+  } else if (draft.toIdxAuto !== false && draft.toIdxCurIdx !== curIdx) {
+    // A new calendar month has arrived since this "Kab Tak" was last
+    // auto-computed, and the admin never manually overrode it (picking a
+    // row from the dropdown sets toIdxAuto=false — see the change handler)
+    // — so advance it to the new month's default (e.g. away from a stale
+    // "No Dues" once a new row genuinely becomes due, or to include the
+    // newly-arrived current month). A manually-chosen selection is left
+    // untouched even across a month change.
+    draft.toIdx = getDefaultBillToIdx(sheet, pending);
+    draft.toIdxCurIdx = curIdx;
+  }
   return draft;
 }
 /* ---------- Multi-Range Bill (e.g. "purana bakaya" + "naya session ka bill" together) ----------
@@ -2806,19 +2827,33 @@ function multiBillSourceOptionsHtml(selectedSource) {
 }
 function getMultiBillDraft(entry) {
   const sheet0 = normalizeFeeSheet(entry.feeChart);
+  const curIdx = getCurrentSessionMonthIndex();
   const existing = state.multiBillDrafts[entry.id];
   if (!existing || !existing.blocks || !existing.blocks.length) {
     const pending = getFeeChartBillSelectableRowIndices(sheet0);
     const fromIdx = pending.length ? pending[0] : -1;
     const toIdx = getDefaultBillToIdx(sheet0, pending);
-    state.multiBillDrafts[entry.id] = { blocks: [{ source: "current", fromIdx, toIdx, included: true }] };
+    state.multiBillDrafts[entry.id] = { blocks: [{ source: "current", fromIdx, toIdx, included: true, toIdxAuto: true, toIdxCurIdx: curIdx }] };
   }
   const draft = state.multiBillDrafts[entry.id];
   draft.blocks.forEach(b => {
     const sheet = getMultiBillBlockSheet(entry, b);
     const pending = getFeeChartBillSelectableRowIndices(sheet);
     if (b.fromIdx !== -1 && !pending.includes(b.fromIdx)) b.fromIdx = pending.length ? pending[0] : -1;
-    if (b.toIdx !== -1 && !pending.includes(b.toIdx)) b.toIdx = pending.length ? pending[pending.length - 1] : -1;
+    // Same fix as getFeeChartBillDraft: re-derive via getDefaultBillToIdx
+    // instead of jumping to the last pending row, so a block doesn't start
+    // showing future months as due just because its old "Kab Tak" row got paid.
+    if (b.toIdx !== -1 && !pending.includes(b.toIdx)) {
+      b.toIdx = getDefaultBillToIdx(sheet, pending);
+      b.toIdxAuto = true;
+      b.toIdxCurIdx = curIdx;
+    } else if (b.toIdxAuto !== false && b.toIdxCurIdx !== curIdx) {
+      // New month arrived and this block's "Kab Tak" was never manually
+      // picked (see multiBillToSel handler) — advance it the same way as
+      // the single-range draft above.
+      b.toIdx = getDefaultBillToIdx(sheet, pending);
+      b.toIdxCurIdx = curIdx;
+    }
   });
   return draft;
 }
@@ -10260,6 +10295,10 @@ function wireUpEntryRowEvents(el) {
       const sheet = normalizeFeeSheet(entry.feeChart);
       const draft = getFeeChartBillDraft(entry.id, sheet);
       draft.toIdx = parseInt(e.target.value, 10);
+      // Admin picked this by hand — stop auto-advancing it as new months
+      // arrive (that's what feeds the "auto" default; a manual pick is
+      // deliberate, e.g. combining several months into one bill).
+      draft.toIdxAuto = false;
       renderRowInPlace(entry.id);
     });
   });
@@ -10297,7 +10336,10 @@ function wireUpEntryRowEvents(el) {
       if (!entry) return;
       const bi = parseInt(e.target.dataset.blockIdx, 10);
       const draft = getMultiBillDraft(entry);
-      if (draft.blocks[bi]) draft.blocks[bi].toIdx = parseInt(e.target.value, 10);
+      if (draft.blocks[bi]) {
+        draft.blocks[bi].toIdx = parseInt(e.target.value, 10);
+        draft.blocks[bi].toIdxAuto = false;
+      }
       renderRowInPlace(entry.id);
     });
   });
@@ -10318,6 +10360,8 @@ function wireUpEntryRowEvents(el) {
       const pending = getFeeChartBillSelectableRowIndices(newSheet);
       block.fromIdx = pending.length ? pending[0] : -1;
       block.toIdx = getDefaultBillToIdx(newSheet, pending);
+      block.toIdxAuto = true;
+      block.toIdxCurIdx = getCurrentSessionMonthIndex();
       block.itemOverrides = {};
       renderRowInPlace(entry.id);
     });
@@ -10387,6 +10431,8 @@ function wireUpEntryRowEvents(el) {
         fromIdx: pending.length ? pending[0] : -1,
         toIdx: getDefaultBillToIdx(newSheet, pending),
         included: true,
+        toIdxAuto: true,
+        toIdxCurIdx: getCurrentSessionMonthIndex(),
       });
       renderRowInPlace(entry.id);
     });
@@ -10409,6 +10455,8 @@ function wireUpEntryRowEvents(el) {
       const pending = getFeeChartBillSelectableRowIndices(newSheet);
       block.fromIdx = pending.length ? pending[0] : -1;
       block.toIdx = getDefaultBillToIdx(newSheet, pending);
+      block.toIdxAuto = true;
+      block.toIdxCurIdx = getCurrentSessionMonthIndex();
       block.itemOverrides = {};
       renderRowInPlace(entry.id);
     });
