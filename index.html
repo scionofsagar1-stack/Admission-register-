@@ -1547,6 +1547,9 @@ function newFeeSheet(overrides) {
     closeNote: [""],
     passbookMode: false,
     openingBalance: 0,
+    // invoiceNo values "deleted" from the Receipt/Invoice Report only — the
+    // rows themselves stay exactly as-is (still Paid). See deleteReportInvoice.
+    hiddenInvoiceNos: [],
     ...(overrides || {}),
   };
 }
@@ -1565,6 +1568,7 @@ function normalizeFeeSheet(fc) {
       closeNote: fc.map(() => ""),
       passbookMode: false,
       openingBalance: 0,
+      hiddenInvoiceNos: [],
     };
   }
   const columns = (fc.columns && fc.columns.length) ? fc.columns.slice() : ["Column 1"];
@@ -1575,11 +1579,12 @@ function normalizeFeeSheet(fc) {
   const closeNote = rows.map((r, ri) => (fc.closeNote && typeof fc.closeNote[ri] === "string") ? fc.closeNote[ri] : "");
   const passbookMode = !!fc.passbookMode;
   const openingBalance = Number.isFinite(parseFloat(fc.openingBalance)) ? parseFloat(fc.openingBalance) : 0;
-  return { chartType: fc.chartType || "", columns, rows, statuses, paidAt, invoiceNo, closeNote, passbookMode, openingBalance };
+  const hiddenInvoiceNos = Array.isArray(fc.hiddenInvoiceNos) ? fc.hiddenInvoiceNos.slice() : [];
+  return { chartType: fc.chartType || "", columns, rows, statuses, paidAt, invoiceNo, closeNote, passbookMode, openingBalance, hiddenInvoiceNos };
 }
 function cloneFeeSheet(fc) {
   const n = normalizeFeeSheet(fc);
-  return { chartType: n.chartType, columns: n.columns.slice(), rows: n.rows.map(r => r.slice()), statuses: n.statuses.slice(), paidAt: n.paidAt.slice(), invoiceNo: n.invoiceNo.slice(), closeNote: n.closeNote.slice(), passbookMode: n.passbookMode, openingBalance: n.openingBalance };
+  return { chartType: n.chartType, columns: n.columns.slice(), rows: n.rows.map(r => r.slice()), statuses: n.statuses.slice(), paidAt: n.paidAt.slice(), invoiceNo: n.invoiceNo.slice(), closeNote: n.closeNote.slice(), passbookMode: n.passbookMode, openingBalance: n.openingBalance, hiddenInvoiceNos: n.hiddenInvoiceNos.slice() };
 }
 /* ---------- Passbook Mode: auto-calculated running balance ----------
    When sheet.passbookMode is true, an extra read-only "Balance" column is
@@ -3290,7 +3295,7 @@ function invoiceFeeTillMonth(items) {
   });
   return bestLabel;
 }
-function extractPaidInvoicesFromSheet(sheet, entry, sessionOverride, classNameOverride, isArchived) {
+function extractPaidInvoicesFromSheet(sheet, entry, sessionOverride, classNameOverride, isArchived, archiveId) {
   const invoices = [];
   if (!sheet || !sheet.rows || !sheet.rows.length) return invoices;
   const amountColIdx = getFeeChartAmountColIndex(sheet);
@@ -3300,6 +3305,7 @@ function extractPaidInvoicesFromSheet(sheet, entry, sessionOverride, classNameOv
     if ((sheet.statuses[ri] || "") !== "paid") return;
     const invoiceNo = (sheet.invoiceNo && sheet.invoiceNo[ri]) || null;
     if (!invoiceNo) return;
+    if (sheet.hiddenInvoiceNos && sheet.hiddenInvoiceNos.includes(invoiceNo)) return;
     const category = feeChartRowCategory(sheet, ri, amountColIdx, monthColIdx);
     const paidAt = (sheet.paidAt && sheet.paidAt[ri]) || 0;
     const amount = feeChartRowAmount(sheet, ri, amountColIdx);
@@ -3326,6 +3332,11 @@ function extractPaidInvoicesFromSheet(sheet, entry, sessionOverride, classNameOv
       section: entry.section || "",
       session: sessionOverride || entry.session || "",
       isArchived: !!isArchived,
+      // "current" = still-live active fee chart, "archive" = still-live
+      // archived (past-session) chart. Delete can revert either straight
+      // back to Pending. See deleteReportInvoice.
+      source: isArchived ? "archive" : "current",
+      archiveId: isArchived ? (archiveId || null) : null,
       items: data.rows,
       feeTill: invoiceFeeTillMonth(data.rows),
     });
@@ -3347,15 +3358,22 @@ function computeEntryPaidInvoices(entry) {
   const invoices = [];
   invoices.push(...extractPaidInvoicesFromSheet(normalizeFeeSheet(entry.feeChart), entry, null, null, false));
   (entry.feeChartArchive || []).forEach(a => {
-    invoices.push(...extractPaidInvoicesFromSheet(normalizeFeeSheet(a.chart), entry, a.session, a.className, true));
+    invoices.push(...extractPaidInvoicesFromSheet(normalizeFeeSheet(a.chart), entry, a.session, a.className, true, a.id));
   });
-  (entry.paidInvoiceHistory || []).forEach(inv => invoices.push(inv));
+  // paidInvoiceHistory = permanent snapshots taken right before an archived
+  // chart was deleted (see the removeArchiveChartBtn handler) — there's no
+  // live chart left to revert, so these are always tagged "paidHistory"
+  // (older saved snapshots won't have a `source` yet, hence the fallback).
+  (entry.paidInvoiceHistory || []).forEach(inv => invoices.push({ ...inv, source: inv.source || "paidHistory" }));
   return invoices;
 }
 function computeAllPaidInvoices() {
   const invoices = [];
   (state.entries || []).forEach(entry => invoices.push(...computeEntryPaidInvoices(entry)));
-  (state.deletedInvoiceHistory || []).forEach(inv => invoices.push(inv));
+  // deletedInvoiceHistory = permanent snapshots taken right before an entire
+  // student record was deleted (see removeEntry) — likewise nothing live to
+  // revert, only the historical record itself can be removed.
+  (state.deletedInvoiceHistory || []).forEach(inv => invoices.push({ ...inv, source: "deletedHistory" }));
   invoices.sort((a, b) => (b.paidAt || 0) - (a.paidAt || 0));
   return invoices;
 }
@@ -3665,6 +3683,22 @@ async function cancelFeeChartPaidReceipt(entryId, category) {
   const receipt = receipts[category];
   if (!receipt) return;
   if (!confirm(`${receipt.label} (Invoice: ${receipt.invoiceNo}) cancel? All its rows will go back to Pending.`)) return;
+  if (!sheet.paidAt) sheet.paidAt = [];
+  if (!sheet.invoiceNo) sheet.invoiceNo = [];
+  receipt.rowIndices.forEach(ri => {
+    sheet.statuses[ri] = "";
+    sheet.paidAt[ri] = null;
+    sheet.invoiceNo[ri] = null;
+  });
+  state.saving = true; renderHeader();
+  const { error } = await supabaseClient.from("admission_entries").update({ fee_chart: sheet }).eq("id", entryId);
+  if (error) {
+    state.error = "Couldn't cancel the receipt. Please try again.";
+  } else {
+    state.error = "";
+    await refreshEntries();
+    await createBackup();
+  }
   state.saving = false;
   renderAll();
 }
@@ -3701,6 +3735,74 @@ async function cancelArchiveFeeChartPaidReceipt(entryId, archiveId, category) {
   }
   state.saving = false;
   renderAll();
+}
+/* Delete button on the Receipt / Invoice Report. This ONLY removes the
+   invoice from the Report/history — it never changes a row's live Paid
+   status, since deleting a report record shouldn't reopen dues that were
+   genuinely collected. To cancel a real payment (put the money back on the
+   student's dues), use Cancel Receipt on the student card instead, not this.
+   inv.source (tagged in extractPaidInvoicesFromSheet/computeAllPaidInvoices)
+   decides where the record lives:
+   - "current"/"archive": the chart is still live — this adds the invoice
+     number to that sheet's hiddenInvoiceNos list (see extractPaidInvoicesFromSheet),
+     which just filters it out of the Report. The rows themselves, their
+     status, amounts, and paidAt stay exactly as they were.
+   - "paidHistory"/"deletedHistory": these are permanent snapshots taken
+     after the underlying chart/student was already deleted — no live rows
+     to touch either way, so this removes the historical record itself. */
+async function deleteReportInvoice(inv) {
+  if (!state.editUnlocked) return;
+  if (!confirm(`Remove invoice ${inv.invoiceNo} from the Report? The student's fee chart and Paid status will NOT change — this only removes it from this Report.`)) return;
+  state.saving = true; renderHeader();
+  try {
+    if (inv.source === "current") {
+      const entry = state.entries.find(x => x.id === inv.entryId);
+      if (!entry) { state.error = "Couldn't find that student's record."; return; }
+      const sheet = normalizeFeeSheet(entry.feeChart);
+      if (!sheet.hiddenInvoiceNos) sheet.hiddenInvoiceNos = [];
+      if (!sheet.hiddenInvoiceNos.includes(inv.invoiceNo)) sheet.hiddenInvoiceNos.push(inv.invoiceNo);
+      const { error } = await supabaseClient.from("admission_entries").update({ fee_chart: sheet }).eq("id", entry.id);
+      if (error) { state.error = "Couldn't remove the invoice. Please try again."; return; }
+      state.error = "";
+      await refreshEntries();
+      await createBackup();
+    } else if (inv.source === "archive") {
+      const entry = state.entries.find(x => x.id === inv.entryId);
+      if (!entry) { state.error = "Couldn't find that student's record."; return; }
+      const archiveList = (entry.feeChartArchive || []).map(a => ({ ...a, chart: cloneFeeSheet(a.chart) }));
+      const idx = archiveList.findIndex(a => a.id === inv.archiveId);
+      if (idx === -1) { state.error = "Couldn't find that old session's chart."; return; }
+      const sheet = archiveList[idx].chart;
+      if (!sheet.hiddenInvoiceNos) sheet.hiddenInvoiceNos = [];
+      if (!sheet.hiddenInvoiceNos.includes(inv.invoiceNo)) sheet.hiddenInvoiceNos.push(inv.invoiceNo);
+      const { error } = await supabaseClient.from("admission_entries").update({ fee_chart_archive: archiveList }).eq("id", entry.id);
+      if (error) { state.error = "Couldn't remove the invoice. Please try again."; return; }
+      state.error = "";
+      await refreshEntries();
+      await createBackup();
+    } else if (inv.source === "paidHistory") {
+      const entry = state.entries.find(x => x.id === inv.entryId);
+      if (!entry) { state.error = "Couldn't find that student's record."; return; }
+      const remaining = (entry.paidInvoiceHistory || []).filter(x => x.invoiceNo !== inv.invoiceNo);
+      const { error } = await supabaseClient.from("admission_entries").update({ paid_invoice_history: remaining }).eq("id", entry.id);
+      if (error) { state.error = "Couldn't delete the invoice record. Please try again."; return; }
+      state.error = "";
+      await refreshEntries();
+      await createBackup();
+    } else if (inv.source === "deletedHistory") {
+      if (!inv._delId) { state.error = "This older record needs a page refresh before it can be deleted."; return; }
+      const { error } = await supabaseClient.from("deleted_invoice_history").delete().eq("id", inv._delId);
+      if (error) { state.error = "Couldn't delete the invoice record. Please try again."; return; }
+      state.error = "";
+      state.deletedInvoiceHistory = state.deletedInvoiceHistory.filter(x => x._delId !== inv._delId);
+    }
+  } catch (err) {
+    console.error("deleteReportInvoice error:", err);
+    state.error = "Something went wrong. Please try again.";
+  } finally {
+    state.saving = false;
+    renderAll();
+  }
 }
 /* Whether an archived (previous-session) chart is still "Active" — i.e.
    editable directly from the student card so old dues can be marked Paid
@@ -5932,12 +6034,18 @@ async function loadEntries() {
      for select using (auth.role() = 'authenticated');
    create policy "Authenticated insert" on deleted_invoice_history
      for insert with check (auth.role() = 'authenticated');
+   create policy "Authenticated delete" on deleted_invoice_history
+     for delete using (auth.role() = 'authenticated');
+   -- The delete policy is needed for the Invoice Report's Delete button
+   -- (see deleteReportInvoice) to remove a deleted-student invoice record.
+   -- If the table already exists without this policy, just run the
+   -- "create policy ... for delete" line above on its own.
 */
 async function loadDeletedInvoiceHistory() {
   const { data, error } = await supabaseClient
-    .from("deleted_invoice_history").select("invoice").order("id", { ascending: false });
+    .from("deleted_invoice_history").select("id, invoice").order("id", { ascending: false });
   if (error) { state.deletedInvoiceHistory = []; return; }
-  state.deletedInvoiceHistory = (data || []).map(r => r.invoice).filter(Boolean);
+  state.deletedInvoiceHistory = (data || []).map(r => r.invoice ? { ...r.invoice, _delId: r.id } : null).filter(Boolean);
 }
 
 /* ==================== Export to Another App's Supabase ====================
@@ -6719,7 +6827,8 @@ function renderEditChartArchivePreview() {
       // record of an already-issued invoice will always remain).
       const archiveEntry = state.editForm.feeChartArchive[idx];
       const sheet = normalizeFeeSheet(archiveEntry.chart);
-      const snapshot = extractPaidInvoicesFromSheet(sheet, state.editForm, archiveEntry.session, archiveEntry.className, true);
+      const snapshot = extractPaidInvoicesFromSheet(sheet, state.editForm, archiveEntry.session, archiveEntry.className, true, archiveEntry.id)
+        .map(inv => ({ ...inv, source: "paidHistory", archiveId: null }));
       if (snapshot.length) {
         if (!state.editForm.paidInvoiceHistory) state.editForm.paidInvoiceHistory = [];
         state.editForm.paidInvoiceHistory.push(...snapshot);
@@ -6830,11 +6939,14 @@ async function removeEntry(id) {
     const invoices = computeEntryPaidInvoices(entry);
     if (invoices.length) {
       const rows = invoices.map(inv => ({
-        invoice: { ...inv, name: inv.name || entry.name || "", fatherName: inv.fatherName || entry.fatherName || "", deletedStudentAt: Date.now() },
+        invoice: { ...inv, name: inv.name || entry.name || "", fatherName: inv.fatherName || entry.fatherName || "", deletedStudentAt: Date.now(), source: "deletedHistory" },
       }));
-      const { error: snapErr } = await supabaseClient.from("deleted_invoice_history").insert(rows);
+      const { data: insData, error: snapErr } = await supabaseClient.from("deleted_invoice_history").insert(rows).select("id");
       if (snapErr) console.error("Could not snapshot invoices before delete:", snapErr);
-      else state.deletedInvoiceHistory = [...rows.map(r => r.invoice), ...state.deletedInvoiceHistory];
+      else {
+        const withIds = rows.map((r, i) => ({ ...r.invoice, _delId: insData && insData[i] ? insData[i].id : null }));
+        state.deletedInvoiceHistory = [...withIds, ...state.deletedInvoiceHistory];
+      }
     }
   }
   const { error } = await supabaseClient.from("admission_entries").delete().eq("id", id);
@@ -8957,14 +9069,16 @@ function renderReportPanel() {
         <thead style="position:sticky;top:0;background:#1F2A44;color:#F3ECDA;">
           <tr>
             ${reportCols.map(c => `<th style="text-align:${c.halign === "right" ? "right" : "left"};padding:8px 10px;">${escapeHtml(c.label)}</th>`).join("")}
+            ${state.editUnlocked ? `<th style="text-align:center;padding:8px 10px;">Action</th>` : ""}
           </tr>
         </thead>
         <tbody>
           ${invoices.length ? invoices.map((inv, idx) => `
             <tr class="ledger-row">
               ${reportCols.map(c => `<td style="padding:7px 10px;text-align:${c.halign === "right" ? "right" : "left"};${c.key === "invoiceNo" ? "white-space:nowrap;font-family:'IBM Plex Mono',monospace;" : ""}${c.key === "date" ? "white-space:nowrap;" : ""}${c.key === "amount" ? "font-weight:600;" : ""}">${escapeHtml(String(c.get(inv, idx)))}${c.key === "session" && inv.isArchived ? ` <span style="background:#9B3437;color:#F3ECDA;font-size:9px;letter-spacing:0.3px;text-transform:uppercase;padding:1px 5px;border-radius:3px;">Last Session</span>` : ""}${c.key === "name" && inv.deletedStudentAt ? ` <span title="This student's record has since been deleted" style="background:#6B5F4B;color:#F3ECDA;font-size:9px;letter-spacing:0.3px;text-transform:uppercase;padding:1px 5px;border-radius:3px;">Deleted Student</span>` : ""}</td>`).join("")}
+              ${state.editUnlocked ? `<td style="padding:7px 10px;text-align:center;white-space:nowrap;"><button type="button" class="repDeleteInvoiceBtn" data-idx="${idx}" title="Delete this invoice" style="background:#9B3437;color:#F3ECDA;border:none;border-radius:3px;padding:4px 9px;font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer;">${icon("trash2", { size: 12 })} Delete</button></td>` : ""}
             </tr>
-          `).join("") : `<tr><td colspan="${reportCols.length || 1}" style="padding:16px;text-align:center;color:#6B5F4B;">No invoice found for this period/filter.</td></tr>`}
+          `).join("") : `<tr><td colspan="${reportCols.length + (state.editUnlocked ? 1 : 0) || 1}" style="padding:16px;text-align:center;color:#6B5F4B;">No invoice found for this period/filter.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -9012,6 +9126,13 @@ function renderReportPanel() {
         state.reportColumnOrder = state.reportColumnOrder.filter(k => k !== key);
       }
       renderReportPanel();
+    });
+  });
+  el.querySelectorAll(".repDeleteInvoiceBtn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      const inv = invoices[idx];
+      if (inv) deleteReportInvoice(inv);
     });
   });
 }
@@ -9216,6 +9337,15 @@ const EXPORT_COLUMN_DEFS = [
   { key: "session",    label: "Session",         width: 40, get: e => e.session || "" },
   { key: "fMonth",     label: "Fee Till",        width: 42, get: e => T(e.fMonth) || "" },
   { key: "tMonth",     label: "Transport Till",  width: 48, get: e => T(e.tMonth) || "" },
+  { key: "totalDues",  label: "Total Dues",      width: 42, get: e => {
+      const sheet = normalizeFeeSheet(e.feeChart);
+      if (sheet.passbookMode) {
+        const balances = computePassbookBalances(sheet);
+        const bal = balances.length ? balances[balances.length - 1] : (parseFloat(sheet.openingBalance) || 0);
+        return fmtINR(bal);
+      }
+      return fmtINR(computeFeeChartTotal(sheet));
+    } },
   { key: "address",    label: "Address",         width: 70, get: e => TD(e.address) || "" },
   { key: "notes",      label: "Notes",           width: 60, get: e => TD(e.notes) || "" },
   { key: "createdAt",  label: "Created On",      width: 45, get: e => e.createdAt ? new Date(e.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "" },
@@ -9329,6 +9459,14 @@ function buildCardNode(entry) {
       ${row("Mobile", entry.mobile)}
       ${row("FEE TILL", T(entry.fMonth))}
       ${row("TRANSPORT TILL", T(entry.tMonth))}
+      ${row("TOTAL DUES", (() => {
+        const sheet = normalizeFeeSheet(entry.feeChart);
+        if (sheet.passbookMode) {
+          const balances = computePassbookBalances(sheet);
+          return fmtINR(balances.length ? balances[balances.length - 1] : (parseFloat(sheet.openingBalance) || 0));
+        }
+        return fmtINR(computeFeeChartTotal(sheet));
+      })())}
       ${row("Address", TD(entry.address))}
       ${row("Notes", TD(entry.notes))}
     </div>
