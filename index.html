@@ -2025,13 +2025,17 @@ function getAdmitCardEligibleEntries() {
   const notPaidFilterIdx = MONTHS.indexOf(state.admitCardNotPaidTillFilter);
   return state.entries.filter(e => {
     const matchesClass = state.admitCardClassSel === "all" || (e.className || "").trim() === state.admitCardClassSel;
+    const matchesSection = state.admitCardSectionSel === "all" || (e.section || "").trim() === state.admitCardSectionSel;
     const matchesSession = state.admitCardSessionSel === "all" || (e.session || "").trim() === state.admitCardSessionSel;
     const entryMonthIdx = MONTHS.indexOf((e.fMonth || "").trim());
     const matchesFMonth = state.admitCardFMonthFilter === "all" || (entryMonthIdx !== -1 && entryMonthIdx >= filterMonthIdx);
     const matchesNotPaidTill = state.admitCardNotPaidTillFilter === "all" || entryMonthIdx === -1 || entryMonthIdx < notPaidFilterIdx;
     const matchesAddress = !addrQ || (e.address || "").toLowerCase().includes(addrQ);
     const matchesNote = !noteQ || (e.notes || "").toLowerCase().includes(noteQ);
-    return matchesClass && matchesSession && matchesFMonth && matchesNotPaidTill && matchesAddress && matchesNote;
+    const matchesStar = state.admitCardStarFilter === "all"
+      || (state.admitCardStarFilter === "none" && !(e.starMarks && [1, 2, 3, 4].some(n => e.starMarks[n])))
+      || (state.admitCardStarFilter !== "none" && !!(e.starMarks && e.starMarks[state.admitCardStarFilter]));
+    return matchesClass && matchesSection && matchesSession && matchesFMonth && matchesNotPaidTill && matchesAddress && matchesNote && matchesStar;
   }).sort((a, b) => a.serial - b.serial);
 }
 function buildAdmitCardNode(entry, settings) {
@@ -5560,7 +5564,7 @@ async function loadSessionAndProfile() {
   }
   currentProfile = data;
   state.editUnlocked = currentProfile.role === "admin";
-  state.isGuestMode = currentProfile.role === "teacher";
+  state.isGuestMode = currentProfile.role === "teacher" || currentProfile.role === "viewer";
   state.guestClass = currentProfile.class_name || "";
   state.guestSection = currentProfile.section || "";
   state.guestSession = currentProfile.session || "";
@@ -5630,7 +5634,7 @@ const state = {
   vivaranModalText: "", vivaranModalSave: null, vivaranModalEditable: false,
   showAdmitCardPanel: false,
   admitCard: { instituteName: "", examName: "", examDate: "", examTime: "", reportingTime: "", venue: "", instructions: "", logoUrl: "" },
-  admitCardClassSel: "all", admitCardSessionSel: "all",
+  admitCardClassSel: "all", admitCardSessionSel: "all", admitCardSectionSel: "all", admitCardStarFilter: "all",
   admitCardFMonthFilter: "all", admitCardNotPaidTillFilter: "all", admitCardAddressFilter: "", admitCardNoteFilter: "",
   admitCardSelectedIds: new Set(),
   admitCardGenerating: false, admitCardStatus: "",
@@ -7110,7 +7114,9 @@ function getFiltered() {
     const updatedDate = e.updatedAt ? e.updatedAt.slice(0, 10) : "";
     const matchesUpdatedFrom = !state.updatedFrom || (updatedDate && updatedDate >= state.updatedFrom);
     const matchesUpdatedTo = !state.updatedTo || (updatedDate && updatedDate <= state.updatedTo);
-    const matchesStar = state.starFilter === "all" || !!(e.starMarks && e.starMarks[state.starFilter]);
+    const matchesStar = state.starFilter === "all"
+      || (state.starFilter === "none" && !(e.starMarks && [1, 2, 3, 4].some(n => e.starMarks[n])))
+      || (state.starFilter !== "none" && !!(e.starMarks && e.starMarks[state.starFilter]));
     const matchesWhatsapp = state.whatsappFilter === "all"
       || (state.whatsappFilter === "yes" && !!e.isWhatsapp && !!(e.mobile || "").trim())
       || (state.whatsappFilter === "no" && (!e.isWhatsapp || !(e.mobile || "").trim()));
@@ -7298,6 +7304,7 @@ function renderFilters() {
   fMonthSel.value = state.fMonthFilter;
   notPaidSel.value = state.notPaidTillFilter;
   starSel.innerHTML = `<option value="all">All Stars</option>` +
+    `<option value="none">No Star</option>` +
     [1, 2, 3, 4].map(n => `<option value="${n}">${STAR_NAMES[n]} Star</option>`).join("");
   starSel.value = state.starFilter;
   const whatsappSel = document.getElementById("whatsappFilterSel");
@@ -8369,6 +8376,7 @@ function renderAdmitCardPanel() {
   el.className = "panel";
   const classList = getClassList();
   const sessionList = getSessionList();
+  const sectionList = getSectionList();
   const eligible = getAdmitCardEligibleEntries();
   const allSelected = eligible.length > 0 && eligible.every(e => state.admitCardSelectedIds.has(e.id));
   const selectedCount = eligible.filter(e => state.admitCardSelectedIds.has(e.id)).length;
@@ -8409,6 +8417,15 @@ function renderAdmitCardPanel() {
       <select id="acSessionSel" class="stamp">
         <option value="all" ${state.admitCardSessionSel === "all" ? "selected" : ""}>All Sessions</option>
         ${sessionList.map(s => `<option value="${escapeAttr(s)}" ${state.admitCardSessionSel === s ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
+      </select>
+      <select id="acSectionSel" class="stamp">
+        <option value="all" ${state.admitCardSectionSel === "all" ? "selected" : ""}>All Sections</option>
+        ${sectionList.map(s => `<option value="${escapeAttr(s)}" ${state.admitCardSectionSel === s ? "selected" : ""}>Section ${escapeHtml(s)}</option>`).join("")}
+      </select>
+      <select id="acStarFilterSel" class="stamp">
+        <option value="all" ${state.admitCardStarFilter === "all" ? "selected" : ""}>All Stars</option>
+        <option value="none" ${state.admitCardStarFilter === "none" ? "selected" : ""}>No Star</option>
+        ${[1, 2, 3, 4].map(n => `<option value="${n}" ${state.admitCardStarFilter === String(n) ? "selected" : ""}>${STAR_NAMES[n]} Star</option>`).join("")}
       </select>
       <select id="acFMonthFilterSel" class="stamp">
         <option value="all" ${state.admitCardFMonthFilter === "all" ? "selected" : ""}>Fee Till: Any</option>
@@ -8497,6 +8514,16 @@ function renderAdmitCardPanel() {
   });
   document.getElementById("acSessionSel").addEventListener("change", (e) => {
     state.admitCardSessionSel = e.target.value;
+    state.admitCardSelectedIds = new Set(getAdmitCardEligibleEntries().map(en => en.id));
+    renderAdmitCardPanel();
+  });
+  document.getElementById("acSectionSel").addEventListener("change", (e) => {
+    state.admitCardSectionSel = e.target.value;
+    state.admitCardSelectedIds = new Set(getAdmitCardEligibleEntries().map(en => en.id));
+    renderAdmitCardPanel();
+  });
+  document.getElementById("acStarFilterSel").addEventListener("change", (e) => {
+    state.admitCardStarFilter = e.target.value;
     state.admitCardSelectedIds = new Set(getAdmitCardEligibleEntries().map(en => en.id));
     renderAdmitCardPanel();
   });
