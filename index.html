@@ -1916,6 +1916,49 @@ function toggleMessageBox(id) {
   after.add(id);
   renderRowsInPlace(new Set([...before, ...after]));
 }
+/* Jumps to a sibling's own card from inside the Combine list — clears any
+   active search/filters (the sibling could easily be hidden by whatever
+   the admin was searching for) so the row is guaranteed to show, and
+   scrolls it into view. Left folded (no panel auto-opened) — just
+   navigates to the card; the admin can tap Fee Chart/Message themselves
+   if they want it open.
+   Deliberately does NOT go through closeOtherEntryPanels()/
+   syncEntryPanelHistory() — that pair calls history.back() to close a
+   panel (so the phone's physical back button works), and browsers
+   restore the old scroll position on a back-navigation. That restore was
+   racing our scrollIntoView below and winning, snapping the page right
+   back to where it started — so the button looked like it did nothing.
+   Folding the panels via a plain state reset avoids that history pop
+   entirely. */
+function jumpToSiblingEntry(sibId) {
+  state.query = "";
+  state.classFilter = "all";
+  state.sectionFilter = "all";
+  state.sessionFilter = "all";
+  state.fMonthFilter = "all";
+  state.notPaidTillFilter = "all";
+  state.starFilter = "all";
+  state.whatsappFilter = "all";
+  state.admTypeFilter = "all";
+  state.transportFilter = "all";
+  state.siblingFilter = "all";
+  state.addressFilter = "all";
+  state.notesFilter = "";
+  state.updatedFrom = "";
+  state.updatedTo = "";
+  state.expandedCombineSiblingId = null;
+  state.openFeeChartId = null;
+  state.openBillId = null;
+  state.openPaidReceiptId = null;
+  state.openMessageId = null;
+  state.openArchiveReceiptKey = null;
+  state.entryPanelHistoryPushed = false;
+  renderAll();
+  requestAnimationFrame(() => {
+    const row = document.querySelector(`[data-row-id="${CSS.escape(String(sibId))}"]`);
+    if (row) row.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
 function toggleReceiptSettings(id) {
   const before = state.receiptSettingsOpenId;
   state.receiptSettingsOpenId = state.receiptSettingsOpenId === id ? null : id;
@@ -2227,6 +2270,43 @@ function toggleMessageCombine(id) {
   state.messageCombine[id] = !state.messageCombine[id];
   saveMessageCombineToStorage();
   renderRowInPlace(id);
+}
+/* ---------- Per-sibling selection within a combined message ----------
+   Combine (above) automatically folds in every same-mobile sibling that
+   currently has a pending due. This lets the admin uncheck a specific
+   sibling out of that combine (e.g. an older sibling who pays
+   separately) without turning Combine off altogether — off by default
+   (i.e. everyone with a due stays included) until explicitly unticked.
+   Persisted per device, same pattern as the lock/combine toggles above. */
+const MESSAGE_COMBINE_EXCLUDE_KEY = "adm_reg_message_combine_exclude";
+function loadMessageCombineExcludeFromStorage() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(MESSAGE_COMBINE_EXCLUDE_KEY) || "{}");
+    if (saved && typeof saved === "object") state.messageCombineExclude = saved;
+  } catch (e) { state.messageCombineExclude = {}; }
+}
+function saveMessageCombineExcludeToStorage() {
+  try { localStorage.setItem(MESSAGE_COMBINE_EXCLUDE_KEY, JSON.stringify(state.messageCombineExclude)); } catch (e) {}
+}
+function combineExcludeKey(entryId, sibId) { return `${entryId}::${sibId}`; }
+function isSiblingExcludedFromCombine(entryId, sibId) {
+  return !!(state.messageCombineExclude && state.messageCombineExclude[combineExcludeKey(entryId, sibId)]);
+}
+function toggleSiblingCombineExclude(entryId, sibId) {
+  state.messageCombineExclude = state.messageCombineExclude || {};
+  const key = combineExcludeKey(entryId, sibId);
+  state.messageCombineExclude[key] = !state.messageCombineExclude[key];
+  saveMessageCombineExcludeToStorage();
+  renderRowInPlace(entryId);
+}
+/* Expand/collapse a small inline card under a sibling's name in the
+   Combine list — shows that sibling's class/roll + their own pending due
+   so the admin can see who they're about to message without leaving this
+   panel. Only one expanded at a time, across all entries. */
+function toggleCombineSiblingExpanded(entryId, sibId) {
+  const key = combineExcludeKey(entryId, sibId);
+  state.expandedCombineSiblingId = state.expandedCombineSiblingId === key ? null : key;
+  renderRowInPlace(entryId);
 }
 function getIdCardEligibleEntries() {
   return state.entries.filter(e => {
@@ -2987,6 +3067,7 @@ function getSiblingEntriesByMobile(e) {
 function getMessageCombineGroup(e, ownBill) {
   const group = [{ entry: e, bill: ownBill }];
   getSiblingEntriesByMobile(e).forEach(sib => {
+    if (isSiblingExcludedFromCombine(e.id, sib.id)) return;
     const sSheet = normalizeFeeSheet(sib.feeChart);
     if (!sSheet || !sSheet.rows || !sSheet.rows.length) return;
     const pending = getFeeChartBillSelectableRowIndices(sSheet);
@@ -4954,13 +5035,68 @@ function renderFeeChartMessageBox(e, sheet) {
     `<option value="${ri}" ${selectedIdx === ri ? "selected" : ""}>${escapeHtml(rowLabel(ri))}</option>`).join("");
   const locked = isMessageLocked(e.id);
   const guestBlocked = state.isGuestMode;
+  /* Each sibling gets its own line: a checkbox to include/exclude it from
+     the combined message (independent of the master Combine toggle above),
+     and its name as a click-to-expand link showing that sibling's class,
+     roll and its own Kab Se/Kab Tak range (editable right here, same as
+     the main Message box above) with the resulting pending due, plus a
+     shortcut to jump straight to that sibling's own card in the list. */
+  const siblingRowsHtml = siblings.map(sib => {
+    const excluded = isSiblingExcludedFromCombine(e.id, sib.id);
+    const expandKey = combineExcludeKey(e.id, sib.id);
+    const expanded = state.expandedCombineSiblingId === expandKey;
+    const sSheet = normalizeFeeSheet(sib.feeChart);
+    const sPending = (sSheet && sSheet.rows && sSheet.rows.length) ? getFeeChartBillSelectableRowIndices(sSheet) : [];
+    let sDraft = null, sBill = null;
+    if (sPending.length) {
+      sDraft = getFeeChartBillDraft(sib.id, sSheet);
+      sBill = computeFeeChartBill(sSheet, sDraft.fromIdx, sDraft.toIdx);
+    }
+    const sHasDue = !!(sBill && sBill.total > 0);
+    const sRowLabel = (ri) => `Row ${ri + 1}: ${feeChartRowDetail(sSheet, ri, sBill ? sBill.amountColIdx : 0) || "—"}`;
+    const sNoDuesOption = (selectedIdx) => `<option value="-1" ${selectedIdx === -1 ? "selected" : ""}>— ${escapeHtml(T("Nothing Due Right Now (No Dues)"))} —</option>`;
+    const sOptions = (selectedIdx) => sNoDuesOption(selectedIdx) + sPending.map(ri =>
+      `<option value="${ri}" ${selectedIdx === ri ? "selected" : ""}>${escapeHtml(sRowLabel(ri))}</option>`).join("");
+    return `
+      <div style="margin-bottom:3px;">
+        <span style="display:inline-flex;align-items:center;gap:5px;">
+          <input type="checkbox" class="combineSiblingSelectChk" data-entry-id="${e.id}" data-sib-id="${sib.id}" ${excluded ? "" : "checked"} title="${escapeAttr(T("Include in combined message"))}" style="width:13px;height:13px;cursor:pointer;flex-shrink:0;" />
+          <button type="button" class="combineSiblingNameBtn" data-entry-id="${e.id}" data-sib-id="${sib.id}" style="background:none;border:none;padding:0;color:#1F2A44;text-decoration:underline;text-decoration-style:dotted;font-size:12px;cursor:pointer;font-family:inherit;">${escapeHtml(TN(sib.name) || "—")}</button>
+        </span>
+        ${expanded ? `
+          <div style="margin:4px 0 6px 20px;padding:6px 8px;background:#fff;border:1px solid #D9CBA3;border-radius:3px;font-size:11.5px;color:#6B5F4B;">
+            <div>${escapeHtml(T("Class"))}: ${escapeHtml(sib.className || "—")}${sib.section ? " " + escapeHtml(sib.section) : ""} · ${escapeHtml(T("Roll"))}: ${escapeHtml(sib.rollNo || "—")}</div>
+            ${sPending.length ? `
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:5px;">
+              <div style="flex:1;min-width:120px;">
+                <label class="stamp" style="font-size:9.5px;color:#6B5F4B;">${escapeHtml(T("Kab Se (From)"))}</label>
+                <select class="rule-input combineSiblingFromSel" data-parent-id="${e.id}" data-sib-id="${sib.id}" style="font-size:11.5px;width:100%;">
+                  ${sOptions(sDraft.fromIdx)}
+                </select>
+              </div>
+              <div style="flex:1;min-width:120px;">
+                <label class="stamp" style="font-size:9.5px;color:#6B5F4B;">${escapeHtml(T("Kab Tak (To)"))}</label>
+                <select class="rule-input combineSiblingToSel" data-parent-id="${e.id}" data-sib-id="${sib.id}" style="font-size:11.5px;width:100%;">
+                  ${sOptions(sDraft.toIdx)}
+                </select>
+              </div>
+            </div>
+            <div style="margin-top:4px;">${sHasDue ? `${escapeHtml(T("Pending due"))}: <b style="color:#9B3437;">${fmtINR(sBill.total)}</b>` : escapeHtml(T("No pending due right now."))}</div>
+            ` : `<div style="margin-top:2px;">${escapeHtml(T("No fee chart / rows set for this student."))}</div>`}
+            <button type="button" class="openSiblingCardBtn" data-sib-id="${sib.id}" style="margin-top:5px;background:none;border:1px solid #B7A97E;color:#1F2A44;border-radius:3px;padding:3px 8px;font-size:11px;cursor:pointer;font-family:'IBM Plex Mono',monospace;">${escapeHtml(T("Open this student's card"))} →</button>
+          </div>` : ""}
+      </div>`;
+  }).join("");
   const combineToggleHtml = (hasMobile && siblings.length > 0) ? `
-      <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;padding:8px;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:4px;">
-        <input type="checkbox" id="combineMessageChk-${e.id}" class="combineMessageChk" data-id="${e.id}" ${isMessageCombineOn(e.id) ? "checked" : ""} style="margin-top:2px;width:15px;height:15px;flex-shrink:0;cursor:pointer;" />
-        <label for="combineMessageChk-${e.id}" style="font-size:12px;color:#1F2A44;cursor:pointer;">
-          <b>Combine with same mobile number</b> — also enrolled on ${escapeHtml(e.mobile)}: ${siblings.map(s => escapeHtml(TN(s.name) || "—")).join(", ")}.
-          ${isMessageCombineOn(e.id) ? (combining ? `<br/><span style="color:#1E7A3E;">One combined message will be sent to this number for ${combineGroup.length} student(s).</span>` : `<br/><span style="color:#6B5F4B;">No other sibling currently has a due — sending as a single-student message.</span>`) : ""}
-        </label>
+      <div style="margin-bottom:10px;padding:8px;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:4px;">
+        <div style="display:flex;align-items:flex-start;gap:8px;">
+          <input type="checkbox" id="combineMessageChk-${e.id}" class="combineMessageChk" data-id="${e.id}" ${isMessageCombineOn(e.id) ? "checked" : ""} style="margin-top:2px;width:15px;height:15px;flex-shrink:0;cursor:pointer;" />
+          <label for="combineMessageChk-${e.id}" style="font-size:12px;color:#1F2A44;cursor:pointer;">
+            <b>Combine with same mobile number</b> — also enrolled on ${escapeHtml(e.mobile)}:
+            ${isMessageCombineOn(e.id) ? (combining ? `<br/><span style="color:#1E7A3E;">One combined message will be sent to this number for ${combineGroup.length} student(s).</span>` : `<br/><span style="color:#6B5F4B;">No other sibling currently has a due — sending as a single-student message.</span>`) : ""}
+          </label>
+        </div>
+        <div style="margin-top:6px;margin-left:23px;">${siblingRowsHtml}</div>
       </div>` : "";
   return `
     <div style="margin-top:12px;padding-top:10px;border-top:1px dashed #B7A97E;">
@@ -5621,6 +5757,8 @@ const state = {
   openMessageId: null,
   messageLocks: {},
   messageCombine: {},
+  messageCombineExclude: {},
+  expandedCombineSiblingId: null,
   openArchiveReceiptKey: null,
   entryPanelHistoryPushed: false,
   receiptSettings: { instituteName: "", transportInstituteName: "", signatureUrl: "", logoUrl: "", watermarkEnabled: false, watermarkOpacity: 0.12, watermarkSize: 150, watermarkOffsetX: 0, watermarkOffsetY: 0, transportLogoUrl: "", transportWatermarkEnabled: false, transportWatermarkOpacity: 0.12, transportWatermarkSize: 150, transportWatermarkOffsetX: 0, transportWatermarkOffsetY: 0, upiQrUrl: "" },
@@ -6014,6 +6152,7 @@ async function loadEntries() {
   loadReceiptSettingsFromStorage();
   loadMessageLocksFromStorage();
   loadMessageCombineFromStorage();
+  loadMessageCombineExcludeFromStorage();
   await loadDeletedInvoiceHistory();
   await loadAppSettings();
   await loadExternalExportTarget();
@@ -10393,6 +10532,38 @@ function wireUpEntryRowEvents(el) {
   });
   el.querySelectorAll(".combineMessageChk").forEach(chk => {
     chk.addEventListener("change", () => toggleMessageCombine(chk.dataset.id));
+  });
+  el.querySelectorAll(".combineSiblingSelectChk").forEach(chk => {
+    chk.addEventListener("change", () => toggleSiblingCombineExclude(chk.dataset.entryId, chk.dataset.sibId));
+  });
+  el.querySelectorAll(".combineSiblingNameBtn").forEach(btn => {
+    btn.addEventListener("click", () => toggleCombineSiblingExpanded(btn.dataset.entryId, btn.dataset.sibId));
+  });
+  el.querySelectorAll(".openSiblingCardBtn").forEach(btn => {
+    btn.addEventListener("click", () => jumpToSiblingEntry(btn.dataset.sibId));
+  });
+  el.querySelectorAll(".combineSiblingFromSel").forEach(sel => {
+    sel.addEventListener("change", (evt) => {
+      const pool = state.allEntries || state.entries;
+      const sib = pool.find(x => x.id === evt.target.dataset.sibId);
+      if (!sib) return;
+      const sSheet = normalizeFeeSheet(sib.feeChart);
+      const draft = getFeeChartBillDraft(sib.id, sSheet);
+      draft.fromIdx = parseInt(evt.target.value, 10);
+      renderRowInPlace(evt.target.dataset.parentId);
+    });
+  });
+  el.querySelectorAll(".combineSiblingToSel").forEach(sel => {
+    sel.addEventListener("change", (evt) => {
+      const pool = state.allEntries || state.entries;
+      const sib = pool.find(x => x.id === evt.target.dataset.sibId);
+      if (!sib) return;
+      const sSheet = normalizeFeeSheet(sib.feeChart);
+      const draft = getFeeChartBillDraft(sib.id, sSheet);
+      draft.toIdx = parseInt(evt.target.value, 10);
+      draft.toIdxAuto = false;
+      renderRowInPlace(evt.target.dataset.parentId);
+    });
   });
   el.querySelectorAll(".sendFeeChartMsgBtn").forEach(a => {
     a.addEventListener("click", () => {
