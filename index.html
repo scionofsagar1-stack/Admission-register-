@@ -2846,7 +2846,15 @@ function getFeeChartBillSelectableRowIndices(sheet) {
   const curIdx = getCurrentSessionMonthIndex();
   return pending.filter(ri => {
     const mi = getFeeChartRowMonthIndex(sheet, ri);
-    return mi !== -1 && mi <= curIdx;
+    // Bug fix: rows with NO recognizable month in them (e.g. Row 1 is often
+    // "Admission Fee" / "Registration Fee" / "Previous Balance" with no
+    // month name at all) were being treated as "future" and hidden from a
+    // Class Teacher (guest) login's bill/message row dropdown — even though
+    // there's no month to compare against, so it can never actually be a
+    // future row. Only a row whose month IS recognized and falls AFTER the
+    // current month should be hidden; a row with no recognizable month must
+    // always stay visible.
+    return mi === -1 || mi <= curIdx;
   });
 }
 function getFeeChartBillDraft(entryId, sheet) {
