@@ -6568,7 +6568,21 @@ async function refreshEntries(retriesLeft) {
   // ALSO filtered here on the client, matching against their profile. A
   // teacher created with "All Classes" access (guestClass/guestSection/
   // guestSession all blank) still sees everyone, as intended.
-  const { data, error } = await supabaseClient.from("admission_entries").select("*").order("serial", { ascending: true });
+  // Supabase/PostgREST caps each request at 1000 rows by default. Once the
+  // register passes 1000 students, a single select("*") silently truncates
+  // to the first 1000 (by serial) — new entries beyond that never show up
+  // even though they did save. So we page through in batches of 1000 and
+  // concatenate until a page comes back short (meaning we've hit the end).
+  const PAGE_SIZE = 1000;
+  let data = [];
+  let error = null;
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const to = from + PAGE_SIZE - 1;
+    const res = await supabaseClient.from("admission_entries").select("*").order("serial", { ascending: true }).range(from, to);
+    if (res.error) { error = res.error; break; }
+    data = data.concat(res.data);
+    if (!res.data || res.data.length < PAGE_SIZE) break;
+  }
   if (error) {
     // Right after the app resumes from the background (e.g. coming back
     // from WhatsApp), the device's network connection can take a moment
