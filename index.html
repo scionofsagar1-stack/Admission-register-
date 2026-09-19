@@ -176,6 +176,11 @@
       <input id="searchInput" placeholder="Search by name, class, mobile…" class="rule-input" style="border-bottom:none;padding:0;" />
     </div>
     <select id="classFilterSel" class="stamp"></select>
+    <span id="classRangeWrap" style="display:none;align-items:center;gap:6px;">
+      <select id="classFromSel" class="stamp" aria-label="From class"></select>
+      <span class="stamp" style="font-size:12px;color:#6B5F4B;">To</span>
+      <select id="classToSel" class="stamp" aria-label="To class"></select>
+    </span>
     <select id="sectionFilterSel" class="stamp"></select>
     <select id="sessionFilterSel" class="stamp"></select>
     <select id="fMonthFilterSel" class="stamp"></select>
@@ -300,6 +305,7 @@
   <div id="selectionPanel"></div>
 
   <div style="margin:20px 0 0;background:#FBF7EC;border:none;border-radius:0;">
+    <div id="classCountBar" style="display:none;"></div>
     <div id="entriesList"></div>
   </div>
 </div>
@@ -339,7 +345,7 @@ const I18N_LANG_KEY = "feeRegisterLang";
    unlike sessionStorage) so they can be restored right after login. */
 const VIEW_STATE_KEY = "adm_reg_view_state_v1";
 const VIEW_STATE_FIELDS = [
-  "query", "classFilter", "sectionFilter", "sessionFilter", "fMonthFilter",
+  "query", "classFilter", "classRangeFrom", "classRangeTo", "sectionFilter", "sessionFilter", "fMonthFilter",
   "notPaidTillFilter", "starFilter", "whatsappFilter", "admTypeFilter",
   "transportFilter", "siblingFilter", "addressFilter", "notesFilter", "updatedFrom", "updatedTo",
   "showMoreFilters",
@@ -450,6 +456,7 @@ const HI_DICT = {
   "Clear": "साफ़ करें",
   "All Classes": "सभी कक्षाएं",
   "All classes": "सभी कक्षाएं",
+  "Class Range": "कक्षा रेंज",
   "All Sessions": "सभी सत्र",
   "All sessions": "सभी सत्र",
   "All Fee Paid Till": "सभी फीस भुगतान तक",
@@ -687,6 +694,7 @@ const HI_DICT = {
   "students": "छात्र",
   "entry": "एंट्री",
   "entries": "एंट्रीज़",
+  "showing": "दिख रही",
   "on record": "रिकॉर्ड में",
   "saving…": "सेव हो रहा है…",
   // Months
@@ -1933,6 +1941,8 @@ function toggleMessageBox(id) {
 function jumpToSiblingEntry(sibId) {
   state.query = "";
   state.classFilter = "all";
+  state.classRangeFrom = "";
+  state.classRangeTo = "";
   state.sectionFilter = "all";
   state.sessionFilter = "all";
   state.fMonthFilter = "all";
@@ -3489,11 +3499,14 @@ function getFilteredReportInvoices() {
     if (state.reportRangeFrom) fromMs = new Date(state.reportRangeFrom + "T00:00:00").getTime();
     if (state.reportRangeTo) toMs = new Date(state.reportRangeTo + "T23:59:59.999").getTime();
   }
+  const reportClassList = state.reportClassSel === "range" ? getClassList() : null;
   return all.filter(inv => {
     if (fromMs != null && (inv.paidAt || 0) < fromMs) return false;
     if (toMs != null && (inv.paidAt || 0) > toMs) return false;
     if (state.reportSessionSel !== "all" && inv.session !== state.reportSessionSel) return false;
-    if (state.reportClassSel !== "all" && inv.className !== state.reportClassSel) return false;
+    if (state.reportClassSel === "range") {
+      if (!classInRange(inv.className, state.reportClassFrom, state.reportClassTo, reportClassList)) return false;
+    } else if (state.reportClassSel !== "all" && inv.className !== state.reportClassSel) return false;
     if (state.reportSectionSel !== "all" && (inv.section || "") !== state.reportSectionSel) return false;
     if (state.reportCategorySel !== "all" && inv.category !== state.reportCategorySel) return false;
     return true;
@@ -5718,7 +5731,7 @@ async function loadSessionAndProfile() {
 /* ---------- State ---------- */
 const state = {
   entries: [], allEntries: [], loading: true, form: { ...EMPTY }, showForm: false,
-  editingId: null, editForm: { ...EMPTY }, editOriginal: null, query: "", classFilter: "all", sectionFilter: "all",
+  editingId: null, editForm: { ...EMPTY }, editOriginal: null, query: "", classFilter: "all", classRangeFrom: "", classRangeTo: "", sectionFilter: "all",
   editOpenDemographic: false, editOpenChart: false,
   sessionFilter: "all", fMonthFilter: "all", notPaidTillFilter: "all", starFilter: "all", whatsappFilter: "all", admTypeFilter: "all", transportFilter: "all", siblingFilter: "all", addressFilter: "all", notesFilter: "", updatedFrom: "", updatedTo: "", saving: false, error: "", showBackups: false, recentMessageSends: {},
   backups: [], restoring: false, selectMode: false, selectedIds: new Set(),
@@ -5802,6 +5815,8 @@ const state = {
   reportRangeTo: "",
   reportSessionSel: "all",
   reportClassSel: "all",
+  reportClassFrom: "",
+  reportClassTo: "",
   reportSectionSel: "all",
   reportCategorySel: "all",
   showReportColumns: false,
@@ -7229,9 +7244,36 @@ async function removeEventFromEntry(entryId, eventId) {
   renderAll();
 }
 
+/* Class ka natural order: Play/Nursery/LKG/UKG pehle, phir 1st, 2nd, 3rd…
+   (number ke hisaab se), aur baaki custom naam sabse end me. Isi order se
+   "Class range" (jaise 1 se 5) kaam karta hai. */
+const PRE_PRIMARY_ORDER = ["play", "playgroup", "pg", "prenursery", "nursery", "nur", "prekg", "lkg", "kg", "kg1", "ukg", "kg2", "prep"];
+function classSortKey(name) {
+  const raw = String(name || "").trim().toLowerCase();
+  const s = raw.replace(/[\s.\-_]/g, "");
+  const pre = PRE_PRIMARY_ORDER.indexOf(s);
+  if (pre !== -1) return [0, pre];
+  const m = raw.match(/\d+/);
+  if (m) return [1, parseInt(m[0], 10)];
+  return [2, 0];
+}
+function compareClassNames(a, b) {
+  const ka = classSortKey(a), kb = classSortKey(b);
+  if (ka[0] !== kb[0]) return ka[0] - kb[0];
+  if (ka[1] !== kb[1]) return ka[1] - kb[1];
+  return String(a).localeCompare(String(b), undefined, { numeric: true });
+}
 function getClassList() {
   const set = new Set(state.entries.map(e => (e.className || "").trim()).filter(Boolean));
-  return Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  return Array.from(set).sort(compareClassNames);
+}
+/* true agar cls, list me from..to (dono shamil) ke beech aata hai.
+   from > to ho to apne aap ulta kar leta hai. Range adhoori ho to filter nahi lagta. */
+function classInRange(cls, from, to, list) {
+  const a = list.indexOf(from), b = list.indexOf(to);
+  if (a === -1 || b === -1) return true;
+  const i = list.indexOf(String(cls || "").trim());
+  return i >= Math.min(a, b) && i <= Math.max(a, b);
 }
 function getSessionList() {
   const set = new Set(state.entries.map(e => (e.session || "").trim()).filter(Boolean));
@@ -7259,8 +7301,12 @@ function getFiltered() {
     if (!m) return;
     mobileCounts.set(m, (mobileCounts.get(m) || 0) + 1);
   });
+  const classListForRange = state.classFilter === "range" ? getClassList() : null;
   return state.entries.filter(e => {
-    const matchesClass = state.classFilter === "all" || (e.className || "").trim() === state.classFilter;
+    const matchesClass = state.classFilter === "all"
+      || (state.classFilter === "range"
+        ? classInRange(e.className, state.classRangeFrom, state.classRangeTo, classListForRange)
+        : (e.className || "").trim() === state.classFilter);
     const matchesSection = state.sectionFilter === "all" || (e.section || "").trim() === state.sectionFilter;
     const matchesSession = state.sessionFilter === "all" || (e.session || "").trim() === state.sessionFilter;
     const filterMonthIdx = MONTHS.indexOf(state.fMonthFilter);
@@ -7434,6 +7480,24 @@ function renderHeader() {
   document.getElementById("settingsMenuPanel").style.display = state.showSettingsMenu ? "" : "none";
 }
 
+/* "Class Range" chuna ho to From / To dropdowns dikhata hai aur unke options bharta hai. */
+function syncClassRangeUI() {
+  const wrap = document.getElementById("classRangeWrap");
+  const fromSel = document.getElementById("classFromSel");
+  const toSel = document.getElementById("classToSel");
+  if (!wrap || !fromSel || !toSel) return;
+  const classList = getClassList();
+  const show = !state.isGuestMode && state.classFilter === "range" && classList.length > 1;
+  wrap.style.display = show ? "inline-flex" : "none";
+  if (!show) return;
+  if (!classList.includes(state.classRangeFrom)) state.classRangeFrom = classList[0];
+  if (!classList.includes(state.classRangeTo)) state.classRangeTo = classList[classList.length - 1];
+  const opts = classList.map(c => `<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join("");
+  fromSel.innerHTML = opts;
+  toSel.innerHTML = opts;
+  fromSel.value = state.classRangeFrom;
+  toSel.value = state.classRangeTo;
+}
 function renderFilters() {
   const classSel = document.getElementById("classFilterSel");
   const sectionSel = document.getElementById("sectionFilterSel");
@@ -7450,6 +7514,7 @@ function renderFilters() {
   sessionSel.style.display = (!state.isGuestMode && sessionList.length) ? "" : "none";
 
   classSel.innerHTML = `<option value="all">All classes</option>` +
+    (classList.length > 1 ? `<option value="range">Class Range</option>` : "") +
     classList.map(c => `<option value="${escapeAttr(c)}">Class ${escapeHtml(c)}</option>`).join("");
   sectionSel.innerHTML = `<option value="all">All sections</option>` +
     sectionList.map(s => `<option value="${escapeAttr(s)}">Section ${escapeHtml(s)}</option>`).join("");
@@ -7459,7 +7524,9 @@ function renderFilters() {
     MONTHS.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join("");
   notPaidSel.innerHTML = `<option value="all">Not Paid Till</option>` +
     MONTHS.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join("");
+  if (state.classFilter === "range" && classList.length < 2) state.classFilter = "all";
   classSel.value = state.classFilter;
+  syncClassRangeUI();
   sectionSel.value = state.sectionFilter;
   sessionSel.value = state.sessionFilter;
   fMonthSel.value = state.fMonthFilter;
@@ -9161,6 +9228,13 @@ function renderReportPanel() {
   const classList = getClassList();
   const sectionList = getSectionList();
   const sessionList = getSessionList();
+  if (state.reportClassSel === "range") {
+    if (classList.length < 2) state.reportClassSel = "all";
+    else {
+      if (!classList.includes(state.reportClassFrom)) state.reportClassFrom = classList[0];
+      if (!classList.includes(state.reportClassTo)) state.reportClassTo = classList[classList.length - 1];
+    }
+  }
   const invoices = getFilteredReportInvoices();
   const reportCols = state.reportColumnOrder
     .map(key => REPORT_COLUMN_DEFS.find(c => c.key === key))
@@ -9188,8 +9262,18 @@ function renderReportPanel() {
       ` : ""}
       <select id="repClassSel" class="stamp" style="border:1px solid #B7A97E;border-radius:3px;background:#FBF7EC;padding:6px 8px;">
         <option value="all">All Classes</option>
+        ${classList.length > 1 ? `<option value="range" ${state.reportClassSel === "range" ? "selected" : ""}>Class Range</option>` : ""}
         ${classList.map(c => `<option value="${escapeAttr(c)}" ${state.reportClassSel === c ? "selected" : ""}>${escapeHtml(c)}</option>`).join("")}
       </select>
+      ${state.reportClassSel === "range" && classList.length > 1 ? `
+        <select id="repClassFromSel" class="stamp" style="border:1px solid #B7A97E;border-radius:3px;background:#FBF7EC;padding:6px 8px;">
+          ${classList.map(c => `<option value="${escapeAttr(c)}" ${state.reportClassFrom === c ? "selected" : ""}>${escapeHtml(c)}</option>`).join("")}
+        </select>
+        <span class="stamp" style="font-size:12px;color:#6B5F4B;align-self:center;">To</span>
+        <select id="repClassToSel" class="stamp" style="border:1px solid #B7A97E;border-radius:3px;background:#FBF7EC;padding:6px 8px;">
+          ${classList.map(c => `<option value="${escapeAttr(c)}" ${state.reportClassTo === c ? "selected" : ""}>${escapeHtml(c)}</option>`).join("")}
+        </select>
+      ` : ""}
       <select id="repSectionSel" class="stamp" style="border:1px solid #B7A97E;border-radius:3px;background:#FBF7EC;padding:6px 8px;">
         <option value="all">All Sections</option>
         ${sectionList.map(s => `<option value="${escapeAttr(s)}" ${state.reportSectionSel === s ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
@@ -9286,6 +9370,10 @@ function renderReportPanel() {
   if (rangeToInput) rangeToInput.addEventListener("change", (e) => { state.reportRangeTo = e.target.value; renderReportPanel(); });
   const classSel = document.getElementById("repClassSel");
   if (classSel) classSel.addEventListener("change", (e) => { state.reportClassSel = e.target.value; renderReportPanel(); });
+  const classFromSel = document.getElementById("repClassFromSel");
+  if (classFromSel) classFromSel.addEventListener("change", (e) => { state.reportClassFrom = e.target.value; renderReportPanel(); });
+  const classToSel = document.getElementById("repClassToSel");
+  if (classToSel) classToSel.addEventListener("change", (e) => { state.reportClassTo = e.target.value; renderReportPanel(); });
   const sectionSel = document.getElementById("repSectionSel");
   if (sectionSel) sectionSel.addEventListener("change", (e) => { state.reportSectionSel = e.target.value; renderReportPanel(); });
   const sessionSel = document.getElementById("repSessionSel");
@@ -9910,6 +9998,27 @@ function renderArchivedChartsInline(e) {
   }).join("");
 }
 
+/* Class ya Class Range chunne par us class ki total entries dikhata hai
+   (baaki filters ke baad kitni dikh rahi hain, wo bhi, agar alag ho). */
+function renderClassCountBar(filteredCount) {
+  const bar = document.getElementById("classCountBar");
+  if (!bar) return;
+  if (state.loading || state.isGuestMode || state.classFilter === "all") { bar.style.display = "none"; bar.innerHTML = ""; return; }
+  const isRange = state.classFilter === "range";
+  let label, total;
+  if (isRange) {
+    const list = getClassList();
+    label = `${escapeHtml(state.classRangeFrom)} – ${escapeHtml(state.classRangeTo)}`;
+    total = state.entries.filter(e => classInRange(e.className, state.classRangeFrom, state.classRangeTo, list)).length;
+  } else {
+    label = escapeHtml(state.classFilter);
+    total = state.entries.filter(e => (e.className || "").trim() === state.classFilter).length;
+  }
+  const narrowed = filteredCount !== total
+    ? ` <span style="color:#6B5F4B;font-weight:400;">· ${T("showing")} ${filteredCount}</span>` : "";
+  bar.style.cssText = "display:block;margin:12px 8px 0;padding:8px 12px;border-left:3px solid #9B3437;background:#F3ECDA;font-family:'IBM Plex Mono',monospace;font-size:13px;color:#1F2A44;font-weight:600;";
+  bar.innerHTML = `${T("Class")} ${label} · ${total} ${T(total === 1 ? "entry" : "entries")}${narrowed}`;
+}
 function renderEntries() {
   const el = document.getElementById("entriesList");
   if (state.loading) {
@@ -9917,6 +10026,7 @@ function renderEntries() {
     return;
   }
   const filtered = getFiltered();
+  renderClassCountBar(filtered.length);
   if (filtered.length === 0) {
     el.innerHTML = `<p style="padding:24px;color:#6B5F4B;font-size:14px;">${state.entries.length === 0 ? "No entries yet. Add the first student above." : "No entries match your search or filters."}</p>`;
     return;
@@ -11435,7 +11545,19 @@ document.getElementById("sectionFilterSel").addEventListener("change", (e) => {
 });
 document.getElementById("classFilterSel").addEventListener("change", (e) => {
   state.classFilter = e.target.value;
+  syncClassRangeUI();
   renderEntries();
+  saveViewState();
+});
+document.getElementById("classFromSel").addEventListener("change", (e) => {
+  state.classRangeFrom = e.target.value;
+  renderEntries();
+  saveViewState();
+});
+document.getElementById("classToSel").addEventListener("change", (e) => {
+  state.classRangeTo = e.target.value;
+  renderEntries();
+  saveViewState();
 });
 document.getElementById("sessionFilterSel").addEventListener("change", (e) => {
   state.sessionFilter = e.target.value;
@@ -12051,6 +12173,8 @@ document.getElementById("logoutBtn").addEventListener("click", async () => {
   state.guestEditUnlocked = false;
   state.chatLocked = false;
   state.classFilter = "all";
+  state.classRangeFrom = "";
+  state.classRangeTo = "";
   state.sectionFilter = "all";
   state.sessionFilter = "all";
   state.showChatPanel = false;
