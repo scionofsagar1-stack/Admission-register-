@@ -7344,7 +7344,7 @@ function renderHeader() {
   document.getElementById("headerInfo").innerHTML = state.loading
     ? T("loading…")
     : state.isGuestMode
-      ? `${T("Class")} ${escapeHtml(state.guestClass)}${state.guestSection ? " · " + T("Section") + " " + escapeHtml(state.guestSection) : ""} · ${escapeHtml(state.guestSession)} — ${state.entries.length} ${T(state.entries.length === 1 ? "student" : "students")}`
+      ? `${state.guestClass ? T("Class") + " " + escapeHtml(state.guestClass) : T("All classes")}${state.guestSection ? " · " + T("Section") + " " + escapeHtml(state.guestSection) : ""}${state.guestSession ? " · " + escapeHtml(state.guestSession) : ""} — ${state.entries.length} ${T(state.entries.length === 1 ? "student" : "students")}`
       : `${state.entries.length} ${T(state.entries.length === 1 ? "entry" : "entries")} ${T("on record")}${state.saving ? " · " + T("saving…") : ""}`;
   document.getElementById("icon-bookopen").innerHTML = icon("bookopen", { size: 22, color: "#9B3437" });
   document.getElementById("icon-search").innerHTML = icon("search", { size: 16, color: "#6B5F4B" });
@@ -7480,6 +7480,13 @@ function renderHeader() {
   document.getElementById("settingsMenuPanel").style.display = state.showSettingsMenu ? "" : "none";
 }
 
+/* Staff (teacher/viewer) login me filter tabhi dikhao jab unka access us cheez par
+   restricted na ho. Jis staff ko "All Classes" access mila hai (class blank), use
+   class filter milta hai; jiska section/session blank hai use wo filters milte hain.
+   Admin ko hamesha sab milta hai. */
+function canUseClassFilter()   { return !state.isGuestMode || !(state.guestClass || "").trim(); }
+function canUseSectionFilter() { return !state.isGuestMode || !(state.guestSection || "").trim(); }
+function canUseSessionFilter() { return !state.isGuestMode || !(state.guestSession || "").trim(); }
 /* "Class Range" chuna ho to From / To dropdowns dikhata hai aur unke options bharta hai. */
 function syncClassRangeUI() {
   const wrap = document.getElementById("classRangeWrap");
@@ -7487,7 +7494,7 @@ function syncClassRangeUI() {
   const toSel = document.getElementById("classToSel");
   if (!wrap || !fromSel || !toSel) return;
   const classList = getClassList();
-  const show = !state.isGuestMode && state.classFilter === "range" && classList.length > 1;
+  const show = canUseClassFilter() && state.classFilter === "range" && classList.length > 1;
   wrap.style.display = show ? "inline-flex" : "none";
   if (!show) return;
   if (!classList.includes(state.classRangeFrom)) state.classRangeFrom = classList[0];
@@ -7509,9 +7516,9 @@ function renderFilters() {
   const sectionList = getSectionList();
   const sessionList = getSessionList();
 
-  classSel.style.display = (!state.isGuestMode && classList.length) ? "" : "none";
-  sectionSel.style.display = (!state.isGuestMode && sectionList.length) ? "" : "none";
-  sessionSel.style.display = (!state.isGuestMode && sessionList.length) ? "" : "none";
+  classSel.style.display = (canUseClassFilter() && classList.length) ? "" : "none";
+  sectionSel.style.display = (canUseSectionFilter() && sectionList.length) ? "" : "none";
+  sessionSel.style.display = (canUseSessionFilter() && sessionList.length) ? "" : "none";
 
   classSel.innerHTML = `<option value="all">All classes</option>` +
     (classList.length > 1 ? `<option value="range">Class Range</option>` : "") +
@@ -10003,7 +10010,7 @@ function renderArchivedChartsInline(e) {
 function renderClassCountBar(filteredCount) {
   const bar = document.getElementById("classCountBar");
   if (!bar) return;
-  if (state.loading || state.isGuestMode || state.classFilter === "all") { bar.style.display = "none"; bar.innerHTML = ""; return; }
+  if (state.loading || !canUseClassFilter() || state.classFilter === "all") { bar.style.display = "none"; bar.innerHTML = ""; return; }
   const isRange = state.classFilter === "range";
   let label, total;
   if (isRange) {
