@@ -2091,61 +2091,168 @@ function getAdmitCardEligibleEntries() {
     return matchesClass && matchesSection && matchesSession && matchesFMonth && matchesNotPaidTill && matchesAddress && matchesNote && matchesStar;
   }).sort((a, b) => a.serial - b.serial);
 }
+/* Admit card ka size aur shape (aada = landscape / khada = portrait) settings se aata hai — ID card jaisa hi system.
+   Presets: Standard (8 per A4 page), Compact PVC, A6 Big, Wide Card ya Custom (mm me).
+   Text card ke size ke hisaab se apne aap chhota/bada hota hai, settings.fontScale (%) se aur adjust hota hai,
+   aur agar phir bhi kuch card se bahar jaaye to mountAdmitCardFitted() font ghata kar dobara banata hai
+   taaki koi detail hide na ho. Logo ko background watermark bhi banaya ja sakta hai. */
+const ADMIT_CARD_PRESETS = {
+  std:  { label: "Standard – 8 per page (96 × 68 mm)", long: 96,   short: 68 },
+  cr80: { label: "Compact PVC size (85.6 × 54 mm)",    long: 85.6, short: 53.98 },
+  a6:   { label: "A6 Big (148 × 105 mm)",              long: 148,  short: 105 },
+  wide: { label: "Wide Card (170 × 80 mm)",            long: 170,  short: 80 },
+};
+const ADMIT_CARD_PX_PER_MM = 400 / 96;
+/* Admin "Cards per A4 page" me koi number (1–30) set kare to page us number me barabar bant jaata hai
+   (grid apne aap chunta hai — jaise 6 = 2 × 3) aur card ka size us khane ke hisaab se ban jaata hai.
+   "Auto" me card apni chuni hui size (preset/custom) me rehta hai aur jitne A4 par fit hon utne lagte hain. */
+const ADMIT_PAGE = { w: 595.28, h: 841.89, margin: 18, gap: 10 }; // A4 in pt
+function admitPerPageCount(settings) {
+  const m = settings.perPage;
+  if (!m || m === "auto") return 0;
+  const n = parseInt(m === "custom" ? settings.perPageCustom : m, 10);
+  return n >= 1 ? Math.min(30, n) : 0;
+}
+function getAdmitCardDims(settings) {
+  const MM_TO_PT = 72 / 25.4;
+  const { margin, gap } = ADMIT_PAGE;
+  const N = admitPerPageCount(settings);
+  const portraitPref = settings.orientation === "portrait";
+  let wMm, hMm, layout = null;
+  if (N) {
+    // Card aada chuna ho to chaude khane pasand karte hain, khada ho to lambe khane.
+    const target = portraitPref ? 0.71 : 1.41;
+    let best = null;
+    for (const land of [false, true]) {
+      const pw = land ? ADMIT_PAGE.h : ADMIT_PAGE.w, ph = land ? ADMIT_PAGE.w : ADMIT_PAGE.h;
+      for (let c = 1; c <= N; c++) {
+        const r = Math.ceil(N / c);
+        const cw = (pw - 2 * margin - (c - 1) * gap) / c;
+        const ch = (ph - 2 * margin - (r - 1) * gap) / r;
+        if (cw < 70 || ch < 70) continue;
+        const score = (c * r - N) * 0.35 + Math.abs(Math.log((cw / ch) / target));
+        if (!best || score < best.score) best = { score, land, c, r, cw, ch, pw, ph };
+      }
+    }
+    if (best) {
+      wMm = best.cw / MM_TO_PT; hMm = best.ch / MM_TO_PT;
+      layout = { pageLandscape: best.land, pageW: best.pw, pageH: best.ph, cols: best.c, rows: best.r, cellW: best.cw, cellH: best.ch, perPage: N, originX: margin, originY: margin };
+    }
+  }
+  if (!layout) {
+    let L, Sh;
+    if (settings.sizePreset === "custom") {
+      L = Math.min(170, Math.max(60, parseFloat(settings.customLong) || 96));
+      Sh = Math.min(120, Math.max(40, parseFloat(settings.customShort) || 68));
+      if (Sh > L) { const tmp = L; L = Sh; Sh = tmp; }
+    } else {
+      const pr = ADMIT_CARD_PRESETS[settings.sizePreset] || ADMIT_CARD_PRESETS.std;
+      L = pr.long; Sh = pr.short;
+    }
+    wMm = portraitPref ? Sh : L;
+    hMm = portraitPref ? L : Sh;
+    const cellW = wMm * MM_TO_PT, cellH = hMm * MM_TO_PT;
+    const availW = ADMIT_PAGE.w - 2 * margin, availH = ADMIT_PAGE.h - 2 * margin;
+    const cols = Math.max(1, Math.floor((availW + gap) / (cellW + gap)));
+    const rows = Math.max(1, Math.floor((availH + gap) / (cellH + gap)));
+    layout = {
+      pageLandscape: false, pageW: ADMIT_PAGE.w, pageH: ADMIT_PAGE.h, cols, rows, cellW, cellH, perPage: cols * rows,
+      originX: margin + (availW - (cols * cellW + (cols - 1) * gap)) / 2,
+      originY: margin + (availH - (rows * cellH + (rows - 1) * gap)) / 2,
+    };
+  }
+  const Lm = Math.max(wMm, hMm), Sm = Math.min(wMm, hMm);
+  return {
+    portrait: hMm > wMm, wMm, hMm,
+    w: Math.round(wMm * ADMIT_CARD_PX_PER_MM),
+    h: Math.round(hMm * ADMIT_CARD_PX_PER_MM),
+    factor: Math.min(2, Math.max(0.6, Math.min(Lm / 96, Sm / 68))),
+    layout,
+  };
+}
 function buildAdmitCardNode(entry, settings) {
+  const dims = getAdmitCardDims(settings);
+  const S = (settings.fontScale != null ? settings.fontScale : 100) / 100;
+  const K = dims.factor * S;
+  const f = (n) => (Math.round(n * K * 100) / 100) + "px";
+  const photoK = dims.factor * Math.min(S, 1);
+  const photoW = Math.round(52 * photoK), photoH = Math.round(64 * photoK);
   const kv = (label, value, opts) => value
-    ? `<div style="display:flex;gap:4px;font-size:8.5px;line-height:1.4;${(opts && opts.mb) || ""}">
-        <span style="font-family:'IBM Plex Mono',monospace;color:#6B5F4B;">${escapeHtml(label)}:</span>
-        <span style="color:#1F2A44;font-weight:600;">${escapeHtml(value)}</span>
+    ? `<div style="display:flex;gap:4px;font-size:${f(8.5)};line-height:1.4;${(opts && opts.mb) || ""}">
+        <span style="font-family:'IBM Plex Mono',monospace;color:#6B5F4B;flex-shrink:0;">${escapeHtml(label)}:</span>
+        <span style="color:#1F2A44;font-weight:600;min-width:0;word-break:break-word;">${escapeHtml(value)}</span>
       </div>`
     : "";
   const examLine = [
     settings.examDate ? `Date: ${settings.examDate}` : "",
     settings.examTime ? `Time: ${settings.examTime}` : "",
   ].filter(Boolean).join("  ·  ");
+  const showWatermark = settings.watermarkEnabled && settings.logoUrl;
+  const watermarkOpacity = settings.watermarkOpacity != null ? settings.watermarkOpacity : 0.12;
+  const watermarkSize = settings.watermarkSize != null ? settings.watermarkSize : 150;
+  const watermarkOffsetX = settings.watermarkOffsetX != null ? settings.watermarkOffsetX : 0;
+  const watermarkOffsetY = settings.watermarkOffsetY != null ? settings.watermarkOffsetY : 0;
   const wrap = document.createElement("div");
-  wrap.style.cssText = "width:400px;background:#FBF7EC;border:2px solid #9B3437;font-family:'Source Serif 4',Georgia,serif;color:#1F2A44;box-sizing:border-box;";
+  wrap.style.cssText = `position:relative;width:${dims.w}px;height:${dims.h}px;background:#FBF7EC;border:2px solid #9B3437;font-family:'Source Serif 4',Georgia,serif;color:#1F2A44;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;`;
   wrap.innerHTML = `
-    <div style="background:#9B3437;color:#F3ECDA;padding:6px 10px;text-align:center;">
+    ${showWatermark ? `<img src="${escapeAttr(settings.logoUrl)}" crossorigin="anonymous" style="position:absolute;top:calc(50% + ${watermarkOffsetY}px);left:calc(50% + ${watermarkOffsetX}px);transform:translate(-50%,-50%);width:${watermarkSize}px;height:${watermarkSize}px;object-fit:contain;opacity:${watermarkOpacity};z-index:0;pointer-events:none;" />` : ""}
+    <div style="position:relative;z-index:1;flex-shrink:0;background:#9B3437;color:#F3ECDA;padding:6px 10px;text-align:center;">
       <div style="display:flex;align-items:center;justify-content:center;gap:6px;">
-        ${settings.logoUrl ? `<img src="${escapeAttr(settings.logoUrl)}" crossorigin="anonymous" style="width:22px;height:22px;object-fit:contain;flex-shrink:0;" />` : ""}
-        ${settings.instituteName ? `<div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:11.5px;line-height:1.25;">${escapeHtml(settings.instituteName)}</div>` : ""}
+        ${settings.logoUrl ? `<img src="${escapeAttr(settings.logoUrl)}" crossorigin="anonymous" style="width:${Math.round(22 * dims.factor)}px;height:${Math.round(22 * dims.factor)}px;object-fit:contain;flex-shrink:0;" />` : ""}
+        ${settings.instituteName ? `<div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:${f(11.5)};line-height:1.25;">${escapeHtml(settings.instituteName)}</div>` : ""}
       </div>
-      <div style="font-family:'IBM Plex Mono',monospace;font-size:8px;letter-spacing:2px;text-transform:uppercase;margin-top:2px;">Admit Card</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:${f(8)};letter-spacing:2px;text-transform:uppercase;margin-top:2px;">Admit Card</div>
     </div>
-    <div style="display:flex;gap:8px;padding:8px 10px 2px;">
-      <div style="width:52px;height:64px;flex-shrink:0;border:1px solid #B7A97E;background:#F3ECDA;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-        ${entry.photoUrl ? `<img src="${escapeAttr(entry.photoUrl)}" crossorigin="anonymous" style="width:100%;height:100%;object-fit:cover;" />` : `<span style="font-size:7px;color:#B7A97E;text-align:center;">No Photo</span>`}
+    <div data-adm-body style="position:relative;z-index:1;flex:1;min-height:0;overflow:hidden;">
+      <div style="display:flex;gap:8px;padding:8px 10px 2px;">
+        <div style="width:${photoW}px;height:${photoH}px;flex-shrink:0;border:1px solid #B7A97E;background:#F3ECDA;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+          ${entry.photoUrl ? `<img src="${escapeAttr(entry.photoUrl)}" crossorigin="anonymous" style="width:100%;height:100%;object-fit:cover;" />` : `<span style="font-size:7px;color:#B7A97E;text-align:center;">No Photo</span>`}
+        </div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:700;font-size:${f(11)};line-height:1.3;word-break:break-word;">${escapeHtml(TN(entry.name)) || "—"}</div>
+          <div style="font-size:${f(8.5)};color:#6B5F4B;line-height:1.35;word-break:break-word;">${escapeHtml(TN(entry.fatherName)) || "—"}</div>
+          <div style="font-size:${f(8.5)};margin-top:3px;line-height:1.4;">Class: <b>${escapeHtml(entry.className) || "—"}</b>&nbsp; Session: <b>${escapeHtml(entry.session) || "—"}</b></div>
+          <div style="font-size:${f(8.5)};line-height:1.4;">Enroll No.: <b>${escapeHtml(entry.rollNo) || "—"}</b></div>
+        </div>
       </div>
-      <div style="flex:1;min-width:0;">
-        <div style="font-weight:700;font-size:11px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(TN(entry.name)) || "—"}</div>
-        <div style="font-size:8.5px;color:#6B5F4B;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(TN(entry.fatherName)) || "—"}</div>
-        <div style="font-size:8.5px;margin-top:3px;line-height:1.4;">Class: <b>${escapeHtml(entry.className) || "—"}</b>&nbsp; Session: <b>${escapeHtml(entry.session) || "—"}</b></div>
-        <div style="font-size:8.5px;line-height:1.4;">Enroll No.: <b>${escapeHtml(entry.rollNo) || "—"}</b></div>
+      <div style="padding:5px 10px 2px;border-top:1px dashed #B7A97E;margin-top:4px;">
+        ${kv("Exam", settings.examName, { mb: "margin-bottom:2px;" })}
+        ${examLine ? `<div style="font-size:${f(8.5)};line-height:1.4;color:#1F2A44;font-weight:600;">${escapeHtml(examLine)}</div>` : ""}
+        ${kv("Reporting", settings.reportingTime, { mb: "margin-top:2px;" })}
+        ${kv("Venue", settings.venue, { mb: "margin-top:2px;" })}
       </div>
+      ${settings.instructions ? `
+      <div style="padding:4px 10px 2px;font-size:${f(7.5)};line-height:1.35;color:#6B5F4B;">${escapeHtml(settings.instructions)}</div>` : ""}
     </div>
-    <div style="padding:5px 10px 2px;border-top:1px dashed #B7A97E;margin-top:4px;">
-      ${kv("Exam", settings.examName, { mb: "margin-bottom:2px;" })}
-      ${examLine ? `<div style="font-size:8.5px;line-height:1.4;color:#1F2A44;font-weight:600;">${escapeHtml(examLine)}</div>` : ""}
-      ${kv("Reporting", settings.reportingTime, { mb: "margin-top:2px;" })}
-      ${kv("Venue", settings.venue, { mb: "margin-top:2px;" })}
-    </div>
-    ${settings.instructions ? `
-    <div style="padding:4px 10px 2px;font-size:7.5px;line-height:1.35;color:#6B5F4B;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${escapeHtml(settings.instructions)}</div>` : ""}
-    <div style="display:flex;justify-content:space-between;padding:10px 10px 8px;">
-      <div style="text-align:center;"><div style="border-top:1px solid #1F2A44;width:100px;padding-top:2px;font-size:7px;color:#6B5F4B;">Student Sign.</div></div>
-      <div style="text-align:center;"><div style="border-top:1px solid #1F2A44;width:100px;padding-top:2px;font-size:7px;color:#6B5F4B;">Invigilator Sign.</div></div>
+    <div style="position:relative;z-index:1;flex-shrink:0;display:flex;justify-content:space-between;padding:8px 10px 6px;">
+      <div style="text-align:center;"><div style="border-top:1px solid #1F2A44;width:100px;padding-top:2px;font-size:${f(7)};color:#6B5F4B;">Student Sign.</div></div>
+      <div style="text-align:center;"><div style="border-top:1px solid #1F2A44;width:100px;padding-top:2px;font-size:${f(7)};color:#6B5F4B;">Invigilator Sign.</div></div>
     </div>
     ${(entry.fMonth || entry.notes) ? `
-    <div style="border-top:1px solid #B7A97E;padding:3px 10px;font-size:6.5px;line-height:1.3;color:#6B5F4B;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+    <div style="position:relative;z-index:1;flex-shrink:0;border-top:1px solid #B7A97E;padding:3px 10px;font-size:${f(6.5)};line-height:1.3;color:#6B5F4B;">
       ${entry.fMonth ? `Fee Till: <b style="color:#1F2A44;">${escapeHtml(T(entry.fMonth))}</b>` : ""}${entry.fMonth && entry.notes ? "  ·  " : ""}${entry.notes ? `Note: <b style="color:#1F2A44;">${escapeHtml(TD(entry.notes))}</b>` : ""}
     </div>` : ""}
   `;
   return wrap;
 }
-async function renderAdmitCardCanvas(entry, settings) {
-  const node = buildAdmitCardNode(entry, settings);
+/* Card ko host me lagata hai aur check karta hai ki andar ka content card se
+   bahar to nahi ja raha; jaa raha ho to font 5% ghata kar dobara banata hai. */
+function mountAdmitCardFitted(host, entry, settings) {
+  let scale = settings.fontScale != null ? settings.fontScale : 100;
+  for (;;) {
+    const node = buildAdmitCardNode(entry, { ...settings, fontScale: scale });
+    host.appendChild(node);
+    const body = node.querySelector("[data-adm-body]");
+    const overflow = body && (body.scrollHeight > body.clientHeight + 1);
+    if (!overflow || scale <= 40) return node;
+    host.removeChild(node);
+    scale -= 5;
+  }
+}
+async function renderAdmitCardCanvas(entry, settings, renderScale) {
+  const cvScale = renderScale || 3;
   const iframe = createIsolatedCaptureFrame();
-  iframe.contentDocument.body.appendChild(node);
+  const node = mountAdmitCardFitted(iframe.contentDocument.body, entry, settings);
   try {
     // imageTimeout caps how long html2canvas waits per resource (webfonts
     // included) — without it, a slow connection makes every export sit
@@ -2153,17 +2260,16 @@ async function renderAdmitCardCanvas(entry, settings) {
     // no visible feedback. See nodeToBlob() for the full explanation of
     // why this is captured inside its own isolated iframe rather than the
     // main page.
-    return await html2canvas(node, { backgroundColor: "#FBF7EC", scale: 3, useCORS: true, imageTimeout: 3000 });
+    return await html2canvas(node, { backgroundColor: "#FBF7EC", scale: cvScale, useCORS: true, imageTimeout: 3000 });
   } catch (err) {
     // Photo likely blocked the canvas from being read out (cross-origin taint).
     // Retry once without the photo so the rest of the card still generates.
     console.error("Admit card render failed, retrying without photo:", err);
     document.body.removeChild(iframe);
-    const fallbackNode = buildAdmitCardNode({ ...entry, photoUrl: "" }, settings);
     const fallbackFrame = createIsolatedCaptureFrame();
-    fallbackFrame.contentDocument.body.appendChild(fallbackNode);
+    const fallbackNode = mountAdmitCardFitted(fallbackFrame.contentDocument.body, { ...entry, photoUrl: "" }, settings);
     try {
-      return await html2canvas(fallbackNode, { backgroundColor: "#FBF7EC", scale: 3, imageTimeout: 3000 });
+      return await html2canvas(fallbackNode, { backgroundColor: "#FBF7EC", scale: cvScale, imageTimeout: 3000 });
     } finally {
       document.body.removeChild(fallbackFrame);
     }
@@ -2171,34 +2277,34 @@ async function renderAdmitCardCanvas(entry, settings) {
     if (iframe.parentNode) document.body.removeChild(iframe);
   }
 }
-/* 8 admit cards per A4 page — 4 on the left column, 4 on the right — so a
-   whole class can be printed and cut apart from a couple of sheets. */
+/* Admin ke set kiye "Cards per A4 page" (ya Auto me card size) ke hisaab se A4 page par cards arrange hote hain,
+   taaki poori class ek do sheets se print karke kaat li jaaye. Zyada card chune to naye page ban jaate hain. */
 async function generateAdmitCardsPdf(selected, settings) {
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
-  const COLS = 2, ROWS = 4, PER_PAGE = COLS * ROWS;
-  const margin = 18, gapX = 10, gapY = 10;
-  const cellW = (pageW - 2 * margin - (COLS - 1) * gapX) / COLS;
-  const cellH = (pageH - 2 * margin - (ROWS - 1) * gapY) / ROWS;
+  const dims = getAdmitCardDims(settings);
+  const L = dims.layout;
+  const gap = ADMIT_PAGE.gap;
+  const doc = new jsPDF({ orientation: L.pageLandscape ? "landscape" : "portrait", unit: "pt", format: "a4", compress: true });
+  // PDF ka size kam rakhne ke liye: JPEG (PNG nahi) + compression + ~250-300 DPI render.
+  // Bade card (jaise 1-2 per page) ke liye render size thoda kam rakhte hain taaki file/memory halki rahe.
+  const renderScale = dims.w > 700 ? 1.8 : 2.5;
   for (let i = 0; i < selected.length; i++) {
-    const posInPage = i % PER_PAGE;
-    if (i > 0 && posInPage === 0) doc.addPage();
-    const row = Math.floor(posInPage / COLS);
-    const col = posInPage % COLS;
-    const cellX = margin + col * (cellW + gapX);
-    const cellY = margin + row * (cellH + gapY);
-    const canvas = await renderAdmitCardCanvas(selected[i], settings);
-    const imgData = canvas.toDataURL("image/png");
+    const posInPage = i % L.perPage;
+    if (i > 0 && posInPage === 0) doc.addPage("a4", L.pageLandscape ? "landscape" : "portrait");
+    const row = Math.floor(posInPage / L.cols);
+    const col = posInPage % L.cols;
+    const cellX = L.originX + col * (L.cellW + gap);
+    const cellY = L.originY + row * (L.cellH + gap);
+    const canvas = await renderAdmitCardCanvas(selected[i], settings, renderScale);
+    const imgData = canvas.toDataURL("image/jpeg", 0.85);
     // Fit the card into its cell preserving aspect ratio (contain), centered,
     // so cards of slightly different content height never overflow the grid.
-    const scale = Math.min(cellW / canvas.width, cellH / canvas.height);
+    const scale = Math.min(L.cellW / canvas.width, L.cellH / canvas.height);
     const imgW = canvas.width * scale;
     const imgH = canvas.height * scale;
-    const x = cellX + (cellW - imgW) / 2;
-    const y = cellY + (cellH - imgH) / 2;
-    doc.addImage(imgData, "PNG", x, y, imgW, imgH);
+    const x = cellX + (L.cellW - imgW) / 2;
+    const y = cellY + (L.cellH - imgH) / 2;
+    doc.addImage(imgData, "JPEG", x, y, imgW, imgH, undefined, "FAST");
   }
   doc.save(`admit_cards_${Date.now()}.pdf`);
 }
@@ -2213,6 +2319,28 @@ function loadIdCardSettingsFromStorage() {
     const saved = JSON.parse(localStorage.getItem(ID_CARD_KEY) || "null");
     if (saved && typeof saved === "object") state.idCard = { ...state.idCard, ...saved };
   } catch (e) {}
+}
+/* Columns ki selection (student list PDF / Share as Image ke liye "Columns" aur Invoice Report ke "Columns")
+   is device par yaad rehti hai — logout ya app band karne par bhi — jab tak "Reset" na dabaya jaaye. */
+const EXPORT_COLUMNS_KEY = "adm_reg_export_columns_v1";
+const REPORT_COLUMNS_KEY = "adm_reg_report_columns_v1";
+const DEFAULT_EXPORT_COLUMNS = ["serial", "name", "fatherName", "motherName", "dob", "rollNo", "mobile", "className", "session", "fMonth", "tMonth", "address", "notes"];
+const DEFAULT_REPORT_COLUMNS = ["srNo", "date", "invoiceNo", "type", "name", "fatherName", "rollNo", "className", "section", "feeTill", "session", "amount"];
+function loadColumnPrefsFromStorage() {
+  try {
+    const ex = JSON.parse(localStorage.getItem(EXPORT_COLUMNS_KEY) || "null");
+    if (Array.isArray(ex)) state.exportColumnOrder = ex.filter(k => EXPORT_COLUMN_DEFS.some(c => c.key === k));
+  } catch (e) {}
+  try {
+    const rp = JSON.parse(localStorage.getItem(REPORT_COLUMNS_KEY) || "null");
+    if (Array.isArray(rp)) state.reportColumnOrder = rp.filter(k => REPORT_COLUMN_DEFS.some(c => c.key === k));
+  } catch (e) {}
+}
+function saveExportColumns() {
+  try { localStorage.setItem(EXPORT_COLUMNS_KEY, JSON.stringify(state.exportColumnOrder)); } catch (e) {}
+}
+function saveReportColumns() {
+  try { localStorage.setItem(REPORT_COLUMNS_KEY, JSON.stringify(state.reportColumnOrder)); } catch (e) {}
 }
 function saveIdCardSettingsToStorage() {
   try { localStorage.setItem(ID_CARD_KEY, JSON.stringify(state.idCard)); } catch (e) {}
@@ -2355,98 +2483,153 @@ const ID_CARD_SAMPLE_ENTRY = {
   dob: "01/01/2015", rollNo: "01", className: "5th", session: "2026-27",
   mobile: "9876543210", address: "Sample Address, City", photoUrl: "",
 };
+/* ID card ka size aur shape (aada = landscape / khada = portrait) settings se aata hai.
+   Presets: Standard PVC / Voter ID (CR-80), Large Badge (CR-100), A7, A6 ya Custom (mm me).
+   Card ke andar ka text card ke size ke hisaab se apne aap chhota/bada hota hai, settings.fontScale (%)
+   se aur adjust hota hai, aur agar phir bhi kuch card se bahar jaaye to mountIdCardFitted()
+   font ghata kar dobara banata hai taaki koi detail hide na ho. */
+const ID_CARD_PRESETS = {
+  cr80:  { label: "Standard PVC / Voter ID (85.6 × 54 mm)", long: 85.60, short: 53.98 },
+  cr100: { label: "Large Badge (98.5 × 67 mm)",             long: 98.5,  short: 67 },
+  a7:    { label: "A7 Card (105 × 74 mm)",                  long: 105,   short: 74 },
+  a6:    { label: "A6 Big Card (148 × 105 mm)",             long: 148,   short: 105 },
+};
+const ID_CARD_PX_PER_MM = 400 / 85.6;
+function getIdCardDims(settings) {
+  let L, Sh;
+  if (settings.sizePreset === "custom") {
+    L = Math.min(170, Math.max(50, parseFloat(settings.customLong) || 85.6));
+    Sh = Math.min(120, Math.max(35, parseFloat(settings.customShort) || 54));
+    if (Sh > L) { const tmp = L; L = Sh; Sh = tmp; }
+  } else {
+    const pr = ID_CARD_PRESETS[settings.sizePreset] || ID_CARD_PRESETS.cr80;
+    L = pr.long; Sh = pr.short;
+  }
+  const portrait = settings.orientation === "portrait";
+  const wMm = portrait ? Sh : L;
+  const hMm = portrait ? L : Sh;
+  return {
+    portrait, wMm, hMm,
+    w: Math.round(wMm * ID_CARD_PX_PER_MM),
+    h: Math.round(hMm * ID_CARD_PX_PER_MM),
+    factor: Math.min(2, Math.max(0.6, Math.min(L / 85.6, Sh / 53.98))),
+  };
+}
 function buildIdCardNode(entry, settings) {
   const t = getIdCardTheme(settings.themeId);
-  const kv = (label, value) => value
-    ? `<div style="display:flex;align-items:baseline;gap:6px;font-size:9.5px;line-height:1.55;width:100%;padding-bottom:4px;border-bottom:1px dotted #D9CBA3;">
+  const dims = getIdCardDims(settings);
+  const portrait = dims.portrait;
+  const S = (settings.fontScale != null ? settings.fontScale : 100) / 100;
+  const K = dims.factor * S;
+  const f = (n) => (Math.round(n * K * 100) / 100) + "px";
+  const photoK = dims.factor * Math.min(S, 1);
+  const photoW = Math.round(76 * photoK), photoH = Math.round(92 * photoK);
+  const kv = (label, value, full) => value
+    ? `<div style="display:flex;align-items:baseline;gap:4px;font-size:${f(9.5)};line-height:1.3;padding-bottom:2px;border-bottom:1px dotted #D9CBA3;${full ? "grid-column:1 / -1;" : ""}">
         <span style="font-family:'IBM Plex Mono',monospace;color:#6B5F4B;flex-shrink:0;white-space:nowrap;">${escapeHtml(label)}:</span>
-        <span style="color:${t.nameColor};font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(value)}</span>
+        <span style="color:${t.nameColor};font-weight:600;min-width:0;word-break:break-word;">${escapeHtml(value)}</span>
       </div>`
     : "";
   const wrap = document.createElement("div");
-  // Card is fixed to standard PVC / Aadhaar (CR-80, ISO/IEC 7810 ID-1) card
-  // proportions — 53.98mm x 85.60mm — but held upright (portrait), unlike a
-  // real Aadhaar card which is landscape. Width stays 280px for on-screen
-  // legibility; height is derived from the same 53.98:85.60 ratio so the
-  // shape always matches a real card, and the PDF export (generateIdCardsPdf)
-  // prints each card at the true physical CR-80 size.
-  const CARD_W = 280;
-  const CARD_H = Math.round(CARD_W * (85.60 / 53.98));
-  wrap.style.cssText = `position:relative;width:${CARD_W}px;height:${CARD_H}px;background:${t.cardBg};border:${t.border};border-radius:${t.radius};font-family:'Source Serif 4',Georgia,serif;color:${t.nameColor};box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;`;
-  // Watermark: the same school logo, blown up and faded, centred behind
-  // the whole card — a light anti-tamper/authenticity mark like on real
-  // school ID cards. Only shows when a logo is set and the toggle is on.
+  wrap.style.cssText = `position:relative;width:${dims.w}px;height:${dims.h}px;background:${t.cardBg};border:${t.border};border-radius:${t.radius};font-family:'Source Serif 4',Georgia,serif;color:${t.nameColor};box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;`;
   const showWatermark = settings.watermarkEnabled && settings.logoUrl;
   const watermarkOpacity = settings.watermarkOpacity != null ? settings.watermarkOpacity : 0.12;
   const watermarkSize = settings.watermarkSize != null ? settings.watermarkSize : 150;
   const watermarkOffsetX = settings.watermarkOffsetX != null ? settings.watermarkOffsetX : 0;
   const watermarkOffsetY = settings.watermarkOffsetY != null ? settings.watermarkOffsetY : 0;
+  const logoImg = (sz) => settings.logoUrl ? `<img src="${escapeAttr(settings.logoUrl)}" crossorigin="anonymous" style="width:${sz}px;height:${sz}px;object-fit:contain;flex-shrink:0;" />` : "";
+  const badge = `<div style="font-family:'IBM Plex Mono',monospace;font-size:${f(7)};letter-spacing:1.5px;text-transform:uppercase;background:${t.badgeBg};color:${t.badgeText};padding:3px 6px;border-radius:2px;flex-shrink:0;white-space:nowrap;display:inline-block;">Student ID Card</div>`;
+  const nameBlock = `${settings.instituteName ? `<div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:${f(13)};line-height:1.2;">${escapeHtml(settings.instituteName)}</div>` : ""}
+        ${settings.schoolAddress ? `<div style="font-size:${f(7.5)};opacity:0.85;margin-top:1px;line-height:1.3;">${escapeHtml(settings.schoolAddress)}</div>` : ""}`;
+  const header = portrait
+    ? `<div style="background:${t.headerBg};color:${t.headerText};padding:8px 10px;flex-shrink:0;text-align:center;">
+        <div style="display:flex;align-items:center;justify-content:center;gap:7px;">
+          ${logoImg(Math.round(28 * dims.factor))}
+          <div style="min-width:0;">${nameBlock}</div>
+        </div>
+        <div style="margin-top:5px;">${badge}</div>
+      </div>`
+    : `<div style="background:${t.headerBg};color:${t.headerText};padding:6px 10px;flex-shrink:0;display:flex;align-items:center;gap:8px;">
+        ${logoImg(Math.round(30 * dims.factor))}
+        <div style="flex:1;min-width:0;text-align:center;">${nameBlock}</div>
+        ${badge}
+      </div>`;
+  const photo = `<div style="width:${photoW}px;height:${photoH}px;flex-shrink:0;border:1px solid #B7A97E;background:#F3ECDA;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:4px;">
+            ${entry.photoUrl ? `<img src="${escapeAttr(entry.photoUrl)}" crossorigin="anonymous" style="width:100%;height:100%;object-fit:cover;" />` : `<span style="font-size:7px;color:#B7A97E;text-align:center;">No Photo</span>`}
+          </div>`;
+  const enroll = `<div style="font-size:${f(8.5)};color:#6B5F4B;margin-top:4px;text-align:center;line-height:1.3;">Enroll No.<br/><b style="color:${t.accentColor};font-size:${f(10)};">${escapeHtml(entry.rollNo) || "—"}</b></div>`;
+  const nameEl = `<div style="font-weight:700;font-size:${f(14)};line-height:1.2;color:${t.nameColor};word-break:break-word;${portrait ? "text-align:center;" : ""}">${escapeHtml(TN(entry.name)) || "—"}</div>`;
+  const grid = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;${portrait ? "width:100%;" : ""}">
+            ${kv("Father", entry.fatherName, portrait)}
+            ${kv("Mother", entry.motherName, portrait)}
+            ${kv("DOB", entry.dob)}
+            ${kv("Class", entry.className)}
+            ${kv("Section", entry.section)}
+            ${kv("Session", entry.session)}
+            ${kv("Mobile", entry.mobile)}
+            ${kv("Address", TD(entry.address), true)}
+          </div>`;
+  const bodyInner = portrait
+    ? `<div style="position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:5px;padding:8px 12px 4px;box-sizing:border-box;">
+        <div style="display:flex;flex-direction:column;align-items:center;">${photo}${enroll}</div>
+        ${nameEl}
+        <div style="width:100%;border-top:1px dashed #B7A97E;padding-top:5px;">${grid}</div>
+      </div>`
+    : `<div style="position:relative;z-index:1;display:flex;gap:10px;padding:8px 12px 4px;box-sizing:border-box;">
+        <div style="width:${photoW + 4}px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;">${photo}${enroll}</div>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;">${nameEl}${grid}</div>
+      </div>`;
   wrap.innerHTML = `
-    <div style="position:relative;z-index:1;height:100%;display:flex;flex-direction:column;">
-    <div style="background:${t.headerBg};color:${t.headerText};padding:14px 10px;text-align:center;flex-shrink:0;">
-      <div style="display:flex;align-items:center;justify-content:center;gap:7px;">
-        ${settings.logoUrl ? `<img src="${escapeAttr(settings.logoUrl)}" crossorigin="anonymous" style="width:28px;height:28px;object-fit:contain;flex-shrink:0;" />` : ""}
-        ${settings.instituteName ? `<div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:14px;line-height:1.25;">${escapeHtml(settings.instituteName)}</div>` : ""}
-      </div>
-      ${settings.schoolAddress ? `<div style="font-size:7.5px;opacity:0.85;margin-top:3px;line-height:1.35;">${escapeHtml(settings.schoolAddress)}</div>` : ""}
-      <div style="font-family:'IBM Plex Mono',monospace;font-size:8px;letter-spacing:2px;text-transform:uppercase;margin-top:7px;background:${t.badgeBg};color:${t.badgeText};display:inline-block;padding:3px 9px;border-radius:2px;">Student ID Card</div>
-    </div>
-    <div style="display:flex;flex-direction:column;align-items:center;padding:14px 10px 6px;flex-shrink:0;">
-      <div style="width:78px;height:92px;flex-shrink:0;border:1px solid #B7A97E;background:#F3ECDA;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:4px;">
-        ${entry.photoUrl ? `<img src="${escapeAttr(entry.photoUrl)}" crossorigin="anonymous" style="width:100%;height:100%;object-fit:cover;" />` : `<span style="font-size:7px;color:#B7A97E;text-align:center;">No Photo</span>`}
-      </div>
-      <div style="font-weight:700;font-size:14px;line-height:1.3;margin-top:8px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;color:${t.nameColor};">${escapeHtml(TN(entry.name)) || "—"}</div>
-      <div style="font-size:9px;color:#6B5F4B;margin-top:2px;">Enroll No. <b style="color:${t.accentColor};">${escapeHtml(entry.rollNo) || "—"}</b></div>
-    </div>
-    <div style="position:relative;overflow:hidden;flex:1;display:flex;flex-direction:column;min-height:0;">
+    ${header}
+    <div data-idc-body style="position:relative;flex:1;min-height:0;overflow:hidden;">
       ${showWatermark ? `<img src="${escapeAttr(settings.logoUrl)}" crossorigin="anonymous" style="position:absolute;top:calc(50% + ${watermarkOffsetY}px);left:calc(50% + ${watermarkOffsetX}px);transform:translate(-50%,-50%);width:${watermarkSize}px;height:${watermarkSize}px;object-fit:contain;opacity:${watermarkOpacity};z-index:0;pointer-events:none;" />` : ""}
-      <div style="position:relative;z-index:1;flex:1;display:flex;flex-direction:column;justify-content:space-between;min-height:0;">
-      <div style="padding:12px 14px 6px;border-top:1px dashed #B7A97E;margin:0 10px;display:flex;flex-direction:column;gap:8px;flex-shrink:0;">
-        ${kv("Father", entry.fatherName)}
-        ${kv("Mother", entry.motherName)}
-        ${kv("DOB", entry.dob)}
-        ${kv("Class", entry.className)}
-        ${kv("Section", entry.section)}
-        ${kv("Session", entry.session)}
-        ${kv("Mobile", entry.mobile)}
-        ${kv("Address", TD(entry.address))}
-      </div>
-      <div style="flex-shrink:0;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;padding:14px 14px 12px;">
-        <div style="font-size:7.5px;color:#6B5F4B;line-height:1.4;max-width:55%;">
+      ${bodyInner}
+    </div>
+    <div style="flex-shrink:0;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;padding:3px 12px 5px;">
+        <div style="font-size:${f(8)};color:#6B5F4B;line-height:1.4;max-width:60%;">
           ${settings.validUpto ? `Valid Upto: <b style="color:${t.nameColor};">${escapeHtml(settings.validUpto)}</b><br/>` : ""}
           ${settings.contactPhone ? `Contact: <b style="color:${t.nameColor};">${escapeHtml(settings.contactPhone)}</b>` : ""}
         </div>
         <div style="text-align:center;">
-          ${settings.signatureUrl ? `<img src="${escapeAttr(settings.signatureUrl)}" crossorigin="anonymous" style="height:28px;max-width:95px;object-fit:contain;display:block;margin:0 auto;" />` : ""}
-          <div style="border-top:1px solid ${t.nameColor};width:76px;padding-top:3px;font-size:7.5px;color:#6B5F4B;margin-top:${settings.signatureUrl ? "3px" : "0"};">Principal Sign.</div>
+          ${settings.signatureUrl ? `<img src="${escapeAttr(settings.signatureUrl)}" crossorigin="anonymous" style="height:22px;max-width:85px;object-fit:contain;display:block;margin:0 auto;" />` : ""}
+          <div style="border-top:1px solid ${t.nameColor};width:76px;padding-top:2px;font-size:${f(7.5)};color:#6B5F4B;margin-top:${settings.signatureUrl ? "2px" : "0"};">Principal Sign.</div>
         </div>
       </div>
       ${settings.footerNote ? `
-      <div style="background:${t.footerBg};padding:6px 10px;font-size:7.5px;line-height:1.4;color:#6B5F4B;text-align:center;">${escapeHtml(settings.footerNote)}</div>` : ""}
-      </div>
-      </div>
-    </div>
+      <div style="background:${t.footerBg};padding:4px 10px;font-size:${f(7.5)};line-height:1.3;color:#6B5F4B;text-align:center;">${escapeHtml(settings.footerNote)}</div>` : ""}
     </div>
   `;
   return wrap;
 }
+/* Card ko host me lagata hai aur check karta hai ki andar ka content card se
+   bahar to nahi ja raha; jaa raha ho to font 5% ghata kar dobara banata hai. */
+function mountIdCardFitted(host, entry, settings) {
+  let scale = settings.fontScale != null ? settings.fontScale : 100;
+  for (;;) {
+    const node = buildIdCardNode(entry, { ...settings, fontScale: scale });
+    host.appendChild(node);
+    const body = node.querySelector("[data-idc-body]");
+    const overflow = body && (body.scrollHeight > body.clientHeight + 1);
+    if (!overflow || scale <= 40) return node;
+    host.removeChild(node);
+    scale -= 5;
+  }
+}
 async function renderIdCardCanvas(entry, settings) {
-  const node = buildIdCardNode(entry, settings);
   const iframe = createIsolatedCaptureFrame();
-  iframe.contentDocument.body.appendChild(node);
+  const node = mountIdCardFitted(iframe.contentDocument.body, entry, settings);
   try {
-    return await html2canvas(node, { backgroundColor: "#FBF7EC", scale: 3, useCORS: true, imageTimeout: 3000 });
+    return await html2canvas(node, { backgroundColor: "#FBF7EC", scale: 2.5, useCORS: true, imageTimeout: 3000 });
   } catch (err) {
     // Photo likely blocked the canvas from being read out (cross-origin taint).
     // Retry once without the photo so the rest of the card still generates.
     console.error("ID card render failed, retrying without photo:", err);
     document.body.removeChild(iframe);
-    const fallbackNode = buildIdCardNode({ ...entry, photoUrl: "" }, settings);
     const fallbackFrame = createIsolatedCaptureFrame();
-    fallbackFrame.contentDocument.body.appendChild(fallbackNode);
+    const fallbackNode = mountIdCardFitted(fallbackFrame.contentDocument.body, { ...entry, photoUrl: "" }, settings);
     try {
-      return await html2canvas(fallbackNode, { backgroundColor: "#FBF7EC", scale: 3, imageTimeout: 3000 });
+      return await html2canvas(fallbackNode, { backgroundColor: "#FBF7EC", scale: 2.5, imageTimeout: 3000 });
     } finally {
       document.body.removeChild(fallbackFrame);
     }
@@ -2454,18 +2637,19 @@ async function renderIdCardCanvas(entry, settings) {
     if (iframe.parentNode) document.body.removeChild(iframe);
   }
 }
-/* Each card prints at the true physical size of a standard PVC / Aadhaar
-   card (CR-80, ISO/IEC 7810 ID-1: 53.98mm x 85.60mm) held upright, so once
-   printed and cut out it matches a real ID card. As many cards as fit are
-   auto-arranged and centred per A4 page (comes out to 3 columns x 3 rows). */
+/* Each card prints at the true physical size chosen in the settings (default: standard
+   voter-ID / PVC card, CR-80, 85.60mm x 53.98mm), landscape ya portrait. As many cards
+   as fit are auto-arranged and centred per A4 page (CR-80 landscape = 2 columns x 5 rows). */
 async function generateIdCardsPdf(selected, settings) {
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  // compress:true + JPEG (PNG ki jagah) se PDF ka size bahut kam ho jaata hai.
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4", compress: true });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const MM_TO_PT = 72 / 25.4;
-  const cellW = 53.98 * MM_TO_PT;
-  const cellH = 85.60 * MM_TO_PT;
+  const dims = getIdCardDims(settings);
+  const cellW = dims.wMm * MM_TO_PT;
+  const cellH = dims.hMm * MM_TO_PT;
   const margin = 18, gapX = 10, gapY = 10;
   const availW = pageW - 2 * margin;
   const availH = pageH - 2 * margin;
@@ -2484,7 +2668,7 @@ async function generateIdCardsPdf(selected, settings) {
     const cellX = originX + col * (cellW + gapX);
     const cellY = originY + row * (cellH + gapY);
     const canvas = await renderIdCardCanvas(selected[i], settings);
-    const imgData = canvas.toDataURL("image/png");
+    const imgData = canvas.toDataURL("image/jpeg", 0.85);
     // Fit the card into its cell preserving aspect ratio (contain), centered,
     // so cards of slightly different content height never overflow the grid.
     const scale = Math.min(cellW / canvas.width, cellH / canvas.height);
@@ -2492,7 +2676,7 @@ async function generateIdCardsPdf(selected, settings) {
     const imgH = canvas.height * scale;
     const x = cellX + (cellW - imgW) / 2;
     const y = cellY + (cellH - imgH) / 2;
-    doc.addImage(imgData, "PNG", x, y, imgW, imgH);
+    doc.addImage(imgData, "JPEG", x, y, imgW, imgH, undefined, "FAST");
   }
   doc.save(`id_cards_${Date.now()}.pdf`);
 }
@@ -5792,7 +5976,7 @@ const state = {
   multiBillDrafts: {},
   vivaranModalText: "", vivaranModalSave: null, vivaranModalEditable: false,
   showAdmitCardPanel: false,
-  admitCard: { instituteName: "", examName: "", examDate: "", examTime: "", reportingTime: "", venue: "", instructions: "", logoUrl: "" },
+  admitCard: { instituteName: "", examName: "", examDate: "", examTime: "", reportingTime: "", venue: "", instructions: "", logoUrl: "", fontScale: 100, sizePreset: "std", orientation: "landscape", customLong: "", customShort: "", perPage: "auto", perPageCustom: "", watermarkEnabled: false, watermarkOpacity: 0.12, watermarkSize: 150, watermarkOffsetX: 0, watermarkOffsetY: 0 },
   admitCardClassSel: "all", admitCardSessionSel: "all", admitCardSectionSel: "all", admitCardStarFilter: "all",
   admitCardFMonthFilter: "all", admitCardNotPaidTillFilter: "all", admitCardAddressFilter: "", admitCardNoteFilter: "",
   admitCardSelectedIds: new Set(),
@@ -5801,7 +5985,7 @@ const state = {
   showPassbookStatementPanel: false, passbookStatementEntryId: "", passbookStatementSearchQuery: "",
   passbookStatementFilterType: "all", passbookStatementFilterDate: "", passbookStatementFilterMonth: "",
   passbookStatementFilterFrom: "", passbookStatementFilterTo: "",
-  idCard: { instituteName: "", schoolAddress: "", validUpto: "", contactPhone: "", footerNote: "", signatureUrl: "", themeId: "maroon", logoUrl: "", watermarkEnabled: false, watermarkOpacity: 0.12, watermarkSize: 150, watermarkOffsetX: 0, watermarkOffsetY: 0 },
+  idCard: { instituteName: "", schoolAddress: "", validUpto: "", contactPhone: "", footerNote: "", signatureUrl: "", themeId: "maroon", fontScale: 100, sizePreset: "cr80", orientation: "landscape", customLong: "", customShort: "", logoUrl: "", watermarkEnabled: false, watermarkOpacity: 0.12, watermarkSize: 150, watermarkOffsetX: 0, watermarkOffsetY: 0 },
   idCardClassSel: "all", idCardSessionSel: "all",
   idCardSelectedIds: new Set(),
   idCardGenerating: false, idCardStatus: "",
@@ -6172,6 +6356,7 @@ async function loadEntries() {
   await loadMessageTemplateFromDb();
   loadAdmitCardSettingsFromStorage();
   loadIdCardSettingsFromStorage();
+  loadColumnPrefsFromStorage();
   loadReceiptSettingsFromStorage();
   loadMessageLocksFromStorage();
   loadMessageCombineFromStorage();
@@ -8605,7 +8790,20 @@ function renderCalcCornerPanel() {
   }
 }
 
-function renderAdmitCardPanel() {
+/* Panel har tick/filter par poora dobara banta hai, jisse list aur page scroll upar (pehle student par) laut jaata tha.
+   Ye wrapper dono scroll positions yaad rakhkar dobara set kar deta hai (list badli ho to list top se dikhegi). */
+function renderAdmitCardPanel() { renderPanelKeepingScroll("admitCardPanel", "acStudentList", renderAdmitCardPanelInner); }
+function renderPanelKeepingScroll(panelId, listId, inner) {
+  const prevList = document.getElementById(listId);
+  const prevTop = prevList ? prevList.scrollTop : 0;
+  const prevSig = prevList ? prevList.dataset.sig : null;
+  const pageY = window.scrollY;
+  inner();
+  const newList = document.getElementById(listId);
+  if (newList && prevSig !== null && newList.dataset.sig === prevSig) newList.scrollTop = prevTop;
+  if (Math.abs(window.scrollY - pageY) > 1) window.scrollTo(0, pageY);
+}
+function renderAdmitCardPanelInner() {
   const el = document.getElementById("admitCardPanel");
   if (!state.showAdmitCardPanel) { el.innerHTML = ""; el.className = ""; return; }
   el.className = "panel";
@@ -8643,6 +8841,79 @@ function renderAdmitCardPanel() {
         <input type="file" id="acLogoGalleryInput" accept="image/*" style="display:none;" />
       </div>
       <p style="font-size:11px;color:#6B5F4B;margin:6px 0 0;">A small logo will print in the header along with the Institute Name.</p>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #D9CBA3;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#1F2A44;cursor:${state.admitCard.logoUrl ? "pointer" : "not-allowed"};opacity:${state.admitCard.logoUrl ? 1 : 0.5};">
+          <input type="checkbox" id="acWatermarkChk" ${state.admitCard.watermarkEnabled ? "checked" : ""} ${state.admitCard.logoUrl ? "" : "disabled"} style="width:16px;height:16px;" />
+          Also show the logo as a background watermark
+        </label>
+        ${state.admitCard.logoUrl ? "" : `<p style="font-size:11px;color:#B7A97E;margin:4px 0 0;">Upload a logo first to use a watermark.</p>`}
+        ${state.admitCard.watermarkEnabled && state.admitCard.logoUrl ? `
+        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
+          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Fade</label>
+          <input type="range" id="acWatermarkOpacity" min="0.04" max="0.35" step="0.01" value="${state.admitCard.watermarkOpacity}" style="flex:1;" />
+          <span id="acWatermarkOpacityVal" style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${Math.round(state.admitCard.watermarkOpacity * 100)}%</span>
+        </div>
+        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
+          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Size</label>
+          <input type="range" id="acWatermarkSize" min="60" max="260" step="5" value="${state.admitCard.watermarkSize}" style="flex:1;" />
+          <span id="acWatermarkSizeVal" style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${state.admitCard.watermarkSize}px</span>
+        </div>
+        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
+          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Left-Right</label>
+          <input type="range" id="acWatermarkOffsetX" min="-120" max="120" step="1" value="${state.admitCard.watermarkOffsetX}" style="flex:1;" />
+          <span id="acWatermarkOffsetXVal" style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${state.admitCard.watermarkOffsetX}</span>
+        </div>
+        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
+          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Up-Down</label>
+          <input type="range" id="acWatermarkOffsetY" min="-120" max="120" step="1" value="${state.admitCard.watermarkOffsetY}" style="flex:1;" />
+          <span id="acWatermarkOffsetYVal" style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${state.admitCard.watermarkOffsetY}</span>
+        </div>
+        <button type="button" id="acWatermarkResetBtn" style="margin-top:8px;background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;border-radius:3px;padding:5px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Reset Watermark Position</button>` : ""}
+      </div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <label class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:6px;">Card Size &amp; Shape</label>
+      <div style="margin-bottom:8px;">
+        <label style="font-size:11px;color:#6B5F4B;display:block;margin-bottom:4px;">Ek A4 page par kitne card nikalne hain?</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <select id="acPerPage" class="rule-input" style="flex:1;min-width:200px;box-sizing:border-box;">
+            <option value="auto" ${(state.admitCard.perPage || "auto") === "auto" ? "selected" : ""}>Auto (card size ke hisaab se)</option>
+            ${[1, 2, 3, 4, 6, 8, 9, 10, 12, 15, 16].map(n => `<option value="${n}" ${state.admitCard.perPage === String(n) ? "selected" : ""}>${n} card per page</option>`).join("")}
+            <option value="custom" ${state.admitCard.perPage === "custom" ? "selected" : ""}>Apna number likhein…</option>
+          </select>
+          ${state.admitCard.perPage === "custom" ? `<input id="acPerPageCustom" type="number" inputmode="numeric" min="1" max="30" step="1" class="rule-input" placeholder="1–30" value="${escapeAttr(state.admitCard.perPageCustom)}" style="width:90px;box-sizing:border-box;" />` : ""}
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <select id="acOrientation" class="rule-input" style="flex:1;min-width:150px;box-sizing:border-box;">
+          <option value="landscape" ${state.admitCard.orientation !== "portrait" ? "selected" : ""}>Aada (Landscape) ▭</option>
+          <option value="portrait" ${state.admitCard.orientation === "portrait" ? "selected" : ""}>Khada (Portrait) ▯</option>
+        </select>
+        ${admitPerPageCount(state.admitCard) ? "" : `
+        <select id="acSizePreset" class="rule-input" style="flex:2;min-width:200px;box-sizing:border-box;">
+          ${Object.keys(ADMIT_CARD_PRESETS).map(k => `<option value="${k}" ${state.admitCard.sizePreset === k ? "selected" : ""}>${escapeHtml(ADMIT_CARD_PRESETS[k].label)}</option>`).join("")}
+          <option value="custom" ${state.admitCard.sizePreset === "custom" ? "selected" : ""}>Custom size (mm)</option>
+        </select>`}
+      </div>
+      ${!admitPerPageCount(state.admitCard) && state.admitCard.sizePreset === "custom" ? `
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
+        <input id="acCustomLong" type="number" inputmode="decimal" min="60" max="170" step="0.5" class="rule-input" placeholder="Lambai (mm)" value="${escapeAttr(state.admitCard.customLong)}" style="width:120px;box-sizing:border-box;" />
+        <span style="color:#6B5F4B;">×</span>
+        <input id="acCustomShort" type="number" inputmode="decimal" min="40" max="120" step="0.5" class="rule-input" placeholder="Chaudai (mm)" value="${escapeAttr(state.admitCard.customShort)}" style="width:120px;box-sizing:border-box;" />
+        <span style="font-size:11px;color:#6B5F4B;">mm (lambai 60–170, chaudai 40–120)</span>
+      </div>` : ""}
+      <p style="font-size:11px;color:#6B5F4B;margin:4px 0 0;">${(() => { const d = getAdmitCardDims(state.admitCard); const l = d.layout; return `Ek A4 page par <b>${l.perPage}</b> card (${l.cols} × ${l.rows}${l.pageLandscape ? ", A4 landscape" : ""}) · Card size: ${d.wMm.toFixed(1)} × ${d.hMm.toFixed(1)} mm${admitPerPageCount(state.admitCard) ? " (page ke hisaab se apne aap)" : ""}`; })()}</p>
+      <label class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin:12px 0 6px;">Text Size (Font)</label>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-size:11px;color:#6B5F4B;">A</span>
+        <input type="range" id="acFontScale" min="50" max="150" step="5" value="${state.admitCard.fontScale != null ? state.admitCard.fontScale : 100}" style="flex:1;" />
+        <span style="font-size:15px;color:#6B5F4B;">A</span>
+        <span id="acFontScaleVal" style="font-size:12px;color:#1F2A44;width:42px;text-align:right;">${state.admitCard.fontScale != null ? state.admitCard.fontScale : 100}%</span>
+        <button type="button" id="acFontScaleReset" class="stamp" style="background:transparent;border:1px solid #B7A97E;border-radius:3px;padding:4px 8px;font-size:11px;color:#6B5F4B;cursor:pointer;">100%</button>
+      </div>
+      <p style="font-size:11px;color:#6B5F4B;margin:4px 0 0;">Agar kuch card se bahar jaaye to font apne aap thoda chhota ho jaata hai, taaki kuch hide na ho.</p>
+      <p style="font-size:11px;color:#6B5F4B;margin:8px 0 0;">Preview:</p>
+      <div id="acCardPreviewWrap" style="margin-top:8px;display:flex;justify-content:center;padding:12px;background:#EFE7CE;border-radius:6px;overflow-x:auto;"></div>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
       <select id="acClassSel" class="stamp">
@@ -8686,7 +8957,7 @@ function renderAdmitCardPanel() {
       </label>
       <span class="stamp" style="font-size:12.5px;color:#6B5F4B;">${selectedCount} selected</span>
     </div>
-    <div style="max-height:260px;overflow-y:auto;border:1px solid #D9CBA3;border-radius:3px;margin-bottom:14px;">
+    <div id="acStudentList" data-sig="${eligible.length}:${eligible.length ? eligible[0].id : ''}:${eligible.length ? eligible[eligible.length - 1].id : ''}" style="max-height:260px;overflow-y:auto;border:1px solid #D9CBA3;border-radius:3px;margin-bottom:14px;">
       ${eligible.length === 0
         ? `<p style="font-size:12.5px;color:#6B5F4B;padding:12px;margin:0;">No student found for this filter.</p>`
         : eligible.map(e => `
@@ -8709,6 +8980,77 @@ function renderAdmitCardPanel() {
   saveField("acReportingTime", "reportingTime");
   saveField("acVenue", "venue");
   saveField("acInstructions", "instructions");
+  const acPreviewWrap = document.getElementById("acCardPreviewWrap");
+  const mountAdmitCardPreview = () => {
+    if (!acPreviewWrap) return;
+    acPreviewWrap.innerHTML = "";
+    const previewEntry = eligible.find(e => state.admitCardSelectedIds.has(e.id)) || eligible[0] || ID_CARD_SAMPLE_ENTRY;
+    const dims = getAdmitCardDims(state.admitCard);
+    const avail = Math.max(200, acPreviewWrap.clientWidth - 24);
+    const k = Math.min(1, avail / dims.w);
+    const outer = document.createElement("div");
+    outer.style.cssText = `width:${Math.round(dims.w * k)}px;height:${Math.round(dims.h * k)}px;flex-shrink:0;`;
+    const inner = document.createElement("div");
+    inner.style.cssText = `width:${dims.w}px;height:${dims.h}px;transform:scale(${k});transform-origin:top left;`;
+    outer.appendChild(inner);
+    acPreviewWrap.appendChild(outer);
+    mountAdmitCardFitted(inner, previewEntry, state.admitCard);
+  };
+  mountAdmitCardPreview();
+  const setAdmitCardOpt = (key, val) => { state.admitCard[key] = val; saveAdmitCardSettingsToStorage(); renderAdmitCardPanel(); };
+  const acOrientation = document.getElementById("acOrientation");
+  if (acOrientation) acOrientation.addEventListener("change", (e) => setAdmitCardOpt("orientation", e.target.value));
+  const acSizePreset = document.getElementById("acSizePreset");
+  if (acSizePreset) acSizePreset.addEventListener("change", (e) => {
+    if (e.target.value === "custom" && !state.admitCard.customLong) { state.admitCard.customLong = "96"; state.admitCard.customShort = "68"; }
+    setAdmitCardOpt("sizePreset", e.target.value);
+  });
+  ["acCustomLong:customLong", "acCustomShort:customShort"].forEach(pair => {
+    const [id, key] = pair.split(":");
+    const inp = document.getElementById(id);
+    if (inp) inp.addEventListener("change", (e) => setAdmitCardOpt(key, e.target.value));
+  });
+  const acPerPage = document.getElementById("acPerPage");
+  if (acPerPage) acPerPage.addEventListener("change", (e) => {
+    if (e.target.value === "custom" && !state.admitCard.perPageCustom) state.admitCard.perPageCustom = "8";
+    setAdmitCardOpt("perPage", e.target.value);
+  });
+  const acPerPageCustom = document.getElementById("acPerPageCustom");
+  if (acPerPageCustom) acPerPageCustom.addEventListener("change", (e) => setAdmitCardOpt("perPageCustom", e.target.value));
+  const acFontScale = document.getElementById("acFontScale");
+  if (acFontScale) acFontScale.addEventListener("input", (e) => {
+    state.admitCard.fontScale = parseInt(e.target.value, 10);
+    document.getElementById("acFontScaleVal").textContent = state.admitCard.fontScale + "%";
+    saveAdmitCardSettingsToStorage();
+    mountAdmitCardPreview();
+  });
+  const acFontScaleReset = document.getElementById("acFontScaleReset");
+  if (acFontScaleReset) acFontScaleReset.addEventListener("click", () => setAdmitCardOpt("fontScale", 100));
+  const acWatermarkChk = document.getElementById("acWatermarkChk");
+  if (acWatermarkChk) acWatermarkChk.addEventListener("change", (e) => setAdmitCardOpt("watermarkEnabled", e.target.checked));
+  [["acWatermarkOpacity", "watermarkOpacity", true, v => Math.round(v * 100) + "%"],
+   ["acWatermarkSize", "watermarkSize", false, v => v + "px"],
+   ["acWatermarkOffsetX", "watermarkOffsetX", false, v => String(v)],
+   ["acWatermarkOffsetY", "watermarkOffsetY", false, v => String(v)]].forEach(([id, key, isFloat, fmt]) => {
+    const inp = document.getElementById(id);
+    if (!inp) return;
+    inp.addEventListener("input", (e) => {
+      const v = isFloat ? parseFloat(e.target.value) : parseInt(e.target.value, 10);
+      state.admitCard[key] = v;
+      const lbl = document.getElementById(id + "Val");
+      if (lbl) lbl.textContent = fmt(v);
+      saveAdmitCardSettingsToStorage();
+      mountAdmitCardPreview();
+    });
+  });
+  const acWatermarkResetBtn = document.getElementById("acWatermarkResetBtn");
+  if (acWatermarkResetBtn) acWatermarkResetBtn.addEventListener("click", () => {
+    state.admitCard.watermarkSize = 150;
+    state.admitCard.watermarkOffsetX = 0;
+    state.admitCard.watermarkOffsetY = 0;
+    saveAdmitCardSettingsToStorage();
+    renderAdmitCardPanel();
+  });
   const acLogoGalBtn = document.getElementById("acLogoGalleryBtn");
   const acLogoGalInput = document.getElementById("acLogoGalleryInput");
   if (acLogoGalBtn && acLogoGalInput) {
@@ -8827,7 +9169,8 @@ function renderAdmitCardPanel() {
   }
 }
 
-function renderIdCardPanel() {
+function renderIdCardPanel() { renderPanelKeepingScroll("idCardPanel", "icStudentList", renderIdCardPanelInner); }
+function renderIdCardPanelInner() {
   const el = document.getElementById("idCardPanel");
   if (!state.showIdCardPanel) { el.innerHTML = ""; el.className = ""; return; }
   el.className = "panel";
@@ -8918,6 +9261,38 @@ function renderIdCardPanel() {
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
         ${ID_CARD_THEMES.map(t => `<button type="button" class="icThemeSwatch" data-theme="${t.id}" title="${escapeAttr(t.label)}" style="width:22px;height:22px;border-radius:50%;flex-shrink:0;cursor:pointer;background:${t.headerBg};border:2px solid ${state.idCard.themeId === t.id ? t.accentColor : "transparent"};box-shadow:0 0 0 1px #D9CBA3;padding:0;"></button>`).join("")}
       </div>
+      <div style="margin-top:12px;">
+        <label class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:6px;">Card Size &amp; Shape</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <select id="icOrientation" class="rule-input" style="flex:1;min-width:150px;box-sizing:border-box;">
+            <option value="landscape" ${state.idCard.orientation !== "portrait" ? "selected" : ""}>Aada (Landscape) ▭</option>
+            <option value="portrait" ${state.idCard.orientation === "portrait" ? "selected" : ""}>Khada (Portrait) ▯</option>
+          </select>
+          <select id="icSizePreset" class="rule-input" style="flex:2;min-width:200px;box-sizing:border-box;">
+            ${Object.keys(ID_CARD_PRESETS).map(k => `<option value="${k}" ${state.idCard.sizePreset === k ? "selected" : ""}>${escapeHtml(ID_CARD_PRESETS[k].label)}</option>`).join("")}
+            <option value="custom" ${state.idCard.sizePreset === "custom" ? "selected" : ""}>Custom size (mm)</option>
+          </select>
+        </div>
+        ${state.idCard.sizePreset === "custom" ? `
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
+          <input id="icCustomLong" type="number" inputmode="decimal" min="50" max="170" step="0.5" class="rule-input" placeholder="Lambai (mm)" value="${escapeAttr(state.idCard.customLong)}" style="width:120px;box-sizing:border-box;" />
+          <span style="color:#6B5F4B;">×</span>
+          <input id="icCustomShort" type="number" inputmode="decimal" min="35" max="120" step="0.5" class="rule-input" placeholder="Chaudai (mm)" value="${escapeAttr(state.idCard.customShort)}" style="width:120px;box-sizing:border-box;" />
+          <span style="font-size:11px;color:#6B5F4B;">mm (lambai 50–170, chaudai 35–120)</span>
+        </div>` : ""}
+        <p style="font-size:11px;color:#6B5F4B;margin:4px 0 0;">Size: ${(() => { const d = getIdCardDims(state.idCard); return d.wMm.toFixed(1) + " × " + d.hMm.toFixed(1) + " mm"; })()} — PDF isi asli size me print hoti hai.</p>
+      </div>
+      <div style="margin-top:12px;">
+        <label class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:6px;">Text Size (Font)</label>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:11px;color:#6B5F4B;">A</span>
+          <input type="range" id="icFontScale" min="50" max="150" step="5" value="${state.idCard.fontScale != null ? state.idCard.fontScale : 100}" style="flex:1;" />
+          <span style="font-size:15px;color:#6B5F4B;">A</span>
+          <span id="icFontScaleVal" style="font-size:12px;color:#1F2A44;width:42px;text-align:right;">${state.idCard.fontScale != null ? state.idCard.fontScale : 100}%</span>
+          <button type="button" id="icFontScaleReset" class="stamp" style="background:transparent;border:1px solid #B7A97E;border-radius:3px;padding:4px 8px;font-size:11px;color:#6B5F4B;cursor:pointer;">100%</button>
+        </div>
+        <p style="font-size:11px;color:#6B5F4B;margin:4px 0 0;">Letters chhote karne ke liye slider left le jao. Agar kuch card se bahar jaaye to font apne aap thoda chhota ho jaata hai, taaki kuch hide na ho.</p>
+      </div>
       <p style="font-size:11px;color:#6B5F4B;margin:8px 0 0;">Preview:</p>
       <div id="icCardPreviewWrap" style="margin-top:8px;display:flex;justify-content:center;padding:12px;background:#EFE7CE;border-radius:6px;overflow-x:auto;"></div>
     </div>
@@ -8938,7 +9313,7 @@ function renderIdCardPanel() {
       </label>
       <span class="stamp" style="font-size:12.5px;color:#6B5F4B;">${selectedCount} selected</span>
     </div>
-    <div style="max-height:260px;overflow-y:auto;border:1px solid #D9CBA3;border-radius:3px;margin-bottom:14px;">
+    <div id="icStudentList" data-sig="${eligible.length}:${eligible.length ? eligible[0].id : ''}:${eligible.length ? eligible[eligible.length - 1].id : ''}" style="max-height:260px;overflow-y:auto;border:1px solid #D9CBA3;border-radius:3px;margin-bottom:14px;">
       ${eligible.length === 0
         ? `<p style="font-size:12.5px;color:#6B5F4B;padding:12px;margin:0;">No student found for this filter.</p>`
         : eligible.map(e => `
@@ -9088,9 +9463,53 @@ function renderIdCardPanel() {
     btn.addEventListener("click", () => applyTheme(btn.dataset.theme));
   });
   const previewWrap = document.getElementById("icCardPreviewWrap");
-  if (previewWrap) {
+  const mountIdCardPreview = () => {
+    if (!previewWrap) return;
+    previewWrap.innerHTML = "";
     const previewEntry = eligible.find(e => state.idCardSelectedIds.has(e.id)) || eligible[0] || ID_CARD_SAMPLE_ENTRY;
-    previewWrap.appendChild(buildIdCardNode(previewEntry, state.idCard));
+    // Chhote phone screen par card ko fit karne ke liye scale kar do (sirf preview ke liye).
+    const dims = getIdCardDims(state.idCard);
+    const avail = Math.max(200, previewWrap.clientWidth - 24);
+    const k = Math.min(1, avail / dims.w);
+    const outer = document.createElement("div");
+    outer.style.cssText = `width:${Math.round(dims.w * k)}px;height:${Math.round(dims.h * k)}px;flex-shrink:0;`;
+    const inner = document.createElement("div");
+    inner.style.cssText = `width:${dims.w}px;height:${dims.h}px;transform:scale(${k});transform-origin:top left;`;
+    outer.appendChild(inner);
+    previewWrap.appendChild(outer);
+    mountIdCardFitted(inner, previewEntry, state.idCard);
+  };
+  mountIdCardPreview();
+  const setIdCardSize = (key, val) => { state.idCard[key] = val; saveIdCardSettingsToStorage(); renderIdCardPanel(); };
+  const icOrientation = document.getElementById("icOrientation");
+  if (icOrientation) icOrientation.addEventListener("change", (e) => setIdCardSize("orientation", e.target.value));
+  const icSizePreset = document.getElementById("icSizePreset");
+  if (icSizePreset) icSizePreset.addEventListener("change", (e) => {
+    if (e.target.value === "custom" && !state.idCard.customLong) { state.idCard.customLong = "85.6"; state.idCard.customShort = "54"; }
+    setIdCardSize("sizePreset", e.target.value);
+  });
+  ["icCustomLong:customLong", "icCustomShort:customShort"].forEach(pair => {
+    const [id, key] = pair.split(":");
+    const inp = document.getElementById(id);
+    // "change" (na ki har akshar par) — taaki type karte waqt panel dobara na bane
+    if (inp) inp.addEventListener("change", (e) => setIdCardSize(key, e.target.value));
+  });
+  const icFontScale = document.getElementById("icFontScale");
+  if (icFontScale) {
+    icFontScale.addEventListener("input", (e) => {
+      state.idCard.fontScale = parseInt(e.target.value, 10);
+      document.getElementById("icFontScaleVal").textContent = state.idCard.fontScale + "%";
+      saveIdCardSettingsToStorage();
+      mountIdCardPreview();
+    });
+  }
+  const icFontScaleReset = document.getElementById("icFontScaleReset");
+  if (icFontScaleReset) {
+    icFontScaleReset.addEventListener("click", () => {
+      state.idCard.fontScale = 100;
+      saveIdCardSettingsToStorage();
+      renderIdCardPanel();
+    });
   }
   document.getElementById("icClassSel").addEventListener("change", (e) => {
     state.idCardClassSel = e.target.value;
@@ -9325,9 +9744,10 @@ function renderReportPanel() {
           <div style="display:flex;gap:12px;">
             <button id="repColsAllBtn" style="background:none;border:none;color:#1F2A44;font-size:11.5px;text-decoration:underline;cursor:pointer;font-family:'IBM Plex Mono',monospace;padding:0;">All</button>
             <button id="repColsNoneBtn" style="background:none;border:none;color:#1F2A44;font-size:11.5px;text-decoration:underline;cursor:pointer;font-family:'IBM Plex Mono',monospace;padding:0;">None</button>
+            <button id="repColsResetBtn" style="background:none;border:none;color:#9B3437;font-size:11.5px;text-decoration:underline;cursor:pointer;font-family:'IBM Plex Mono',monospace;padding:0;">Reset</button>
           </div>
         </div>
-        <p style="font-size:11px;color:#6B5F4B;margin:0 0 10px;">Untick to remove a column you don't need. Tick order sets the left-to-right order in the PDF/CSV.</p>
+        <p style="font-size:11px;color:#6B5F4B;margin:0 0 10px;">Untick to remove a column you don't need. Tick order sets the left-to-right order in the PDF/CSV. Your choice is remembered until you tap Reset.</p>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;">
           ${REPORT_COLUMN_DEFS.map(c => {
             const pos = state.reportColumnOrder.indexOf(c.key);
@@ -9396,10 +9816,13 @@ function renderReportPanel() {
   const colsAllBtn = document.getElementById("repColsAllBtn");
   if (colsAllBtn) colsAllBtn.addEventListener("click", () => {
     REPORT_COLUMN_DEFS.forEach(c => { if (!state.reportColumnOrder.includes(c.key)) state.reportColumnOrder.push(c.key); });
+    saveReportColumns();
     renderReportPanel();
   });
   const colsNoneBtn = document.getElementById("repColsNoneBtn");
-  if (colsNoneBtn) colsNoneBtn.addEventListener("click", () => { state.reportColumnOrder = []; renderReportPanel(); });
+  if (colsNoneBtn) colsNoneBtn.addEventListener("click", () => { state.reportColumnOrder = []; saveReportColumns(); renderReportPanel(); });
+  const repColsResetBtn = document.getElementById("repColsResetBtn");
+  if (repColsResetBtn) repColsResetBtn.addEventListener("click", () => { state.reportColumnOrder = DEFAULT_REPORT_COLUMNS.slice(); saveReportColumns(); renderReportPanel(); });
   el.querySelectorAll(".repColChk").forEach(chk => {
     chk.addEventListener("change", (e) => {
       const key = e.target.dataset.key;
@@ -9408,6 +9831,7 @@ function renderReportPanel() {
       } else {
         state.reportColumnOrder = state.reportColumnOrder.filter(k => k !== key);
       }
+      saveReportColumns();
       renderReportPanel();
     });
   });
@@ -9666,9 +10090,10 @@ function renderSelectionPanel() {
           <div style="display:flex;gap:12px;">
             <button id="exportColsAllBtn" style="background:none;border:none;color:#1F2A44;font-size:11.5px;text-decoration:underline;cursor:pointer;font-family:'IBM Plex Mono',monospace;padding:0;">All</button>
             <button id="exportColsNoneBtn" style="background:none;border:none;color:#1F2A44;font-size:11.5px;text-decoration:underline;cursor:pointer;font-family:'IBM Plex Mono',monospace;padding:0;">None</button>
+            <button id="exportColsResetBtn" style="background:none;border:none;color:#9B3437;font-size:11.5px;text-decoration:underline;cursor:pointer;font-family:'IBM Plex Mono',monospace;padding:0;">Reset</button>
           </div>
         </div>
-        <p style="font-size:11px;color:#6B5F4B;margin:0 0 10px;">Tick in the order you want columns to appear in the PDF, left to right. The number shows each column's position.</p>
+        <p style="font-size:11px;color:#6B5F4B;margin:0 0 10px;">Tick in the order you want columns to appear in the PDF, left to right. The number shows each column's position. Your choice is remembered until you tap Reset.</p>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;">
           ${EXPORT_COLUMN_DEFS.map(c => {
             const pos = state.exportColumnOrder.indexOf(c.key);
@@ -9704,10 +10129,13 @@ function renderSelectionPanel() {
   const colsAllBtn = document.getElementById("exportColsAllBtn");
   if (colsAllBtn) colsAllBtn.addEventListener("click", () => {
     EXPORT_COLUMN_DEFS.forEach(c => { if (!state.exportColumnOrder.includes(c.key)) state.exportColumnOrder.push(c.key); });
+    saveExportColumns();
     renderSelectionPanel();
   });
   const colsNoneBtn = document.getElementById("exportColsNoneBtn");
-  if (colsNoneBtn) colsNoneBtn.addEventListener("click", () => { state.exportColumnOrder = []; renderSelectionPanel(); });
+  if (colsNoneBtn) colsNoneBtn.addEventListener("click", () => { state.exportColumnOrder = []; saveExportColumns(); renderSelectionPanel(); });
+  const colsResetBtn = document.getElementById("exportColsResetBtn");
+  if (colsResetBtn) colsResetBtn.addEventListener("click", () => { state.exportColumnOrder = DEFAULT_EXPORT_COLUMNS.slice(); saveExportColumns(); renderSelectionPanel(); });
   el.querySelectorAll(".exportColChk").forEach(chk => {
     chk.addEventListener("change", (e) => {
       const key = e.target.dataset.key;
@@ -9716,45 +10144,40 @@ function renderSelectionPanel() {
       } else {
         state.exportColumnOrder = state.exportColumnOrder.filter(k => k !== key);
       }
+      saveExportColumns();
       renderSelectionPanel();
       renderSelectionPanel();
     });
   });
 }
 
-function buildCardNode(entry) {
+/* "Share as Image" ka card ab wahi columns dikhata hai jo "Columns (N)" me tick kiye gaye hain
+   (PDF export jaisa hi selection aur order). Naam / Father's Name tick ho to upar heading me aate hain,
+   baaki tick kiye columns niche rows me. Khaali value wali row nahi dikhti. */
+function buildCardNode(entry, idx) {
+  const cols = state.exportColumnOrder
+    .map(key => EXPORT_COLUMN_DEFS.find(c => c.key === key))
+    .filter(Boolean);
+  const has = (key) => cols.some(c => c.key === key);
   const row = (label, value) => value
-    ? `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #E4D9B8;font-size:14px;">
-        <span style="font-family:'IBM Plex Mono',monospace;color:#6B5F4B;">${escapeHtml(label)}</span>
-        <span style="color:#1F2A44;font-weight:600;text-align:right;">${escapeHtml(value)}</span>
+    ? `<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid #E4D9B8;font-size:14px;">
+        <span style="font-family:'IBM Plex Mono',monospace;color:#6B5F4B;flex-shrink:0;">${escapeHtml(label)}</span>
+        <span style="color:#1F2A44;font-weight:600;text-align:right;min-width:0;word-break:break-word;">${escapeHtml(value)}</span>
       </div>`
     : "";
+  const rows = cols
+    .filter(c => c.key !== "name" && c.key !== "fatherName")
+    .map(c => row(c.label, c.get(entry, idx || 0)))
+    .join("");
+  const showDisclaimer = has("totalDues") || has("fMonth") || has("tMonth");
   const wrap = document.createElement("div");
   wrap.style.cssText = "width:420px;background:#F3ECDA;border:1px solid #B7A97E;padding:22px;font-family:'Source Serif 4',Georgia,serif;color:#1F2A44;box-sizing:border-box;";
   wrap.innerHTML = `
     <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9B3437;letter-spacing:1px;text-transform:uppercase;">Student Record</div>
-    <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:22px;margin-top:4px;">${escapeHtml(TN(entry.name)) || "—"}</div>
-    <div style="font-size:13px;color:#6B5F4B;margin-top:2px;">${escapeHtml(TN(entry.fatherName)) || "—"}</div>
-    <div style="margin-top:14px;">
-      ${row("Enroll No.", entry.rollNo)}
-      ${row("Class", entry.className)}
-      ${row("Session", entry.session)}
-      ${row("Mobile", entry.mobile)}
-      ${row("FEE TILL", T(entry.fMonth))}
-      ${row("TRANSPORT TILL", T(entry.tMonth))}
-      ${row("TOTAL DUES", (() => {
-        const sheet = normalizeFeeSheet(entry.feeChart);
-        if (sheet.passbookMode) {
-          const balances = computePassbookBalances(sheet);
-          return fmtINR(balances.length ? balances[balances.length - 1] : (parseFloat(sheet.openingBalance) || 0));
-        }
-        return fmtINR(computeFeeChartTotal(sheet));
-      })())}
-      ${row("Address", TD(entry.address))}
-      ${row("Notes", TD(entry.notes))}
-    </div>
-    ${entry.updatedAt ? `<div style="font-size:11px;color:#A69B82;margin-top:12px;">Last updated: ${new Date(entry.updatedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}${entry.lastUpdateSummary ? ` — <span title="What changed in the last save">${escapeHtml(entry.lastUpdateSummary)}</span> updated` : ""}</div>` : ""}
-    <div style="font-size:11px;color:#9B3437;margin-top:8px;font-style:italic;">This is provided only to show a provisional summary.</div>
+    ${has("name") ? `<div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:22px;margin-top:4px;">${escapeHtml(TN(entry.name)) || "—"}</div>` : ""}
+    ${has("fatherName") ? `<div style="font-size:13px;color:#6B5F4B;margin-top:2px;">${escapeHtml(TN(entry.fatherName)) || "—"}</div>` : ""}
+    ${rows ? `<div style="margin-top:14px;">${rows}</div>` : ""}
+    ${showDisclaimer ? `<div style="font-size:11px;color:#9B3437;margin-top:12px;font-style:italic;">This is provided only to show a provisional summary.</div>` : ""}
   `;
   return wrap;
 }
@@ -9831,13 +10254,18 @@ async function shareSelectedAsImages() {
     .slice()
     .sort((a, b) => a.serial - b.serial);
   if (!selected.length) return;
+  if (!state.exportColumnOrder.some(key => EXPORT_COLUMN_DEFS.some(c => c.key === key))) {
+    alert("Please tick at least one column to include in the image.");
+    return;
+  }
   const shareBtn = document.getElementById("shareImageBtn");
   if (shareBtn) { shareBtn.disabled = true; shareBtn.style.opacity = 0.5; shareBtn.textContent = "Preparing…"; }
   try {
     const blobs = [];
     const names = [];
-    for (const entry of selected) {
-      const node = buildCardNode(entry);
+    for (let si = 0; si < selected.length; si++) {
+      const entry = selected[si];
+      const node = buildCardNode(entry, si);
       const blob = await nodeToBlob(node);
       if (blob) {
         blobs.push(blob);
