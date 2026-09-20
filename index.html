@@ -516,6 +516,7 @@ const HI_DICT = {
   "Reset Watermark Position": "वॉटरमार्क पोजीशन रीसेट करें",
   "Save": "सेव करें",
   "Share as Image": "इमेज के रूप में शेयर करें",
+  "WhatsApp Text": "WhatsApp टेक्स्ट",
   "Skip and Edit": "स्किप करें और संपादित करें",
   "Use Default Wording": "डिफ़ॉल्ट वर्डिंग उपयोग करें",
   "Use Passbook Wording": "पासबुक वर्डिंग उपयोग करें",
@@ -5412,6 +5413,19 @@ function renderFeeChartBillCalculator(e, sheet) {
          <span style="font-family:'Zilla Slab',serif;font-weight:700;font-size:14.5px;">Payable Total</span>
          <span style="font-family:'Zilla Slab',serif;font-weight:700;font-size:14.5px;color:#9B3437;">${fmtINR(grandTotal)}</span>
        </div>`;
+  // WhatsApp text share for the Generate Bill panel — uses the same ticked
+  // blocks / edited amounts as the PDF and image buttons above (unlike the
+  // separate Message box, which uses its own simple single-range draft or
+  // the Message Template). Respects the same mobile-number and per-student
+  // WhatsApp-lock rules as the Message box's WhatsApp button.
+  const billHasMobile = !!(e.mobile && e.mobile.trim());
+  const billLocked = isMessageLocked(e.id);
+  const billWaText = buildMultiChartBillText(e, blocks);
+  const billWaBtnHtml = billLocked
+    ? `<span style="display:flex;align-items:center;gap:6px;background:#D9CBA3;color:#6B5F4B;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:not-allowed;">🔒 WhatsApp</span>`
+    : billHasMobile
+      ? `<a href="${buildWhatsAppLink(e.mobile, billWaText)}" target="_blank" rel="noopener" class="sendFeeChartMsgBtn" data-entry-id="${e.id}" data-group-ids="${e.id}" data-channel="whatsapp" style="display:flex;align-items:center;gap:6px;background:#25D366;color:#fff;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;text-decoration:none;">${escapeHtml(T("WhatsApp Text"))}</a>`
+      : `<span style="display:flex;align-items:center;gap:6px;background:#D9CBA3;color:#6B5F4B;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:not-allowed;" title="${escapeAttr(T("No mobile number on file — add one to send."))}">WhatsApp</span>`;
   return `
     <div style="margin-top:12px;padding-top:10px;border-top:1px dashed #B7A97E;">
       <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9B3437;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px;">Generate Bill</div>
@@ -5421,6 +5435,7 @@ function renderFeeChartBillCalculator(e, sheet) {
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
         <button class="downloadFeeChartBillPdfBtn" data-entry-id="${e.id}" style="background:#9B3437;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Download PDF</button>
         <button class="shareFeeChartBillImageBtn" data-entry-id="${e.id}" style="background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Share as Image</button>
+        ${billWaBtnHtml}
       </div>
     </div>`;
 }
@@ -10435,10 +10450,19 @@ function createIsolatedCaptureFrame() {
   document.body.appendChild(iframe);
   const doc = iframe.contentDocument;
   doc.open();
+  // Pehle yahan Google Fonts ka @import tha, jo har single "Share as Image"
+  // tap par ek naye iframe document ke liye dobara load hota tha. Us document
+  // ke fonts browser ke HTTP cache se bhi aate hain to fir waapas se
+  // decode/parse hote hain, aur agar network dheemi ho (jaise screenshot me
+  // 5 KB/s) to yeh load kaafi der tak atka reh sakta hai — chahe font file
+  // pehle se cached ho. Har card/bill/receipt ke inline style me pehle se
+  // hi fallback fonts (Georgia/serif, monospace) diye hain, isliye @import
+  // hata kar seedha un fallback fonts par render karte hain: koi network
+  // wait nahi, image generation turant (near-instant) hota hai chahe
+  // connection kitna bhi slow kyun na ho. Look thoda different lagega
+  // (Georgia ki jagah Zilla Slab nahi) lekin speed reliable ho jaati hai.
   doc.write(
-    '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' +
-    "@import url('https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500&display=swap');" +
-    "body{margin:0;}</style></head><body></body></html>"
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;}</style></head><body></body></html>'
   );
   doc.close();
   return iframe;
@@ -10467,7 +10491,18 @@ async function shareOrDownloadBlobs(blobs, names) {
       await navigator.share({ files, title: "Student Record" });
       return;
     } catch (err) {
+      // AbortError just means the person closed the share sheet themselves
+      // — do nothing, don't fall back to a download they never asked for.
       if (err && err.name === "AbortError") return;
+      // Any other failure (share sheet couldn't open, no matching app,
+      // OS-level rejection, etc.) used to fall straight through to a
+      // silent download with zero explanation — "Share as Image" would
+      // just quietly behave like a download button with no way to tell
+      // why. Log the real error for diagnosis and tell the person what
+      // happened instead of leaving it a silent mystery.
+      console.error("navigator.share failed, falling back to download:", err);
+      state.error = "Share sheet नहीं खुल पाई, इसलिए इमेज डाउनलोड कर दी गई है।";
+      updateErrorBanner();
     }
   }
   files.forEach((file, i) => {
