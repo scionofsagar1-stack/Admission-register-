@@ -716,6 +716,7 @@ const HI_DICT = {
   "e.g. Main Building": "उदा. मुख्य भवन",
   "e.g. Saraswati Vidya Mandir": "उदा. सरस्वती विद्या मंदिर",
   "e.g. Station Road, Kanpur": "उदा. स्टेशन रोड, कानपुर",
+  "This is provided only to show a provisional summary.": "यह केवल अनंतिम (प्रोविज़नल) सारांश दिखाने के लिए दिया गया है।",
 };
 
 function T(s) {
@@ -779,30 +780,87 @@ function tnScheduleRefresh() {
   TN_REFRESH_TIMER = setTimeout(() => {
     TN_REFRESH_TIMER = null;
     if (typeof renderAll === "function") renderAll();
-  }, 400);
+  }, (TN_QUEUE.length || TN_STAGING.length) ? 1200 : 300);   // batches aa rahe hon to har 1.2s me ek baar, warna turant
 }
-const TN_QUEUE = [];
+/* --- Naam-translation queue (v2) ---
+   Pehle kya galat tha: ek render ke saare naam 3 parallel requests me ek saath Google ko jaate the. Mobile data par
+   Google ye burst rok deta hai (HTTP 429 / fetch fail). Fail hone par purana code poori queue FAINK deta tha, 30 sec ruk kar
+   wahi burst dobara bhejta tha -> naam kabhi Hindi me nahi aate the, aur screen par kuch dikhta bhi nahi tha.
+   Ab: ek-ek request (parallel nahi) beech me chhota gap, fail hone par batch queue me wapas + backoff (15s->30s->60s->120s),
+   aur neeche chhoti si status-patti dikhti hai (kitne naam baaki / kya error). */
+const TN_QUEUE = [];               // har item = naamo ki ek batch (list)
+const TN_STAGING = [];             // naye maange gaye naam, batch banne se pehle
+const TN_NO_RESULT = new Set();    // Google ne jinka jawab khaali diya (dobara nahi maangte)
 let TN_ACTIVE = 0;
-const TN_MAX_CONCURRENT = 3;
-const TN_BATCH_SIZE = 25;
+const TN_MAX_CONCURRENT = 1;
+const TN_BATCH_SIZE = 20;
+const TN_MAX_URL_CHARS = 1500;     // encoded query ki lambai — lambe address wale batch ko chhota rakhne ke liye
+const TN_GAP_MS = 250;
 let TN_BLOCK_UNTIL = 0;
-let TN_RETRY_TIMER = null;
+let TN_BACKOFF_MS = 15000;
 let TN_PUMP_TIMER = null;
-function tnPump() {
-  if (Date.now() < TN_BLOCK_UNTIL) return;
-  while (TN_ACTIVE < TN_MAX_CONCURRENT && TN_QUEUE.length) {
-    const batch = TN_QUEUE.splice(0, TN_BATCH_SIZE);
-    TN_ACTIVE++;
-    tnFetchBatch(batch).finally(() => { TN_ACTIVE--; tnPump(); });
+let TN_LAST_ERROR = "";
+function tnStatus() {
+  try {
+    if (typeof document === "undefined" || !document.body) return;
+    let el = document.getElementById("tnStatusPill");
+    const left = TN_ONLINE_PENDING.size;
+    if (APP_LANG !== "hi" || left === 0) { if (el) el.style.display = "none"; return; }
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "tnStatusPill";
+      el.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:99999;background:#1F2A44;color:#F3ECDA;font-size:11px;padding:5px 10px;border-radius:12px;opacity:0.92;pointer-events:none;max-width:90vw;";
+      document.body.appendChild(el);
+    }
+    const blocked = Date.now() < TN_BLOCK_UNTIL;
+    el.textContent = blocked
+      ? `⚠ नाम अनुवाद रुका (${TN_LAST_ERROR || "error"}) — ${left} बाकी, ${Math.ceil((TN_BLOCK_UNTIL - Date.now()) / 1000)}s में दोबारा`
+      : `⏳ नाम अनुवाद हो रहे हैं… ${left} बाकी`;
+    el.style.display = "block";
+  } catch (e) { /* status sirf dikhane ke liye hai */ }
+}
+function tnStageToBatches() {
+  while (TN_STAGING.length) {
+    const batch = [];
+    let len = 0;
+    while (TN_STAGING.length && batch.length < TN_BATCH_SIZE) {
+      const l = encodeURIComponent(TN_STAGING[0]).length + 3;
+      if (batch.length && len + l > TN_MAX_URL_CHARS) break;
+      batch.push(TN_STAGING.shift());
+      len += l;
+    }
+    TN_QUEUE.push(batch);
   }
 }
-function tnFetchOnline(name) {
-  if (TN_ONLINE_CACHE.has(name) || TN_ONLINE_PENDING.has(name)) return;
-  if (Date.now() < TN_BLOCK_UNTIL) return;
-  TN_ONLINE_PENDING.add(name);
-  TN_QUEUE.push(name);
+function tnPump() {
   clearTimeout(TN_PUMP_TIMER);
-  TN_PUMP_TIMER = setTimeout(tnPump, 120);   // ek render ke saare naam ek saath batch ho jaayein
+  TN_PUMP_TIMER = null;
+  tnStageToBatches();
+  const wait = TN_BLOCK_UNTIL - Date.now();
+  if (wait > 0) {                       // cooldown chal raha hai — khatam hote hi khud dobara chalega
+    if (TN_QUEUE.length) TN_PUMP_TIMER = setTimeout(tnPump, wait + 50);
+    tnStatus();
+    return;
+  }
+  if (TN_ACTIVE >= TN_MAX_CONCURRENT || !TN_QUEUE.length) { tnStatus(); return; }
+  const batch = TN_QUEUE.shift();
+  TN_ACTIVE++;
+  tnStatus();
+  tnFetchBatch(batch).finally(() => {
+    TN_ACTIVE--;
+    if (TN_QUEUE.length || TN_STAGING.length) {
+      if (TN_PUMP_TIMER) clearTimeout(TN_PUMP_TIMER);
+      TN_PUMP_TIMER = setTimeout(tnPump, TN_GAP_MS);
+    }
+    tnStatus();
+  });
+}
+function tnFetchOnline(name) {
+  if (TN_ONLINE_CACHE.has(name) || TN_ONLINE_PENDING.has(name) || TN_NO_RESULT.has(name)) return;
+  if (TN_FB_CACHE.has(name) && Date.now() < TN_GT_BAD_UNTIL) return;   // Google Translate abhi band hai — phonetic wala hi chalao
+  TN_ONLINE_PENDING.add(name);
+  TN_STAGING.push(name);
+  if (!TN_PUMP_TIMER) TN_PUMP_TIMER = setTimeout(tnPump, 120);   // ek render ke saare naam ek saath batch ho jaayein
 }
 async function tnGoogle(text) {
   const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=hi&dt=t&q=${encodeURIComponent(text)}`;
@@ -811,30 +869,93 @@ async function tnGoogle(text) {
   const data = await res.json();
   return ((data && data[0]) || []).map((seg) => seg[0]).join("");
 }
+/* Google Translate (translate.googleapis.com) se "Failed to fetch" (bina HTTP code ke) matlab browser ki request Google tak
+   pahunchi hi nahi / roki gayi (CORS ya network/DNS block). Aise me ye 10 min ke liye band karke Google Input Tools
+   (inputtools.google.com, online transliteration — naam ke liye bilkul sahi) se naam Devanagari me laate hain. Dono online hain. */
+let TN_GT_BAD_UNTIL = 0;
+const TN_WORD_CACHE = new Map();
+const TN_FB_CACHE = new Map();   // Input Tools (phonetic) wale naam — sirf memory me, Google Translate ka jawab aate hi usse badal jaate hain
+async function tnInputToolsWord(word) {
+  const url = "https://inputtools.google.com/request?text=" + encodeURIComponent(word) + "&itc=hi-t-i0-und&num=1&cp=0&cs=1&ie=utf-8&oe=utf-8&app=fee-register";
+  const res = await fetch(url);
+  if (!res.ok) { const e = new Error("inputtools http " + res.status); e.status = res.status; throw e; }
+  const data = await res.json();
+  const hi = data && data[0] === "SUCCESS" && data[1] && data[1][0] && data[1][0][1] && data[1][0][1][0];
+  return hi || "";
+}
+async function tnApplyInputTools(names) {
+  const words = [];
+  names.forEach((n) => (n.match(/[A-Za-z]+/g) || []).forEach((w) => {
+    const k = w.toLowerCase();
+    if (!TN_WORD_CACHE.has(k) && !words.includes(k)) words.push(k);
+  }));
+  let i = 0, failure = null;
+  const worker = async () => {
+    while (i < words.length && !failure) {
+      const w = words[i++];
+      try { TN_WORD_CACHE.set(w, (await tnInputToolsWord(w)) || w); }
+      catch (e) { failure = e; }
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  if (failure) throw failure;
+  names.forEach((n) => {
+    const hi = n.replace(/[A-Za-z]+/g, (w) => TN_WORD_CACHE.get(w.toLowerCase()) || w);
+    if (hi && hi !== n) TN_FB_CACHE.set(n, hi); else TN_NO_RESULT.add(n);
+    TN_ONLINE_PENDING.delete(n);
+  });
+}
+async function tnProbe() {   // sirf dikhane ke liye: CORS-block hai ya network-block?
+  try {
+    await fetch("https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=hi&dt=t&q=a", { mode: "no-cors" });
+    return "CORS";
+  } catch (e) { return "network"; }
+}
+async function tnApplyGoogle(names) {
+  const joined = await tnGoogle(names.join("\n"));
+  const lines = joined.split("\n").map(x => x.trim());
+  if (lines.length === names.length) {
+    names.forEach((n, i) => {
+      if (lines[i]) TN_ONLINE_CACHE.set(n, lines[i]); else TN_NO_RESULT.add(n);
+      TN_ONLINE_PENDING.delete(n);
+    });
+  } else if (names.length > 1) {
+    // Lines 1:1 nahi mili — batch ko aadha-aadha karke queue ke aage wapas daalo (akele naam tak), request-burst nahi.
+    const mid = Math.ceil(names.length / 2);
+    TN_QUEUE.unshift(names.slice(mid));
+    TN_QUEUE.unshift(names.slice(0, mid));
+  } else {
+    const one = joined.replace(/\n+/g, " ").trim();
+    if (one) TN_ONLINE_CACHE.set(names[0], one); else TN_NO_RESULT.add(names[0]);
+    TN_ONLINE_PENDING.delete(names[0]);
+  }
+  return true;
+}
 async function tnFetchBatch(names) {
   try {
-    const joined = await tnGoogle(names.join("\n"));
-    const lines = joined.split("\n").map(x => x.trim());
-    if (lines.length === names.length) {
-      names.forEach((n, i) => { if (lines[i]) TN_ONLINE_CACHE.set(n, lines[i]); });
-    } else {
-      // Lines didn't line up 1:1 — fall back to safe one-by-one for this batch only.
-      for (const n of names) {
-        const one = (await tnGoogle(n)).trim();
-        if (one) TN_ONLINE_CACHE.set(n, one);
+    let done = false;
+    if (Date.now() >= TN_GT_BAD_UNTIL) {
+      try { done = await tnApplyGoogle(names); }
+      catch (e) {
+        if (e && e.status) throw e;                    // HTTP error (429 etc.) — neeche backoff
+        TN_GT_BAD_UNTIL = Date.now() + 10 * 60 * 1000; // "Failed to fetch" — Google Translate tak request nahi pahunchi
+        TN_LAST_ERROR = "Translate: Failed to fetch";
       }
     }
+    if (!done) await tnApplyInputTools(names);
+    TN_BACKOFF_MS = 15000;
+    if (done) TN_LAST_ERROR = "";
     tnSaveCacheSoon();
     tnScheduleRefresh();
   } catch (e) {
-    console.warn("Name translation paused for 30s:", e && e.message ? e.message : e);
-    TN_BLOCK_UNTIL = Date.now() + 30000;
-    TN_QUEUE.forEach(n => TN_ONLINE_PENDING.delete(n));
-    TN_QUEUE.length = 0;
-    clearTimeout(TN_RETRY_TIMER);
-    TN_RETRY_TIMER = setTimeout(tnScheduleRefresh, 30500);   // cooldown ke baad ek baar refresh -> naam dobara maange jaayenge
-  } finally {
-    names.forEach(n => TN_ONLINE_PENDING.delete(n));
+    // Fail — batch queue me wapas, backoff ke baad wahi se aage.
+    let why = e && e.status ? "HTTP " + e.status : (e && e.message ? e.message : "network");
+    if (!(e && e.status)) why += " · " + (await tnProbe()) + "-block";
+    TN_LAST_ERROR = why;
+    console.warn("Name translation paused for " + Math.round(TN_BACKOFF_MS / 1000) + "s:", why);
+    TN_QUEUE.unshift(names);
+    TN_BLOCK_UNTIL = Date.now() + TN_BACKOFF_MS;
+    TN_BACKOFF_MS = Math.min(TN_BACKOFF_MS * 2, 120000);
   }
 }
 function TN(s) {
@@ -844,8 +965,8 @@ function TN(s) {
   if (/[\r\n]/.test(key)) return s;
   const cached = TN_ONLINE_CACHE.get(key);
   if (cached) return cached;
-  tnFetchOnline(key);
-  return s;
+  tnFetchOnline(key);   // Google Translate se sahi spelling maangte rehte hain (agar chal raha ho)
+  return TN_FB_CACHE.get(key) || s;
 }
 
 /* ---------- Online (Google Translate) fallback for the student login
@@ -928,6 +1049,29 @@ function TD(s) {
   const t = T(s);
   if (t !== s) return t;
   return TN(s);
+}
+/* Student-card ke wo chhote text jo HI_DICT me exact match nahi ho paate the (dynamic ya emoji ke saath). */
+const HI_CLASS_MAP = { "play": "प्ले", "nursery": "नर्सरी", "lkg": "एलकेजी", "ukg": "यूकेजी" };
+function TC(c) {   // sirf card par dikhane ke liye; class-filter/data ko nahi chhuta
+  if (APP_LANG !== "hi" || typeof c !== "string") return c;
+  return HI_CLASS_MAP[c.trim().toLowerCase()] || c;
+}
+const HI_UPDATE_LABELS = {
+  "Name": "नाम", "Father's Name": "पिता का नाम", "Mother's Name": "माता का नाम", "DOB": "जन्मतिथि", "Roll No.": "रोल नं.",
+  "Mobile Number": "मोबाइल नंबर", "Address": "पता", "Class": "कक्षा", "Section": "सेक्शन", "Session": "सत्र",
+  "Fee Till": "फीस तक", "Transport Till": "ट्रांसपोर्ट तक", "Notes": "नोट्स", "WhatsApp Number": "व्हाट्सएप नंबर",
+  "New/Old Status": "नया/पुराना स्टेटस", "Transport Status": "ट्रांसपोर्ट स्टेटस", "Photo": "फोटो",
+  "Fee Chart": "फीस चार्ट", "Session Archived": "सत्र आर्काइव", "Star Rating": "स्टार रेटिंग",
+};
+const HI_MONTH_ABBR = { Jan: "जन", Feb: "फ़र", Mar: "मार्च", Apr: "अप्रैल", May: "मई", Jun: "जून", Jul: "जुल", Aug: "अग", Sept: "सित", Sep: "सित", Oct: "अक्टू", Nov: "नव", Dec: "दिस" };
+function cardUpdatedAtText(iso) {
+  const en = new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  if (APP_LANG !== "hi") return en;
+  return en.replace(/\b(Sept|Sep|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Oct|Nov|Dec)\b/, (m) => HI_MONTH_ABBR[m] || m);
+}
+function cardUpdateSummaryText(sum) {
+  if (APP_LANG !== "hi") return sum;
+  return String(sum).split(",").map((p) => { const k = p.trim(); return HI_UPDATE_LABELS[k] || k; }).join(", ");
 }
 
 /* ---------- PDF-safe Hindi text rendering ----------
@@ -11219,12 +11363,12 @@ function renderOneEntryRow(e) {
             <div style="min-width:0;flex:1;">
               <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <span>${escapeHtml(TN(e.name)) || "—"}</span>
-                <span class="stamp" style="background:${e.admType === "new" ? "#1E7A3E" : "#6B5F4B"};color:#F3ECDA;font-size:10px;font-weight:600;letter-spacing:0.4px;padding:2px 7px;border-radius:3px;">${e.admType === "new" ? "🆕 NEW" : "OLD"}</span>
+                <span class="stamp" style="background:${e.admType === "new" ? "#1E7A3E" : "#6B5F4B"};color:#F3ECDA;font-size:10px;font-weight:600;letter-spacing:0.4px;padding:2px 7px;border-radius:3px;">${e.admType === "new" ? (APP_LANG === "hi" ? "🆕 नया" : "🆕 NEW") : (APP_LANG === "hi" ? "पुराना" : "OLD")}</span>
                 <span class="stamp" title="${cardHasTransport ? "Transport" : "Non-Transport"}" style="background:${cardHasTransport ? "#1F2A44" : "#B7A97E"};color:#F3ECDA;font-size:10px;font-weight:700;letter-spacing:0.4px;padding:2px 7px;border-radius:3px;">${cardHasTransport ? "T" : "N"}</span>
                 ${(() => {
                   const info = recentMessageBadgeInfo(e.id);
                   if (!info) return "";
-                  return `<span class="stamp" title="Message sent ${info.daysAgo === 0 ? "today" : info.daysAgo + " day(s) ago"} — this mark clears after ${MESSAGE_SENT_BADGE_DAYS} days" style="background:#B4790F;color:#F3ECDA;font-size:10px;font-weight:600;letter-spacing:0.4px;padding:2px 7px;border-radius:3px;">💬 Msg Sent · ${info.daysLeft}d left</span>`;
+                  return `<span class="stamp" title="Message sent ${info.daysAgo === 0 ? "today" : info.daysAgo + " day(s) ago"} — this mark clears after ${MESSAGE_SENT_BADGE_DAYS} days" style="background:#B4790F;color:#F3ECDA;font-size:10px;font-weight:600;letter-spacing:0.4px;padding:2px 7px;border-radius:3px;">${APP_LANG === "hi" ? `💬 संदेश भेजा · ${info.daysLeft} दिन शेष` : `💬 Msg Sent · ${info.daysLeft}d left`}</span>`;
                 })()}
               </div>
               <div style="font-size:13px;margin-top:2px;"><span style="color:#1F2A44;font-weight:600;">${escapeHtml(TN(e.fatherName)) || "—"}</span></div>
@@ -11251,7 +11395,7 @@ function renderOneEntryRow(e) {
                    ${e.isWhatsapp ? `<a href="${buildWhatsAppLink(e.mobile, "")}" target="_blank" rel="noopener" data-allow-menu="1" aria-label="WhatsApp" style="text-decoration:none;">💬</a>` : ""}
                  </span>`
               : `<span class="stamp" style="color:#1F2A44;">📞 —</span>`}
-            ${cardPassbookLock ? "" : `<span class="stamp"><span style="color:#6B5F4B;">${T("Class")}</span> <span style="color:#9B3437;font-weight:600;">${escapeHtml(e.className) || "—"}</span></span>`}
+            ${cardPassbookLock ? "" : `<span class="stamp"><span style="color:#6B5F4B;">${T("Class")}</span> <span style="color:#9B3437;font-weight:600;">${escapeHtml(TC(e.className)) || "—"}</span></span>`}
             ${(!cardPassbookLock && e.section) ? `<span class="stamp"><span style="color:#6B5F4B;">${T("Section")}</span> <span style="color:#9B3437;font-weight:600;">${escapeHtml(e.section)}</span></span>` : ""}
             ${cardPassbookLock ? "" : `<span class="stamp"><span style="color:#6B5F4B;">${T("Session")}</span> <span style="color:#1F2A44;font-weight:600;">${escapeHtml(e.session) || "—"}</span></span>`}
             ${(!cardPassbookLock && e.dob) ? `<span class="stamp"><span style="color:#6B5F4B;">${T("DOB")}</span> <span style="color:#1F2A44;font-weight:600;">${escapeHtml(e.dob)}</span></span>` : ""}
@@ -11263,7 +11407,7 @@ function renderOneEntryRow(e) {
           ${(() => {
             const sibs = getSiblingEntriesByMobile(e);
             if (!sibs.length) return "";
-            return `<div style="font-size:12px;margin-top:6px;"><span style="color:#6B5F4B;">👨‍👩‍👧 Same Mobile Also Enrolled:</span> <span style="color:#1F2A44;font-weight:600;">${sibs.map(s => escapeHtml(TN(s.name) || "—") + (s.className ? ` (${escapeHtml(s.className)})` : "")).join(", ")}</span></div>`;
+            return `<div style="font-size:12px;margin-top:6px;"><span style="color:#6B5F4B;">👨‍👩‍👧 ${APP_LANG === "hi" ? "इसी मोबाइल पर और भी दाख़िल" : "Same Mobile Also Enrolled"}:</span> <span style="color:#1F2A44;font-weight:600;">${sibs.map(s => escapeHtml(TN(s.name) || "—") + (s.className ? ` (${escapeHtml(TC(s.className))})` : "")).join(", ")}</span></div>`;
           })()}
           <div style="margin-top:10px;">
             <button class="toggleEventsBtn" data-id="${e.id}" style="display:flex;align-items:center;gap:5px;background:none;border:none;padding:0;cursor:pointer;color:#1F2A44;font-size:12px;font-family:'IBM Plex Mono',monospace;">
@@ -11278,7 +11422,7 @@ function renderOneEntryRow(e) {
             ${state.openFeeChartId === e.id ? renderFeeChartBoxInline(e) : ""}
           </div>
           ${renderBillReceiptButtonsInline(e)}
-          ${e.updatedAt ? `<div style="font-size:11px;color:#A69B82;margin-top:8px;">Last updated: ${new Date(e.updatedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}${e.lastUpdateSummary ? ` — <span title="What changed in the last save">${escapeHtml(e.lastUpdateSummary)}</span> updated` : ""}</div>` : ""}
+          ${e.updatedAt ? `<div style="font-size:11px;color:#A69B82;margin-top:8px;">${APP_LANG === "hi" ? "अंतिम अपडेट" : "Last updated"}: ${cardUpdatedAtText(e.updatedAt)}${e.lastUpdateSummary ? ` — <span title="What changed in the last save">${escapeHtml(cardUpdateSummaryText(e.lastUpdateSummary))}</span> ${APP_LANG === "hi" ? "अपडेट किया" : "updated"}` : ""}</div>` : ""}
           <div style="font-size:11px;color:#9B3437;margin-top:8px;font-style:italic;">This is provided only to show a provisional summary.</div>
         </div>
       </div>`;
