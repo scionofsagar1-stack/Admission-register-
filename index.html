@@ -33,6 +33,10 @@
   select.stamp { border: 1px solid #B7A97E; border-radius: 3px; background: #FBF7EC; color: #1F2A44; font-size: 13px; padding: 6px 8px; flex-shrink: 0; }
   .btn { display: flex; align-items: center; gap: 6px; border-radius: 3px; padding: 8px 14px; font-size: 13px; font-family: 'IBM Plex Mono', monospace; cursor: pointer; flex-shrink: 0; }
   .panel { margin: 16px 0 0; padding: 18px; background: #FBF7EC; border: none; border-radius: 0; }
+  /* Select mode is now a pure CSS switch on #entriesList (class "select-on") — the rows are NOT re-rendered when Select is tapped. */
+  #entriesList .rowSelectWrap { display: none; }
+  #entriesList.select-on .rowSelectWrap { display: block; }
+  #entriesList.select-on .rowActionWrap { display: none !important; }
   .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; }
   .field-grid label { font-size: 11px; color: #6B5F4B; text-transform: uppercase; letter-spacing: 0.6px; }
   body.force-landscape-css {
@@ -246,6 +250,9 @@
         <button id="toggleMessageReportBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-messageReportMenu"></span>Message Report
         </button>
+        <button id="toggleStaffContactsBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
+          <span id="icon-staffContacts"></span>Staff WhatsApp Contacts
+        </button>
         <button id="toggleRotateBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-rotate"></span><span id="rotateToggleLabel">Rotate</span>
         </button>
@@ -314,6 +321,7 @@
 <div id="vivaranModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;"></div>
 <div id="multiBillChartModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;overflow-y:auto;"></div>
 <div id="bulkMessageModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;"></div>
+<div id="staffModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2100;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;"></div>
 <div id="externalExportModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
@@ -348,7 +356,7 @@ const VIEW_STATE_FIELDS = [
   "query", "classFilter", "classRangeFrom", "classRangeTo", "sectionFilter", "sessionFilter", "fMonthFilter",
   "notPaidTillFilter", "starFilter", "whatsappFilter", "admTypeFilter",
   "transportFilter", "siblingFilter", "addressFilter", "notesFilter", "updatedFrom", "updatedTo",
-  "showMoreFilters",
+  "showMoreFilters", "listLimit",
   /* Which student's panel (Fee Chart / Bill / Paid Receipt / Message) is
      expanded, plus the exact "Kab Se / Kab Tak" row picks inside an open
      Message panel — without these, coming back mid-way through sending a
@@ -742,7 +750,28 @@ function hiText(s) {
      3. When the background fetch resolves, cache the result and trigger
         a re-render so every place that shows this name is refreshed
         with the accurate translation. */
+/* Naam ki Hindi ab 4 tarah se tez/halki hai:
+   1) Jo naam ek baar translate ho gaya wo phone me (localStorage) SAVE rehta hai -> agli baar turant Hindi me dikhta hai.
+   2) Sirf wahi naam maange jaate hain jo screen par (rows me) dikh rahe hain (list ab 60-60 rows me dikhti hai).
+   3) Naam ek-ek karke nahi, 25-25 ke batch me, ek hi request me bheje jaate hain.
+   4) Google rok/limit lagaye (HTTP 429 etc.) to 30 sec ruk kar dobara koshish — request ki baarish nahi. */
+const TN_CACHE_LS_KEY = "tn_hi_names_v1";
 const TN_ONLINE_CACHE = new Map();
+try {
+  const raw = localStorage.getItem(TN_CACHE_LS_KEY);
+  if (raw) JSON.parse(raw).forEach(([k, v]) => { if (k && v) TN_ONLINE_CACHE.set(k, v); });
+} catch (e) { /* corrupt cache — just start fresh */ }
+let _tnSaveTimer = null;
+function tnSaveCacheSoon() {
+  clearTimeout(_tnSaveTimer);
+  _tnSaveTimer = setTimeout(() => {
+    try {
+      let arr = Array.from(TN_ONLINE_CACHE.entries());
+      if (arr.length > 8000) arr = arr.slice(arr.length - 8000);
+      localStorage.setItem(TN_CACHE_LS_KEY, JSON.stringify(arr));
+    } catch (e) { /* storage full — cache just won't persist */ }
+  }, 1000);
+}
 const TN_ONLINE_PENDING = new Set();
 let TN_REFRESH_TIMER = null;
 function tnScheduleRefresh() {
@@ -750,32 +779,69 @@ function tnScheduleRefresh() {
   TN_REFRESH_TIMER = setTimeout(() => {
     TN_REFRESH_TIMER = null;
     if (typeof renderAll === "function") renderAll();
-  }, 250);
+  }, 400);
 }
-async function tnFetchOnline(name) {
+const TN_QUEUE = [];
+let TN_ACTIVE = 0;
+const TN_MAX_CONCURRENT = 3;
+const TN_BATCH_SIZE = 25;
+let TN_BLOCK_UNTIL = 0;
+let TN_RETRY_TIMER = null;
+let TN_PUMP_TIMER = null;
+function tnPump() {
+  if (Date.now() < TN_BLOCK_UNTIL) return;
+  while (TN_ACTIVE < TN_MAX_CONCURRENT && TN_QUEUE.length) {
+    const batch = TN_QUEUE.splice(0, TN_BATCH_SIZE);
+    TN_ACTIVE++;
+    tnFetchBatch(batch).finally(() => { TN_ACTIVE--; tnPump(); });
+  }
+}
+function tnFetchOnline(name) {
   if (TN_ONLINE_CACHE.has(name) || TN_ONLINE_PENDING.has(name)) return;
+  if (Date.now() < TN_BLOCK_UNTIL) return;
   TN_ONLINE_PENDING.add(name);
+  TN_QUEUE.push(name);
+  clearTimeout(TN_PUMP_TIMER);
+  TN_PUMP_TIMER = setTimeout(tnPump, 120);   // ek render ke saare naam ek saath batch ho jaayein
+}
+async function tnGoogle(text) {
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=hi&dt=t&q=${encodeURIComponent(text)}`;
+  const res = await fetch(url);
+  if (!res.ok) { const e = new Error("translate http " + res.status); e.status = res.status; throw e; }
+  const data = await res.json();
+  return ((data && data[0]) || []).map((seg) => seg[0]).join("");
+}
+async function tnFetchBatch(names) {
   try {
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=hi&dt=t&q=${encodeURIComponent(name)}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("translate http " + res.status);
-    const data = await res.json();
-    const hi = ((data && data[0]) || []).map((seg) => seg[0]).join("").trim();
-    if (hi) {
-      TN_ONLINE_CACHE.set(name, hi);
-      tnScheduleRefresh();
+    const joined = await tnGoogle(names.join("\n"));
+    const lines = joined.split("\n").map(x => x.trim());
+    if (lines.length === names.length) {
+      names.forEach((n, i) => { if (lines[i]) TN_ONLINE_CACHE.set(n, lines[i]); });
+    } else {
+      // Lines didn't line up 1:1 — fall back to safe one-by-one for this batch only.
+      for (const n of names) {
+        const one = (await tnGoogle(n)).trim();
+        if (one) TN_ONLINE_CACHE.set(n, one);
+      }
     }
+    tnSaveCacheSoon();
+    tnScheduleRefresh();
   } catch (e) {
-    // offline / blocked — the name will keep showing as typed until an
-    // online translation succeeds, nothing more to do here
+    console.warn("Name translation paused for 30s:", e && e.message ? e.message : e);
+    TN_BLOCK_UNTIL = Date.now() + 30000;
+    TN_QUEUE.forEach(n => TN_ONLINE_PENDING.delete(n));
+    TN_QUEUE.length = 0;
+    clearTimeout(TN_RETRY_TIMER);
+    TN_RETRY_TIMER = setTimeout(tnScheduleRefresh, 30500);   // cooldown ke baad ek baar refresh -> naam dobara maange jaayenge
   } finally {
-    TN_ONLINE_PENDING.delete(name);
+    names.forEach(n => TN_ONLINE_PENDING.delete(n));
   }
 }
 function TN(s) {
   if (APP_LANG !== "hi" || typeof s !== "string" || !s.trim()) return s;
   if (/[\u0900-\u097F]/.test(s)) return s; // already Devanagari — leave as typed
   const key = s.trim();
+  if (/[\r\n]/.test(key)) return s;
   const cached = TN_ONLINE_CACHE.get(key);
   if (cached) return cached;
   tnFetchOnline(key);
@@ -1963,6 +2029,7 @@ function jumpToSiblingEntry(sibId) {
   state.openMessageId = null;
   state.openArchiveReceiptKey = null;
   state.entryPanelHistoryPushed = false;
+  state.listForceShowId = sibId;
   renderAll();
   requestAnimationFrame(() => {
     const row = document.querySelector(`[data-row-id="${CSS.escape(String(sibId))}"]`);
@@ -3256,11 +3323,24 @@ function buildFeeChartBillText(entry, bill) {
    student's name. The message's own wording/template never changes —
    only these three tags get the combined values, so admin's existing
    Hindi/English template keeps working unmodified. */
+let _sibIdx = null, _sibIdxPool = null, _sibIdxLen = -1;
 function getSiblingEntriesByMobile(e) {
   const mobile = (e.mobile || "").trim();
   if (!mobile) return [];
   const pool = state.allEntries || state.entries || [];
-  return pool.filter(x => x.id !== e.id && (x.mobile || "").trim() === mobile);
+  // Index is only reused inside the same synchronous task (cleared right after), so it can never go stale.
+  if (!_sibIdx || _sibIdxPool !== pool || _sibIdxLen !== pool.length) {
+    _sibIdx = new Map();
+    pool.forEach(x => {
+      const m = (x.mobile || "").trim();
+      if (!m) return;
+      if (!_sibIdx.has(m)) _sibIdx.set(m, []);
+      _sibIdx.get(m).push(x);
+    });
+    _sibIdxPool = pool; _sibIdxLen = pool.length;
+    setTimeout(() => { _sibIdx = null; _sibIdxPool = null; }, 0);
+  }
+  return (_sibIdx.get(mobile) || []).filter(x => x.id !== e.id);
 }
 /* Builds the combine-group for entry e: itself (always included, using its
    own open Message box From/To draft) plus every same-mobile sibling that
@@ -6227,7 +6307,7 @@ async function toggleChatPanelOpen() {
   renderHeader();
   renderChangedPanels(before);
   if (selectWasOn && !state.selectMode) {
-    renderEntries();
+    syncSelectModeDom();
   } else {
     saveViewState();
   }
@@ -6364,6 +6444,7 @@ async function loadEntries() {
   await loadDeletedInvoiceHistory();
   await loadAppSettings();
   await loadExternalExportTarget();
+  await loadStaffContacts();
   await loadRecentMessageSends();
   state.loading = false;
   await loadBackupManifest();
@@ -7607,6 +7688,11 @@ function renderHeader() {
   toggleMessageReportBtn.style.background = state.showMessageReportPanel ? "#1F2A44" : "transparent";
   toggleMessageReportBtn.style.color = state.showMessageReportPanel ? "#F3ECDA" : "#1F2A44";
   toggleMessageReportBtn.style.display = (state.editUnlocked && !state.isGuestMode) ? "" : "none";
+  const staffContactsMenuBtn = document.getElementById("toggleStaffContactsBtn");
+  if (staffContactsMenuBtn) {
+    staffContactsMenuBtn.style.display = (state.editUnlocked && !state.isGuestMode) ? "" : "none";
+    document.getElementById("icon-staffContacts").innerHTML = icon("messageCircle", { size: 15 });
+  }
   document.getElementById("toggleNotificationsBtn").style.display = "";
   document.getElementById("icon-select").innerHTML = icon(state.selectMode ? "x" : "checksquare", { size: 14 });
   document.getElementById("selectToggleLabel").textContent = state.selectMode ? "Cancel" : "Select";
@@ -10113,8 +10199,12 @@ function renderSelectionPanel() {
   document.getElementById("selectAllChk").addEventListener("change", (e) => {
     if (e.target.checked) filteredIds.forEach(id => state.selectedIds.add(id));
     else filteredIds.forEach(id => state.selectedIds.delete(id));
+    const listEl = document.getElementById("entriesList");
+    if (listEl) listEl.querySelectorAll(".rowSelectChk").forEach(cb => {
+      const want = state.selectedIds.has(cb.dataset.id);
+      if (cb.checked !== want) cb.checked = want;
+    });
     renderSelectionPanel();
-    renderEntries();
   });
   const exportBtn = document.getElementById("exportPdfBtn");
   if (exportBtn) exportBtn.addEventListener("click", exportSelectedToPdf);
@@ -10210,7 +10300,7 @@ function createIsolatedCaptureFrame() {
   return iframe;
 }
 
-async function nodeToBlob(node) {
+async function nodeToBlob(node, mime, quality) {
   i18nWalk(node);
   const iframe = createIsolatedCaptureFrame();
   try {
@@ -10220,7 +10310,7 @@ async function nodeToBlob(node) {
     // default (15s) means a slow connection could still add real delay on
     // top of the DOM-isolation fix above, so this keeps that bounded too.
     const canvas = await html2canvas(node, { backgroundColor: "#F3ECDA", scale: 2, useCORS: true, imageTimeout: 3000 });
-    return await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+    return await new Promise(resolve => canvas.toBlob(resolve, mime || "image/png", quality));
   } finally {
     document.body.removeChild(iframe);
   }
@@ -10248,47 +10338,119 @@ async function shareOrDownloadBlobs(blobs, names) {
   });
 }
 
-async function shareSelectedAsImages() {
-  const selected = state.entries
+function getSelectedEntriesSorted() {
+  return state.entries
     .filter(e => state.selectedIds.has(e.id))
     .slice()
     .sort((a, b) => a.serial - b.serial);
+}
+/* "Share as Image" button: agar staff ke WhatsApp numbers saved hain to pehle "kisko bhejna hai" list aati hai;
+   "Unknown / Other" chunne par (ya agar koi number saved nahi) pehle jaisa normal share hota hai. */
+function shareSelectedAsImages() {
+  const selected = getSelectedEntriesSorted();
   if (!selected.length) return;
   if (!state.exportColumnOrder.some(key => EXPORT_COLUMN_DEFS.some(c => c.key === key))) {
     alert("Please tick at least one column to include in the image.");
     return;
   }
-  const shareBtn = document.getElementById("shareImageBtn");
-  if (shareBtn) { shareBtn.disabled = true; shareBtn.style.opacity = 0.5; shareBtn.textContent = "Preparing…"; }
+  if (!staffContacts.length) return shareSelectedAsImagesDirect();
+  openShareTargetPicker("image");
+}
+/* Image share (Unknown / koi staff saved nahi): card banne me kai second lagte hain, aur phone ka share sheet
+   sirf USER KE TAP ke turant baad khul sakta hai (browser rule). Pehle wala code card banne ke BAAD share
+   maangta tha — tab tap purana ho chuka hota tha, isliye share fail hokar file download ho jati thi.
+   Ab: pehle cards taiyaar -> phir hara "Share" button -> us tap par share sheet (asli image, WhatsApp me contact chuno). */
+async function shareSelectedAsImagesDirect() {
+  const selected = getSelectedEntriesSorted();
+  if (!selected.length) return;
+  const runId = ++staffRunSeq;
+  const m = { mode: "pick", kind: "image", count: selected.length, phase: "prep", staff: null, msg: "Preparing…", runId, files: [] };
+  staffModal = m;
+  renderStaffModal();
+  const alive = () => staffModal === m && m.runId === runId;
   try {
-    const blobs = [];
-    const names = [];
-    for (let si = 0; si < selected.length; si++) {
-      const entry = selected[si];
-      const node = buildCardNode(entry, si);
-      const blob = await nodeToBlob(node);
-      if (blob) {
-        blobs.push(blob);
-        names.push(`${(entry.name || "student").replace(/[^a-z0-9]+/gi, "_")}_card.png`);
-      }
+    const files = [];
+    for (let i = 0; i < selected.length; i++) {
+      if (!alive()) return;
+      m.msg = `Card ${i + 1} / ${selected.length}…`;
+      renderStaffModal();
+      const entry = selected[i];
+      const blob = await nodeToBlob(buildCardNode(entry, i));
+      if (blob) files.push(new File([blob], `${(entry.name || "student").replace(/[^a-z0-9]+/gi, "_")}_card.png`, { type: "image/png" }));
     }
-    if (blobs.length) await shareOrDownloadBlobs(blobs, names);
-  } finally {
-    renderSelectionPanel();
+    if (!alive()) return;
+    if (!files.length) throw new Error("Cards could not be created.");
+    m.files = files; m.phase = "shareReady"; m.msg = "";
+  } catch (err) {
+    console.error("Preparing images failed:", err);
+    if (!alive()) return;
+    m.phase = "shareFail";
+    m.msg = (err && err.message) ? err.message : String(err);
   }
+  renderStaffModal();
+}
+async function shareReadyFiles() {
+  const m = staffModal;
+  if (!m || !m.files || !m.files.length) return;
+  const files = m.files;
+  try {
+    if (navigator.canShare && navigator.canShare({ files })) {
+      await navigator.share({ files, title: "Student Record" });
+      closeStaffModal();
+      return;
+    }
+    m.msg = "This phone/browser cannot open the share sheet — files were downloaded instead.";
+  } catch (err) {
+    if (err && err.name === "AbortError") return;   // user backed out of the share sheet — stay here
+    console.error("navigator.share failed:", err);
+    m.msg = `Share sheet failed (${(err && err.name) || "error"}) — files were downloaded instead.`;
+  }
+  files.forEach((file) => {
+    const url = URL.createObjectURL(file);
+    const a = document.createElement("a");
+    a.href = url; a.download = file.name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  });
+  renderStaffModal();
 }
 
-function exportSelectedToPdf() {
-  const selected = state.entries
-    .filter(e => state.selectedIds.has(e.id))
-    .slice()
-    .sort((a, b) => a.serial - b.serial);
-  if (!selected.length) return;
-
-  const cols = state.exportColumnOrder
+function selectedPdfColumns() {
+  return state.exportColumnOrder
     .map(key => EXPORT_COLUMN_DEFS.find(c => c.key === key))
     .filter(Boolean);
-  if (!cols.length) { alert("Please tick at least one column to include in the PDF."); return; }
+}
+/* "Save as PDF" button: staff numbers saved hon to pehle "kisko bhejna hai" list, warna pehle jaisa PDF download. */
+function exportSelectedToPdf() {
+  const selected = getSelectedEntriesSorted();
+  if (!selected.length) return;
+  if (!selectedPdfColumns().length) { alert("Please tick at least one column to include in the PDF."); return; }
+  if (!staffContacts.length) return exportSelectedToPdfDirect("save");
+  openShareTargetPicker("pdf");
+}
+/* mode "save"  = seedha PDF download (pehle jaisa).
+   mode "share" = phone ka share sheet (WhatsApp me apna contact chuno); share na ho paye to download. */
+function exportSelectedToPdfDirect(mode) {
+  const built = buildSelectedPdfDoc();
+  if (!built) return;
+  if (mode === "share" && navigator.canShare) {
+    try {
+      const file = new File([built.doc.output("blob")], built.filename, { type: "application/pdf" });
+      if (navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file], title: "Student Record" }).catch(err => {
+          if (!err || err.name !== "AbortError") built.doc.save(built.filename);
+        });
+        return;
+      }
+    } catch (e) { /* fall through to plain download */ }
+  }
+  built.doc.save(built.filename);
+}
+function buildSelectedPdfDoc() {
+  const selected = getSelectedEntriesSorted();
+  if (!selected.length) return null;
+  const cols = selectedPdfColumns();
+  if (!cols.length) { alert("Please tick at least one column to include in the PDF."); return null; }
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
@@ -10318,8 +10480,327 @@ function exportSelectedToPdf() {
   };
   doc.autoTable({ ...registerTableCfg, ...pdfAutoTableHindiHooks(registerTableCfg) });
 
-  doc.save(`admission-register-selected-${new Date().toISOString().slice(0, 10)}.pdf`);
+  return { doc, filename: `admission-register-selected-${new Date().toISOString().slice(0, 10)}.pdf` };
 }
+
+
+/* =====================================================================
+   STAFF WHATSAPP CONTACTS  +  "Send to staff" from Share Image / Save PDF
+   ---------------------------------------------------------------------
+   * Menu > "Staff WhatsApp Contacts": naam + WhatsApp number save karo.
+   * Select mode me "Share as Image" / "Save as PDF" dabane par yehi list aati hai.
+     Staff chuno -> us staff ki WhatsApp chat khulti hai jisme chune hue students ki details TEXT me
+     pehle se likhi hoti hain (Columns (N) me jo columns tick hain wahi) -> bas Send dabao.
+   * "Unknown / Other person" chunne par pehle jaisa normal share (image share sheet / PDF) hota hai.
+
+   Supabase (optional, sab phones/logins me list sync karne ke liye) — SQL editor me ek baar chalayein:
+     create table if not exists staff_contacts (id int primary key, contacts jsonb not null default '[]'::jsonb);
+     alter table staff_contacts enable row level security;
+     create policy "Authenticated read staff_contacts" on staff_contacts for select using (auth.role() = 'authenticated');
+     create policy "Admins write staff_contacts" on staff_contacts for all
+       using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'))
+       with check (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+   Table na ho to list sirf isi phone/browser me (localStorage) save hoti hai — kaam phir bhi karta hai.
+   ===================================================================== */
+Object.assign(HI_DICT, {
+  "Staff WhatsApp Contacts": "स्टाफ व्हाट्सऐप नंबर",
+  "Send to whom?": "किसे भेजना है?",
+  "Unknown / Other person": "अनजान / अन्य व्यक्ति",
+  "Normal share of the image / PDF — pick any contact in WhatsApp": "इमेज / PDF का सामान्य शेयर — WhatsApp में कोई भी संपर्क चुनें",
+  "Staff gets the details as a text message.": "स्टाफ को जानकारी टेक्स्ट मैसेज में जाएगी।",
+  "Message is long, so it is split. Send each part one by one.": "मैसेज लंबा है, इसलिए हिस्सों में बंटा है। हर हिस्सा बारी-बारी भेजें।",
+  "Part": "भाग",
+  "Load more": "और दिखाएं",
+  "Tap Share, then choose any contact in WhatsApp.": "Share दबाएं, फिर WhatsApp में कोई भी संपर्क चुनें।",
+  "Preparing…": "तैयार हो रहा है…",
+  "Try again": "फिर कोशिश करें",
+  "Only download the PDF": "सिर्फ PDF डाउनलोड करें",
+  "Staff name": "स्टाफ का नाम",
+  "WhatsApp number (with or without +91)": "व्हाट्सऐप नंबर (+91 के साथ या बिना)",
+  "Add contact": "नंबर जोड़ें",
+  "Update contact": "नंबर अपडेट करें",
+  "No staff numbers saved yet.": "अभी कोई स्टाफ नंबर सेव नहीं है।",
+});
+const STAFF_CONTACTS_LS_KEY = "staff_wa_contacts_v1";
+let staffContacts = [];
+let staffModal = null;
+let staffRunSeq = 0;
+let staffCloudOk = true;
+
+function normalizeStaffNumber(raw) {
+  let d = String(raw || "").replace(/\D/g, "");
+  if (d.length === 11 && d.startsWith("0")) d = d.slice(1);
+  if (d.length === 10) d = "91" + d;
+  if (d.length < 11 || d.length > 15) return "";
+  return d;
+}
+function formatStaffNumber(d) {
+  return (d.length === 12 && d.startsWith("91")) ? "+91 " + d.slice(2) : "+" + d;
+}
+function sanitizeStaffList(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter(c => c && typeof c.name === "string" && c.name.trim() && normalizeStaffNumber(c.number))
+    .map(c => ({ id: String(c.id || ("s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6))), name: c.name.trim(), number: normalizeStaffNumber(c.number) }));
+}
+async function loadStaffContacts() {
+  try { staffContacts = sanitizeStaffList(JSON.parse(localStorage.getItem(STAFF_CONTACTS_LS_KEY) || "[]")); } catch (e) { staffContacts = []; }
+  try {
+    const { data, error } = await supabaseClient.from("staff_contacts").select("*").eq("id", 1).maybeSingle();
+    if (error) { staffCloudOk = false; return; }
+    staffCloudOk = true;
+    if (data && Array.isArray(data.contacts)) {
+      staffContacts = sanitizeStaffList(data.contacts);
+      try { localStorage.setItem(STAFF_CONTACTS_LS_KEY, JSON.stringify(staffContacts)); } catch (e) {}
+    }
+  } catch (err) { staffCloudOk = false; }
+}
+async function saveStaffContacts() {
+  try { localStorage.setItem(STAFF_CONTACTS_LS_KEY, JSON.stringify(staffContacts)); } catch (e) {}
+  try {
+    const { error } = await supabaseClient.from("staff_contacts").upsert({ id: 1, contacts: staffContacts });
+    if (error) throw error;
+    staffCloudOk = true;
+    return true;
+  } catch (err) {
+    console.warn("Could not save staff contacts to Supabase (table may not exist yet):", err);
+    staffCloudOk = false;
+    return false;
+  }
+}
+
+function openShareTargetPicker(kind) {
+  const n = getSelectedEntriesSorted().length;
+  if (!n) return;
+  staffModal = { mode: "pick", kind, count: n, phase: "choose", staff: null, waUrl: "", msg: "", runId: 0 };
+  renderStaffModal();
+}
+function openStaffContactsManager() {
+  staffModal = { mode: "manage", editId: null, draftName: "", draftNumber: "", msg: "", msgOk: true, busy: false };
+  renderStaffModal();
+}
+function closeStaffModal() {
+  staffRunSeq++;              // any upload still in flight is ignored from now on
+  staffModal = null;
+  renderStaffModal();
+}
+
+/* Staff ko sirf TEXT jata hai (jaise Message box se jata hai): chune hue "Columns" ke hisaab se
+   har student ka detail, wa.me/<staff number>?text=... se us staff ki chat me pehle se likha aata hai — bas Send dabao.
+   Bahut zyada students hon to message kai hisson me baant diya jata hai (WhatsApp link ki lambai ki seema). */
+const STAFF_TEXT_URL_LIMIT = 4500;   // URL-encoded characters per WhatsApp message
+function buildStaffTextParts(staff) {
+  const selected = getSelectedEntriesSorted();
+  const cols = selectedPdfColumns();
+  const blocks = selected.map((e, i) => {
+    let title = `${i + 1}.`;
+    const lines = [];
+    cols.forEach(c => {
+      if (c.key === "serial") return;
+      const v = String(c.get(e, i) == null ? "" : c.get(e, i)).trim();
+      if (c.key === "name") { title = `*${i + 1}. ${v || "Student"}*`; return; }
+      if (!v) return;
+      lines.push(`${c.label}: ${v}`);
+    });
+    return title + (lines.length ? "\n" + lines.join("\n") : "");
+  });
+  const head = `Hello ${staff.name},`;
+  const groups = [];
+  let cur = [];
+  blocks.forEach(b => {
+    const tryText = head + "\n\n[9/9]\n" + cur.concat([b]).join("\n\n");
+    if (cur.length && encodeURIComponent(tryText).length > STAFF_TEXT_URL_LIMIT) { groups.push(cur); cur = []; }
+    cur.push(b);
+  });
+  if (cur.length) groups.push(cur);
+  return groups.map((g, k) =>
+    (k === 0 ? head + "\n\n" : "") + (groups.length > 1 ? `[${k + 1}/${groups.length}]\n` : "") + g.join("\n\n"));
+}
+function openWaUrl(url) {
+  // Real anchor click inside the user's tap — same thing as tapping a WhatsApp link.
+  const a = document.createElement("a");
+  a.href = url; a.target = "_blank"; a.rel = "noopener";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+function sendTextToStaff(staff) {
+  const m = staffModal;
+  if (!m || m.mode !== "pick") return;
+  const urls = buildStaffTextParts(staff).map(t => buildWhatsAppLink(staff.number, t));
+  if (!urls.length) return;
+  if (urls.length === 1) {
+    openWaUrl(urls[0]);
+    setTimeout(closeStaffModal, 300);
+    return;
+  }
+  m.staff = staff; m.urls = urls; m.phase = "parts";
+  renderStaffModal();
+}
+
+function renderStaffModal() {
+  const el = document.getElementById("staffModalOverlay");
+  if (!el) return;
+  if (!staffModal) { el.style.display = "none"; el.innerHTML = ""; return; }
+  const m = staffModal;
+  const btnBase = "display:flex;align-items:center;justify-content:center;gap:8px;width:100%;box-sizing:border-box;border-radius:4px;padding:11px 14px;font-size:13.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;text-decoration:none;";
+  const ghost = btnBase + "background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;";
+  const wrap = (inner) => `<div style="width:100%;max-width:440px;max-height:88vh;overflow-y:auto;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:6px;border-top:3px solid #9B3437;padding:18px;box-sizing:border-box;">${inner}</div>`;
+  el.style.display = "flex";
+
+  if (m.mode === "manage") {
+    const isAdmin = state.editUnlocked && !state.isGuestMode;
+    el.innerHTML = wrap(`
+      <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;margin-bottom:12px;">📇 ${T("Staff WhatsApp Contacts")}</div>
+      <div style="margin-bottom:14px;">
+        ${staffContacts.length ? staffContacts.map(c => `
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #D9CBA3;">
+            <div style="flex:1;min-width:0;">
+              <div style="font-weight:600;font-size:14px;color:#1F2A44;">${escapeHtml(c.name)}</div>
+              <div class="stamp" style="font-size:12px;color:#6B5F4B;">${escapeHtml(formatStaffNumber(c.number))}</div>
+            </div>
+            ${isAdmin ? `
+            <button class="staffEditBtn" data-id="${escapeAttr(c.id)}" aria-label="Edit" style="background:none;border:none;cursor:pointer;color:#6B5F4B;padding:6px;">${icon("pencil", { size: 16 })}</button>
+            <button class="staffDelBtn" data-id="${escapeAttr(c.id)}" aria-label="Delete" style="background:none;border:none;cursor:pointer;color:#9B3437;padding:6px;">${icon("trash2", { size: 16 })}</button>` : ""}
+          </div>`).join("") : `<p style="font-size:12.5px;color:#6B5F4B;margin:0;">${T("No staff numbers saved yet.")}</p>`}
+      </div>
+      ${isAdmin ? `
+      <div style="margin-bottom:10px;">
+        <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:4px;">${T("Staff name")}</label>
+        <input id="staffNameInput" class="rule-input" value="${escapeAttr(m.draftName)}" placeholder="e.g. Ramesh Sir" />
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:4px;">${T("WhatsApp number (with or without +91)")}</label>
+        <input id="staffNumberInput" class="rule-input" type="tel" inputmode="tel" value="${escapeAttr(m.draftNumber)}" placeholder="98XXXXXXXX" />
+      </div>
+      ${m.msg ? `<p style="font-size:12.5px;color:${m.msgOk ? "#1E7A3E" : "#9B3437"};margin:0 0 10px;">${escapeHtml(m.msg)}</p>` : ""}
+      <button id="staffSaveBtn" ${m.busy ? "disabled" : ""} style="${btnBase}background:#1F2A44;color:#F3ECDA;border:none;margin-bottom:8px;">${m.editId ? T("Update contact") : T("Add contact")}</button>` : ""}
+      <button id="staffCloseBtn" style="${ghost}">${T("Close")}</button>`);
+    const nameIn = document.getElementById("staffNameInput");
+    const numIn = document.getElementById("staffNumberInput");
+    if (nameIn) nameIn.addEventListener("input", (ev) => { m.draftName = ev.target.value; });
+    if (numIn) numIn.addEventListener("input", (ev) => { m.draftNumber = ev.target.value; });
+    document.getElementById("staffCloseBtn").addEventListener("click", closeStaffModal);
+    el.querySelectorAll(".staffEditBtn").forEach(b => b.addEventListener("click", () => {
+      const c = staffContacts.find(x => x.id === b.dataset.id);
+      if (!c) return;
+      m.editId = c.id; m.draftName = c.name; m.draftNumber = c.number; m.msg = "";
+      renderStaffModal();
+    }));
+    el.querySelectorAll(".staffDelBtn").forEach(b => b.addEventListener("click", async () => {
+      const c = staffContacts.find(x => x.id === b.dataset.id);
+      if (!c || !confirm(`Delete ${c.name}?`)) return;
+      staffContacts = staffContacts.filter(x => x.id !== c.id);
+      if (m.editId === c.id) { m.editId = null; m.draftName = ""; m.draftNumber = ""; }
+      const ok = await saveStaffContacts();
+      m.msg = ok ? "✅ Deleted." : "Deleted on this phone only (shared table not set up)."; m.msgOk = ok;
+      renderStaffModal();
+    }));
+    const saveBtn = document.getElementById("staffSaveBtn");
+    if (saveBtn) saveBtn.addEventListener("click", async () => {
+      const name = (m.draftName || "").trim();
+      const number = normalizeStaffNumber(m.draftNumber);
+      if (!name) { m.msg = "Please enter the staff name."; m.msgOk = false; renderStaffModal(); return; }
+      if (!number) { m.msg = "Please enter a valid WhatsApp number."; m.msgOk = false; renderStaffModal(); return; }
+      const dup = staffContacts.find(c => c.number === number && c.id !== m.editId);
+      if (dup) { m.msg = `This number is already saved as "${dup.name}".`; m.msgOk = false; renderStaffModal(); return; }
+      if (m.editId) {
+        staffContacts = staffContacts.map(c => c.id === m.editId ? { ...c, name, number } : c);
+      } else {
+        staffContacts = staffContacts.concat([{ id: "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, number }]);
+      }
+      m.busy = true; renderStaffModal();
+      const ok = await saveStaffContacts();
+      m.busy = false; m.editId = null; m.draftName = ""; m.draftNumber = "";
+      m.msg = ok ? "✅ Saved." : "Saved on this phone only (shared table not set up yet)."; m.msgOk = ok;
+      renderStaffModal();
+    });
+    return;
+  }
+
+  // ---- picker ----
+  const what = m.kind === "pdf" ? "PDF" : "Image";
+  if (m.phase === "choose") {
+    el.innerHTML = wrap(`
+      <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;">📤 ${T("Send to whom?")}</div>
+      <p class="stamp" style="font-size:12px;color:#6B5F4B;margin:4px 0 12px;">${m.count} student${m.count === 1 ? "" : "s"} · ${T("Staff gets the details as a text message.")}</p>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;">
+        ${staffContacts.map(c => `
+          <button class="staffPickBtn" data-id="${escapeAttr(c.id)}" style="${btnBase}justify-content:flex-start;background:#FFFFFF;color:#1F2A44;border:1px solid #B7A97E;flex-direction:column;align-items:flex-start;gap:2px;">
+            <span style="font-weight:700;">💬 ${escapeHtml(c.name)}</span>
+            <span style="font-size:11.5px;color:#6B5F4B;">${escapeHtml(formatStaffNumber(c.number))}</span>
+          </button>`).join("")}
+        <button id="staffUnknownBtn" style="${btnBase}background:#F3ECDA;color:#1F2A44;border:1px dashed #6B5F4B;flex-direction:column;align-items:flex-start;gap:2px;">
+          <span style="font-weight:700;">👤 ${T("Unknown / Other person")}</span>
+          <span style="font-size:11.5px;color:#6B5F4B;text-align:left;">${T("Normal share of the image / PDF — pick any contact in WhatsApp")}</span>
+        </button>
+      </div>
+      ${m.kind === "pdf" ? `<button id="staffDownloadOnlyBtn" style="${ghost}margin-bottom:8px;">📥 ${T("Only download the PDF")}</button>` : ""}
+      <button id="staffCancelBtn" style="${ghost}">${T("Cancel")}</button>`);
+    el.querySelectorAll(".staffPickBtn").forEach(b => b.addEventListener("click", () => {
+      const c = staffContacts.find(x => x.id === b.dataset.id);
+      if (c) sendTextToStaff(c);
+    }));
+    document.getElementById("staffUnknownBtn").addEventListener("click", () => {
+      const kind = m.kind;
+      closeStaffModal();
+      if (kind === "image") shareSelectedAsImagesDirect(); else exportSelectedToPdfDirect("share");
+    });
+    const dl = document.getElementById("staffDownloadOnlyBtn");
+    if (dl) dl.addEventListener("click", () => { closeStaffModal(); exportSelectedToPdfDirect("save"); });
+    document.getElementById("staffCancelBtn").addEventListener("click", closeStaffModal);
+    return;
+  }
+
+  if (m.phase === "prep") {
+    el.innerHTML = wrap(`
+      <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;margin-bottom:8px;">⏳ ${T("Preparing…")}</div>
+      <p class="stamp" style="font-size:13px;color:#6B5F4B;margin:0 0 14px;">${escapeHtml(m.msg)}</p>
+      <button id="staffCancelBtn" style="${ghost}">${T("Cancel")}</button>`);
+    document.getElementById("staffCancelBtn").addEventListener("click", closeStaffModal);
+    return;
+  }
+  if (m.phase === "shareReady") {
+    el.innerHTML = wrap(`
+      <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;margin-bottom:6px;">✅ ${m.files.length} ${m.files.length === 1 ? "card" : "cards"}</div>
+      <p style="font-size:12.5px;color:#1F2A44;margin:0 0 14px;">${T("Tap Share, then choose any contact in WhatsApp.")}</p>
+      ${m.msg ? `<p style="font-size:12.5px;color:#9B3437;margin:0 0 10px;">${escapeHtml(m.msg)}</p>` : ""}
+      <button id="staffShareFilesBtn" style="${btnBase}background:#25D366;color:#fff;border:none;margin-bottom:8px;font-weight:700;">🖼️ ${m.files.length > 1 ? `Share ${m.files.length} images` : "Share image"}</button>
+      <button id="staffCancelBtn" style="${ghost}">${T("Close")}</button>`);
+    document.getElementById("staffShareFilesBtn").addEventListener("click", shareReadyFiles);
+    document.getElementById("staffCancelBtn").addEventListener("click", closeStaffModal);
+    return;
+  }
+  if (m.phase === "shareFail") {
+    el.innerHTML = wrap(`
+      <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#9B3437;margin-bottom:8px;">❌</div>
+      <p style="font-size:12.5px;color:#9B3437;margin:0 0 14px;word-break:break-word;">${escapeHtml(m.msg)}</p>
+      <button id="staffRetryBtn" style="${btnBase}background:#1F2A44;color:#F3ECDA;border:none;margin-bottom:8px;">${T("Try again")}</button>
+      <button id="staffCancelBtn" style="${ghost}">${T("Close")}</button>`);
+    document.getElementById("staffRetryBtn").addEventListener("click", () => { closeStaffModal(); shareSelectedAsImagesDirect(); });
+    document.getElementById("staffCancelBtn").addEventListener("click", closeStaffModal);
+    return;
+  }
+  // phase "parts": message bahut lamba tha, isliye kai hisse
+  el.innerHTML = wrap(`
+    <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;margin-bottom:4px;">✅ ${escapeHtml(m.staff.name)}</div>
+    <p class="stamp" style="font-size:12px;color:#6B5F4B;margin:0 0 6px;">${escapeHtml(formatStaffNumber(m.staff.number))}</p>
+    <p style="font-size:12.5px;color:#1F2A44;margin:0 0 12px;">${T("Message is long, so it is split. Send each part one by one.")}</p>
+    ${m.urls.map((u, i) => `<a class="staffPartLink" href="${escapeAttr(u)}" target="_blank" rel="noopener" data-allow-menu="1" style="${btnBase}background:#25D366;color:#fff;border:none;margin-bottom:8px;font-weight:700;">💬 ${T("Part")} ${i + 1} / ${m.urls.length}</a>`).join("")}
+    <button id="staffCancelBtn" style="${ghost}">${T("Close")}</button>`);
+  el.querySelectorAll(".staffPartLink").forEach(a => a.addEventListener("click", () => { a.style.opacity = "0.55"; }));
+  document.getElementById("staffCancelBtn").addEventListener("click", closeStaffModal);
+}
+(function initStaffModalUi() {
+  const ov = document.getElementById("staffModalOverlay");
+  if (ov) ov.addEventListener("click", (ev) => {
+    if (ev.target === ov && staffModal && staffModal.phase !== "working") closeStaffModal();
+  });
+  const btn = document.getElementById("toggleStaffContactsBtn");
+  if (btn) btn.addEventListener("click", () => {
+    state.showSettingsMenu = false;
+    renderHeader();
+    openStaffContactsManager();
+  });
+})();
 
 function renderEventFormInline(e) {
   const events = (e.events || []).slice().sort((a, b) => (eventEffectiveDate(a) - eventEffectiveDate(b)));
@@ -10454,38 +10935,114 @@ function renderClassCountBar(filteredCount) {
   bar.style.cssText = "display:block;margin:12px 8px 0;padding:8px 12px;border-left:3px solid #9B3437;background:#F3ECDA;font-family:'IBM Plex Mono',monospace;font-size:13px;color:#1F2A44;font-weight:600;";
   bar.innerHTML = `${T("Class")} ${label} · ${total} ${T(total === 1 ? "entry" : "entries")}${narrowed}`;
 }
-function renderEntries() {
-  const el = document.getElementById("entriesList");
-  if (state.loading) {
-    el.innerHTML = `<p style="padding:24px;color:#6B5F4B;font-size:14px;">Opening the register…</p>`;
-    return;
-  }
-  const filtered = getFiltered();
-  renderClassCountBar(filtered.length);
-  if (filtered.length === 0) {
-    el.innerHTML = `<p style="padding:24px;color:#6B5F4B;font-size:14px;">${state.entries.length === 0 ? "No entries yet. Add the first student above." : "No entries match your search or filters."}</p>`;
-    return;
-  }
-  const sorted = filtered.slice().sort((a, b) => a.serial - b.serial);
-  el.innerHTML = sorted.map(e => {
-    try {
-      return renderOneEntryRow(e);
-    } catch (err) {
-      console.error("Row render failed for entry", e.id, err);
-      return `<div class="ledger-row" style="padding:16px 18px;color:#9B3437;font-size:13px;">
+/* Puri list (1000+ students) ek saath banane se phone atak jata tha (har button ke baad, aur Hindi naam aane par
+   list baar-baar dobara banti thi). Ab list 60-60 rows me dikhti hai; neeche scroll karne par (ya "Load more" dabane par)
+   agli rows apne aap judti hain. Select-all / PDF / messages sab poori filtered list par hi kaam karte hain. */
+const LIST_PAGE = 60;
+let _listSig, _listSorted = [], _listObserver = null;
+function listFilterSig() {
+  return [state.query, state.classFilter, state.classRangeFrom, state.classRangeTo, state.sectionFilter, state.sessionFilter,
+    state.fMonthFilter, state.notPaidTillFilter, state.starFilter, state.whatsappFilter, state.admTypeFilter,
+    state.transportFilter, state.siblingFilter, state.addressFilter, state.notesFilter, state.updatedFrom, state.updatedTo].join("\u0001");
+}
+function rowHtmlSafe(e) {
+  try {
+    return renderOneEntryRow(e);
+  } catch (err) {
+    console.error("Row render failed for entry", e.id, err);
+    return `<div class="ledger-row" style="padding:16px 18px;color:#9B3437;font-size:13px;">
         Entry #${String(e.serial || "?").padStart(3, "0")} (${escapeHtml(e.name || "unnamed")}) had an error while displaying — the data may be corrupted.
         <button class="fixEntryErrBtn" data-id="${e.id}" style="margin-left:8px;background:transparent;border:1px solid #9B3437;color:#9B3437;border-radius:3px;padding:3px 8px;font-size:11px;cursor:pointer;">Skip and Edit</button>
       </div>`;
-    }
-  }).join("");
-  el.querySelectorAll(".fixEntryErrBtn").forEach(btn => {
+  }
+}
+function wireFixEntryErrBtns(root) {
+  root.querySelectorAll(".fixEntryErrBtn").forEach(btn => {
     btn.addEventListener("click", () => {
       state.editingId = null;
       state.error = "";
       renderEntries();
     });
   });
+}
+function listMoreHtml(remaining) {
+  return remaining > 0
+    ? `<div id="listMoreWrap" style="padding:16px;text-align:center;"><button id="listMoreBtn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;border-radius:3px;padding:10px 18px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${T("Load more")} (${remaining})</button></div>`
+    : "";
+}
+function setupListMore() {
+  if (_listObserver) { _listObserver.disconnect(); _listObserver = null; }
+  const btn = document.getElementById("listMoreBtn");
+  if (!btn) return;
+  btn.addEventListener("click", loadMoreRows);
+  if ("IntersectionObserver" in window) {
+    _listObserver = new IntersectionObserver((entries) => {
+      if (entries.some(en => en.isIntersecting)) loadMoreRows();
+    }, { rootMargin: "700px 0px" });
+    _listObserver.observe(document.getElementById("listMoreWrap"));
+  }
+}
+function loadMoreRows() {
+  const el = document.getElementById("entriesList");
+  const wrap = document.getElementById("listMoreWrap");
+  if (!el || !wrap) return;
+  const cur = state.listLimit || LIST_PAGE;
+  const next = Math.min(cur + LIST_PAGE, _listSorted.length);
+  if (next <= cur) { wrap.remove(); return; }
+  const tmp = document.createElement("div");
+  tmp.innerHTML = _listSorted.slice(cur, next).map(rowHtmlSafe).join("");
+  wireFixEntryErrBtns(tmp);
+  wireUpEntryRowEvents(tmp);
+  const frag = document.createDocumentFragment();
+  while (tmp.firstChild) frag.appendChild(tmp.firstChild);
+  el.insertBefore(frag, wrap);
+  state.listLimit = next;
+  const remaining = _listSorted.length - next;
+  if (_listObserver) { _listObserver.disconnect(); _listObserver = null; }
+  if (remaining > 0) {
+    wrap.outerHTML = listMoreHtml(remaining);
+    setupListMore();
+  } else {
+    wrap.remove();
+  }
+  saveViewState();
+}
+function renderEntries() {
+  const el = document.getElementById("entriesList");
+  el.classList.toggle("select-on", !!state.selectMode);
+  if (state.loading) {
+    el.innerHTML = `<p style="padding:24px;color:#6B5F4B;font-size:14px;">Opening the register…</p>`;
+    return;
+  }
+  // Filters/search change which rows are "shown" — keep "Select all shown (N)" in step with them.
+  if (state.selectMode) renderSelectionPanel();
+  const filtered = getFiltered();
+  renderClassCountBar(filtered.length);
+  if (_listObserver) { _listObserver.disconnect(); _listObserver = null; }
+  if (filtered.length === 0) {
+    _listSorted = [];
+    el.innerHTML = `<p style="padding:24px;color:#6B5F4B;font-size:14px;">${state.entries.length === 0 ? "No entries yet. Add the first student above." : "No entries match your search or filters."}</p>`;
+    return;
+  }
+  const sorted = filtered.slice().sort((a, b) => a.serial - b.serial);
+  _listSorted = sorted;
+  // New search/filter -> start again from the first page; same filters (edit, refresh...) -> keep how far the user scrolled.
+  const sig = listFilterSig();
+  if (_listSig === undefined) state.listLimit = Math.min(state.listLimit || LIST_PAGE, 300);   // after a reload: restore, capped
+  else if (sig !== _listSig) state.listLimit = LIST_PAGE;
+  _listSig = sig;
+  let limit = Math.max(state.listLimit || LIST_PAGE, LIST_PAGE);
+  if (state.listForceShowId) {                       // e.g. "jump to sibling" — make sure that row is rendered
+    const idx = sorted.findIndex(x => x.id === state.listForceShowId);
+    if (idx >= limit) limit = idx + LIST_PAGE;
+    state.listForceShowId = null;
+  }
+  limit = Math.min(limit, sorted.length);
+  state.listLimit = limit;
+  el.innerHTML = sorted.slice(0, limit).map(rowHtmlSafe).join("") + listMoreHtml(sorted.length - limit);
+  wireFixEntryErrBtns(el);
   wireUpEntryRowEvents(el);
+  setupListMore();
   saveViewState();
 }
 
@@ -10650,10 +11207,9 @@ function renderOneEntryRow(e) {
     const cardHasTransport = !!e.isTransport;
     return `
       <div class="ledger-row" data-row-id="${e.id}" style="display:flex;padding:16px 18px;gap:14px;align-items:flex-start;">
-        ${state.selectMode ? `
-        <div style="flex-shrink:0;padding-top:3px;">
-          <input type="checkbox" class="rowSelectChk" data-id="${escapeAttr(e.id)}" ${state.selectedIds.has(e.id) ? "checked" : ""} style="width:16px;height:16px;cursor:pointer;" />
-        </div>` : ""}
+        <div class="rowSelectWrap" style="flex-shrink:0;padding-top:3px;">
+          <input type="checkbox" class="rowSelectChk" data-id="${escapeAttr(e.id)}" ${(state.selectMode && state.selectedIds.has(e.id)) ? "checked" : ""} style="width:16px;height:16px;cursor:pointer;" />
+        </div>
         <div class="stamp" style="width:34px;flex-shrink:0;color:#9B3437;font-weight:500;font-size:14px;padding-top:2px;">${String(e.serial).padStart(3, "0")}</div>
         <div style="width:44px;height:44px;flex-shrink:0;border-radius:50%;overflow:hidden;background:#EFE6C8;border:1px solid #D9CBA3;display:flex;align-items:center;justify-content:center;">
           ${e.photoUrl ? `<img src="${escapeAttr(e.photoUrl)}" loading="lazy" style="width:100%;height:100%;object-fit:cover;" />` : icon("image", { size: 16, color: "#B7A97E" })}
@@ -10680,8 +11236,8 @@ function renderOneEntryRow(e) {
                 }).join("")}
               </div>
             </div>
-            ${!state.selectMode && (state.editUnlocked || canGuestEdit()) ? `
-            <div style="display:flex;gap:8px;flex-shrink:0;align-items:flex-start;">
+            ${(state.editUnlocked || canGuestEdit()) ? `
+            <div class="rowActionWrap" style="display:flex;gap:8px;flex-shrink:0;align-items:flex-start;">
               ${state.isGuestMode ? "" : `<button class="externalExportOneBtn" data-id="${e.id}" aria-label="Export to another app" title="Export to another app" style="background:none;border:none;cursor:pointer;color:#6B5F4B;">${icon("share", { size: 16 })}</button>`}
               <button class="editBtn" aria-label="Edit" style="background:none;border:none;cursor:pointer;color:#6B5F4B;">${icon("pencil", { size: 16 })}</button>
               ${state.editUnlocked ? `<button class="deleteBtn" aria-label="Delete" style="background:none;border:none;cursor:pointer;color:#9B3437;">${icon("trash2", { size: 16 })}</button>` : ""}
@@ -11056,14 +11612,6 @@ function wireUpEntryRowEvents(el) {
       renderEntries();
     });
   }
-  el.querySelectorAll(".rowSelectChk").forEach(chk => {
-    chk.addEventListener("change", (e) => {
-      const id = e.target.dataset.id;
-      if (e.target.checked) state.selectedIds.add(id);
-      else state.selectedIds.delete(id);
-      renderSelectionPanel();
-    });
-  });
   el.querySelectorAll(".toggleEventsBtn").forEach(btn => {
     btn.addEventListener("click", () => toggleEventForm(btn.dataset.id));
   });
@@ -12119,7 +12667,7 @@ function togglePanelLite(flagName, exceptKey, onOpen) {
   renderHeader();
   renderChangedPanels(before);
   if (selectWasOn && !state.selectMode) {
-    renderEntries();
+    syncSelectModeDom();
   } else {
     saveViewState();
   }
@@ -12221,24 +12769,38 @@ document.getElementById("toggleMoreFiltersBtn").addEventListener("click", () => 
   renderHeader();
 });
 document.getElementById("toggleChatBtn").addEventListener("click", toggleChatPanelOpen);
+/* Select mode: NO list re-render any more. Tapping "Select" just flips a CSS class on #entriesList
+   (checkboxes are already in every row, hidden), so it is instant even with 1000+ students. */
+function syncSelectModeDom() {
+  const list = document.getElementById("entriesList");
+  if (list) {
+    list.classList.toggle("select-on", !!state.selectMode);
+    list.querySelectorAll(".rowSelectChk").forEach(cb => {
+      const want = !!state.selectMode && state.selectedIds.has(cb.dataset.id);
+      if (cb.checked !== want) cb.checked = want;
+    });
+  }
+  renderSelectionPanel();
+}
+// One delegated listener for every row checkbox (instead of one listener per row).
+document.getElementById("entriesList").addEventListener("change", (e) => {
+  const t = e.target;
+  if (!t || !t.classList || !t.classList.contains("rowSelectChk")) return;
+  const id = t.dataset.id;
+  if (t.checked) state.selectedIds.add(id);
+  else state.selectedIds.delete(id);
+  renderSelectionPanel();
+});
 document.getElementById("toggleSelectBtn").addEventListener("click", () => {
-  // Toggling Select re-renders the whole (possibly 600+ entry) list, which
-  // can take a beat on a slower phone — so the button itself is updated
-  // instantly here, and the heavy re-render is pushed to the next paint,
-  // instead of both happening in the same frame and making the tap feel
-  // like it "didn't register" until the list finishes redrawing.
   const next = !state.selectMode;
-  document.getElementById("icon-select").innerHTML = icon(next ? "x" : "checksquare", { size: 14 });
-  document.getElementById("selectToggleLabel").textContent = next ? "Cancel" : "Select";
-  const toggleSelectBtn = document.getElementById("toggleSelectBtn");
-  toggleSelectBtn.style.background = next ? "#1F2A44" : "transparent";
-  toggleSelectBtn.style.color = next ? "#F3ECDA" : "#1F2A44";
-  requestAnimationFrame(() => {
-    closeOtherPanels(next ? "select" : null);
-    state.selectMode = next;
-    if (!state.selectMode) state.selectedIds.clear();
-    renderAll();
-  });
+  const before = snapshotPanelFlags();
+  closeOtherPanels(next ? "select" : null);
+  state.selectMode = next;
+  if (!next) state.selectedIds.clear();
+  renderHeader();
+  renderChangedPanels(before);
+  syncSelectModeDom();
+  saveViewState();
 });
 async function toggleScreenRotate() {
   if (!state.forceLandscape) {
