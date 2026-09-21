@@ -241,6 +241,9 @@
         <button id="toggleIdCardBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-idCard"></span>ID Card Maker
         </button>
+        <button id="toggleInvoiceSizeBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
+          <span id="icon-invoiceSize"></span>Invoice Settings
+        </button>
         <button id="togglePassbookStatementBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-passbookStatement"></span>Passbook Statement
         </button>
@@ -304,6 +307,7 @@
   <div id="calcCornerPanel"></div>
   <div id="admitCardPanel"></div>
   <div id="idCardPanel"></div>
+  <div id="invoiceSizePanel"></div>
   <div id="passbookStatementPanel"></div>
   <div id="reportPanel"></div>
   <div id="messageReportPanel"></div>
@@ -514,6 +518,14 @@ const HI_DICT = {
   "Remove row": "पंक्ति हटाएं",
   "Reprint the invoice": "इनवॉइस दोबारा प्रिंट करें",
   "Reset Watermark Position": "वॉटरमार्क पोजीशन रीसेट करें",
+  "Invoice Size & Shape": "इनवॉइस का साइज़ और शेप",
+  "Invoice Settings": "इनवॉइस सेटिंग्स",
+  "School Fee": "स्कूल फीस",
+  "Class 9–12 Fee": "कक्षा 9–12 फीस",
+  "Class 9–12 Logo": "कक्षा 9–12 लोगो",
+  "Class 9–12 Institute Name": "कक्षा 9–12 संस्थान का नाम",
+  "Sab Invoices ke liye": "सभी इनवॉइस के लिए",
+  "Text Size (Font)": "टेक्स्ट साइज़ (फ़ॉन्ट)",
   "Save": "सेव करें",
   "Share as Image": "इमेज के रूप में शेयर करें",
   "WhatsApp Text": "WhatsApp टेक्स्ट",
@@ -1085,7 +1097,7 @@ function cardUpdateSummaryText(sum) {
    a small image. Purely Latin text is untouched and still drawn as normal
    sharp vector text. */
 function pdfHasDevanagari(s) {
-  return typeof s === "string" && /[\u0900-\u097F]/.test(s);
+  return typeof s === "string" && /[\u0900-\u097F\u20B9]/.test(s); // Devanagari ya ₹ (helvetica me ₹ glyph nahi hai)
 }
 const PDF_TEXT_IMG_CACHE = new Map();
 function pdfTextImageData(text, fontPt, bold, color) {
@@ -1133,7 +1145,7 @@ function pdfText(doc, text, x, y, opts = {}) {
   return img.w;
 }
 function pdfMixedWidth(doc, s, fontSize, bold) {
-  const runs = String(s).split(/([\u0900-\u097F]+)/).filter(r => r.length);
+  const runs = String(s).split(/([\u0900-\u097F\u20B9]+)/).filter(r => r.length);
   let total = 0;
   for (const run of runs) {
     total += pdfHasDevanagari(run) ? pdfTextImageData(run, fontSize, bold, "#000000").w : doc.getTextWidth(run);
@@ -1151,7 +1163,7 @@ function pdfTextMixed(doc, s, x, y, opts = {}) {
   const fontSize = opts.fontSize || doc.internal.getFontSize();
   const bold = !!opts.bold;
   const color = opts.color || "#000000";
-  const runs = str.split(/([\u0900-\u097F]+)/).filter(r => r.length);
+  const runs = str.split(/([\u0900-\u097F\u20B9]+)/).filter(r => r.length);
   let startX = x;
   if (opts.align === "right" || opts.align === "center") {
     const total = pdfMixedWidth(doc, str, fontSize, bold);
@@ -1195,9 +1207,43 @@ function pdfAutoTableHindiHooks(existing = {}) {
       const availW = data.cell.width - padLeft * 2;
       let w = img.w, h = img.h;
       if (w > availW && w > 0) { const ratio = availW / w; w = availW; h = h * ratio; }
-      data.doc.addImage(img.dataUrl, "PNG", data.cell.x + padLeft, data.cell.y + (data.cell.height - h) / 2, w, h);
+      let dx = data.cell.x + padLeft;
+      if (styles.halign === "right") dx = data.cell.x + data.cell.width - padLeft - w;
+      else if (styles.halign === "center") dx = data.cell.x + (data.cell.width - w) / 2;
+      data.doc.addImage(img.dataUrl, "PNG", dx, data.cell.y + (data.cell.height - h) / 2, w, h);
     },
   };
+}
+
+/* Text ko maxWidth (pt) me todkar lines ki list deta hai (\n ko bhi maanta hai) — bina kuch draw kiye. */
+function pdfWrapLinesMixed(doc, text, maxWidth, fontSize) {
+  const out = [];
+  String(text == null ? "" : text).split(/\r?\n/).forEach(para => {
+    const words = para.split(/\s+/).filter(Boolean);
+    if (!words.length) { out.push(""); return; }
+    let line = "";
+    words.forEach(word => {
+      const test = line ? line + " " + word : word;
+      if (line && pdfMixedWidth(doc, test, fontSize, false) > maxWidth) { out.push(line); line = word; }
+      else line = test;
+    });
+    if (line) out.push(line);
+  });
+  return out;
+}
+/* Bill PDF (A4 khada) ke aakhir me Footer Note — QR ke neeche (ya QR na ho to total ke neeche). */
+function pdfBillFooterNote(doc, y) {
+  const note = state.receiptSettings.upiQrUrl ? getReceiptFooterNote() : "";
+  if (!note) return;
+  const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(9);
+  const lines = pdfWrapLinesMixed(doc, note, pageW - 60, 9);
+  if (y + lines.length * 12 > pageH - 30) { doc.addPage(); y = 50; }
+  doc.setTextColor(90, 90, 90);
+  lines.forEach((ln, i) => pdfTextMixed(doc, ln, 30, y + i * 12, { fontSize: 9, color: "#5A5A5A" }));
+  doc.setTextColor(0, 0, 0);
+  doc.setFont("helvetica", "normal");
 }
 
 /* Word-wrapping version of pdfTextMixed — for longer free-text fields like
@@ -2180,11 +2226,6 @@ function jumpToSiblingEntry(sibId) {
     const row = document.querySelector(`[data-row-id="${CSS.escape(String(sibId))}"]`);
     if (row) row.scrollIntoView({ behavior: "smooth", block: "start" });
   });
-}
-function toggleReceiptSettings(id) {
-  const before = state.receiptSettingsOpenId;
-  state.receiptSettingsOpenId = state.receiptSettingsOpenId === id ? null : id;
-  renderRowsInPlace([before, id]);
 }
 /* ---------- Calculation Corner (classwise scratch calculator sheet) ----------
    3 fixed columns — Calculation, Result, Status — unlimited rows. Column 1 is a
@@ -3926,49 +3967,225 @@ function getFilteredReportInvoices() {
    a separate "Institute Name" can be set for Transport (in Receipt
    Settings). If it's left blank, the normal (Fee) Institute Name is also
    used on the transport receipt. */
-function getReceiptInstituteName(category) {
+/* Teen alag "entities" — har ek ka apna Institute Name, Logo (+ watermark) aur Authority Signature:
+     fee       = School Fee (Class 9–12 ke alawa baaki sab classes)
+     senior    = Class 9th–12th ki Fee (inka invoice counter bhi alag hai, isSeniorClass())
+     transport = Transport
+   Fallbacks (purane receipts waise hi rahen isliye): Class 9–12 aur Transport ka naam khali ho to School Fee
+   wala naam (address / contact no. ke liye bhi yahi); Class 9–12 ka logo khali ho to School Fee wala logo (aur uska watermark); Transport ka logo koi
+   fallback nahi lega (pehle jaisa); Sign khali ho to School Fee wala sign. */
+const RECEIPT_ENTITIES = {
+  fee: {
+    label: "School Fee", hint: "Class 9–12 ke alawa baaki sabhi classes ki fee ka invoice.",
+    nameLabel: "Institute Name", logoLabel: "School Logo",
+    name: "instituteName", addr: "instituteAddress", contact: "instituteContact", logo: "logoUrl", sign: "signatureUrl",
+    wmEnabled: "watermarkEnabled", wmOpacity: "watermarkOpacity", wmSize: "watermarkSize", wmX: "watermarkOffsetX", wmY: "watermarkOffsetY",
+    wmText: "Also show the logo as a background watermark",
+  },
+  senior: {
+    label: "Class 9–12 Fee", hint: "Class 9 se 12 ki fee ka invoice counter alag hai, isliye inka naam, logo aur sign alag rakh sakte hain. Khali chhodne par School Fee wala use hoga.",
+    nameLabel: "Class 9–12 Institute Name", logoLabel: "Class 9–12 Logo",
+    name: "seniorInstituteName", addr: "seniorInstituteAddress", contact: "seniorInstituteContact", logo: "seniorLogoUrl", sign: "seniorSignatureUrl",
+    wmEnabled: "seniorWatermarkEnabled", wmOpacity: "seniorWatermarkOpacity", wmSize: "seniorWatermarkSize", wmX: "seniorWatermarkOffsetX", wmY: "seniorWatermarkOffsetY",
+    wmText: "Also show the Class 9–12 logo as a background watermark",
+    namePh: "Khali chhodne par School Fee wala Institute Name use hoga",
+  },
+  transport: {
+    label: "Transport", hint: "Transport invoice. Iska logo alag hai — School ka logo Transport par nahi lagta.",
+    nameLabel: "Transport Institute Name", logoLabel: "Transport Logo",
+    name: "transportInstituteName", addr: "transportInstituteAddress", contact: "transportInstituteContact", logo: "transportLogoUrl", sign: "transportSignatureUrl",
+    wmEnabled: "transportWatermarkEnabled", wmOpacity: "transportWatermarkOpacity", wmSize: "transportWatermarkSize", wmX: "transportWatermarkOffsetX", wmY: "transportWatermarkOffsetY",
+    wmText: "Also show the Transport logo as a background watermark",
+    namePh: "Khali chhodne par School Fee wala Institute Name use hoga",
+  },
+};
+function getReceiptEntityKey(receipt, entry) {
+  if (receipt.category === "transport") return "transport";
+  return isSeniorClass(receipt.className || (entry && entry.className) || "") ? "senior" : "fee";
+}
+function getReceiptInstituteName(ent) {
   const rs = state.receiptSettings;
-  if (category === "transport" && rs.transportInstituteName && rs.transportInstituteName.trim()) {
-    return rs.transportInstituteName;
-  }
+  const c = RECEIPT_ENTITIES[ent] || RECEIPT_ENTITIES.fee;
+  if (ent !== "fee" && rs[c.name] && String(rs[c.name]).trim()) return rs[c.name];
   return rs.instituteName;
 }
-/* Transport has its own separate Logo and Watermark — the Fee logo/watermark
-   is never used for it (there's no fallback). If no logo is set for
-   Transport, the Transport receipt simply won't show any logo/watermark
-   (the Fee one won't be used). */
-function getReceiptLogoUrl(category) {
-  const rs = state.receiptSettings;
-  return category === "transport" ? (rs.transportLogoUrl || "") : (rs.logoUrl || "");
+/* Footer Note — UPI QR ke neeche wala note. Sirf BILL par aur sirf tab jab UPI QR uploaded ho; Paid Receipt / Invoice par nahi. */
+function getReceiptFooterNote() {
+  return String((state.receiptSettings && state.receiptSettings.footerNote) || "").trim();
 }
-function getReceiptWatermarkSettings(category) {
+/* WhatsApp Contact QR + uska apna note — UPI QR / uske Footer Note se bilkul alag. Sirf paid INVOICE (receipt) par
+   dikhta hai (PDF, Share as Image, preview); Bill par nahi. Note khali ho to default caption. */
+function getReceiptWaQr() {
+  const rs = state.receiptSettings || {};
+  return { url: rs.waQrUrl || "", note: String(rs.waQrNote || "").trim() || "Scan for WhatsApp" };
+}
+function billFooterNoteHtml() {
+  const n = state.receiptSettings.upiQrUrl ? getReceiptFooterNote() : "";
+  return n ? `<div style="margin-top:12px;text-align:center;font-size:11px;font-style:italic;line-height:1.4;color:#6B5F4B;white-space:pre-line;">${escapeHtml(n)}</div>` : "";
+}
+function getReceiptInstituteAddress(ent) {
   const rs = state.receiptSettings;
-  if (category === "transport") {
+  const c = RECEIPT_ENTITIES[ent] || RECEIPT_ENTITIES.fee;
+  if (ent !== "fee" && rs[c.addr] && String(rs[c.addr]).trim()) return String(rs[c.addr]).trim();
+  return String(rs.instituteAddress || "").trim();
+}
+function getReceiptInstituteContact(ent) {
+  const rs = state.receiptSettings;
+  const c = RECEIPT_ENTITIES[ent] || RECEIPT_ENTITIES.fee;
+  if (ent !== "fee" && rs[c.contact] && String(rs[c.contact]).trim()) return String(rs[c.contact]).trim();
+  return String(rs.instituteContact || "").trim();
+}
+function getReceiptLogoUrl(ent) {
+  const rs = state.receiptSettings;
+  if (ent === "transport") return rs.transportLogoUrl || "";
+  if (ent === "senior" && rs.seniorLogoUrl) return rs.seniorLogoUrl;
+  return rs.logoUrl || "";
+}
+function getReceiptSignatureUrl(ent) {
+  const rs = state.receiptSettings;
+  const c = RECEIPT_ENTITIES[ent] || RECEIPT_ENTITIES.fee;
+  return rs[c.sign] || rs.signatureUrl || "";
+}
+function getReceiptWatermarkSettings(ent) {
+  const rs = state.receiptSettings;
+  const useEnt = (ent === "senior" && !rs.seniorLogoUrl) ? "fee" : ent;
+  const c = RECEIPT_ENTITIES[useEnt] || RECEIPT_ENTITIES.fee;
+  const logoUrl = rs[c.logo] || "";
+  return {
+    logoUrl,
+    enabled: !!(rs[c.wmEnabled] && logoUrl),
+    opacity: rs[c.wmOpacity] != null ? rs[c.wmOpacity] : 0.12,
+    size: rs[c.wmSize] != null ? rs[c.wmSize] : 150,
+    offsetX: rs[c.wmX] != null ? rs[c.wmX] : 0,
+    offsetY: rs[c.wmY] != null ? rs[c.wmY] : 0,
+  };
+}
+/* ---------- Invoice / Receipt Size & Shape (ID card jaisa hi system) ----------
+   "Auto" = purana tareeka (A4 page par upar-neeche 2 copy, image content ke hisaab se lambi).
+   Baaki presets me invoice ka size fix hota hai (aada = landscape / khada = portrait),
+   text size ke hisaab se apne aap chhota/bada hota hai (settings.fontScale %), aur agar phir bhi
+   kuch bahar jaaye to text thoda aur chhota karke fit kar diya jaata hai taaki kuch hide na ho.
+   Same size PDF aur Share-as-Image, dono me lagta hai. */
+const RECEIPT_PRESETS = {
+  a4: { label: "A4 Full Page (297 × 210 mm)", long: 297, short: 210 },
+  a5: { label: "A5 (210 × 148 mm)",           long: 210, short: 148 },
+  a6: { label: "A6 Small (148 × 105 mm)",     long: 148, short: 105 },
+};
+const RECEIPT_PX_PER_MM = 2;
+const RECEIPT_PT_PER_MM = 72 / 25.4;
+const RECEIPT_A4 = { w: 595.28, h: 841.89 };
+// Settings panel ka preview isi student ki asli invoice se banta hai (agar hai), warna sample se.
+let RECEIPT_PREVIEW_CTX = null;
+const RECEIPT_SAMPLE_ENTRY = { name: "Student Name", fatherName: "Father's Name", rollNo: "01", className: "5th", session: "2026-27", mobile: "9876543210" };
+const RECEIPT_SAMPLE = {
+  label: "Fee Receipt", invoiceNo: "INV-F-00001", category: "fee", isArchived: false, className: "5th", session: "2026-27",
+  items: [
+    { ri: 0, detail: "Tuition Fee", unitAmount: 1100, count: 2, total: 2200, edited: false },
+    { ri: 1, detail: "Exam Fee", unitAmount: 300, count: 1, total: 300, edited: false },
+    { ri: 2, detail: "Computer Fee", unitAmount: 200, count: 1, total: 200, edited: false },
+  ],
+  total: 2700,
+};
+function receiptSampleFor(ent) {
+  const tr = ent === "transport";
+  return { ...RECEIPT_SAMPLE, category: tr ? "transport" : "fee", label: tr ? "Transport Receipt" : "Fee Receipt",
+    invoiceNo: tr ? "INV-T-00001" : "INV-F-00001", className: ent === "senior" ? "10th" : "5th" };
+}
+function receiptSampleEntryFor(ent) {
+  return { ...RECEIPT_SAMPLE_ENTRY, className: ent === "senior" ? "10th" : "5th" };
+}
+function getReceiptDims(rs) {
+  if (!rs.sizePreset || rs.sizePreset === "auto") {
+    return { auto: true, portrait: true, wMm: null, hMm: null, wPx: 420, hPx: null, f: 1 };
+  }
+  let L, Sh;
+  if (rs.sizePreset === "custom") {
+    L = Math.min(297, Math.max(90, parseFloat(rs.customLong) || 210));
+    Sh = Math.min(210, Math.max(60, parseFloat(rs.customShort) || 148));
+    if (Sh > L) { const t = L; L = Sh; Sh = t; }
+  } else {
+    const pr = RECEIPT_PRESETS[rs.sizePreset] || RECEIPT_PRESETS.a5;
+    L = pr.long; Sh = pr.short;
+  }
+  const portrait = rs.orientation === "portrait";
+  const wMm = portrait ? Sh : L;
+  const hMm = portrait ? L : Sh;
+  return {
+    auto: false, portrait, wMm, hMm,
+    wPx: Math.round(wMm * RECEIPT_PX_PER_MM),
+    hPx: Math.round(hMm * RECEIPT_PX_PER_MM),
+    f: Math.min(1.5, Math.max(0.5, Math.min(L / 210, Sh / 148))),
+  };
+}
+/* PDF page + do copy (Office / Student) kahan baithengi. Sab kuch points (pt) me.
+   slot = { x, w, topY, maxH } — us copy ka left edge, chaudai, content shuru hone ki Y aur bachi hui unchai. */
+function getReceiptPdfLayout(rs) {
+  const A4w = RECEIPT_A4.w, A4h = RECEIPT_A4.h;
+  const dims = getReceiptDims(rs);
+  if (dims.auto) {
+    // A4 aada (landscape) page ke do barabar aadhe hisse — bayen me Office Copy, dayen me Student Copy,
+    // beech me khadi dashed cut line. Har copy ke charo taraf halka border (preview card jaisa).
+    const pw = A4h, ph = A4w, half = pw / 2;
+    const slot = (x) => ({ x, w: half, topY: 38, maxH: ph - 38 - 26 });
     return {
-      logoUrl: rs.transportLogoUrl || "",
-      enabled: !!(rs.transportWatermarkEnabled && rs.transportLogoUrl),
-      opacity: rs.transportWatermarkOpacity != null ? rs.transportWatermarkOpacity : 0.12,
-      size: rs.transportWatermarkSize != null ? rs.transportWatermarkSize : 150,
-      offsetX: rs.transportWatermarkOffsetX != null ? rs.transportWatermarkOffsetX : 0,
-      offsetY: rs.transportWatermarkOffsetY != null ? rs.transportWatermarkOffsetY : 0,
+      dims, f: 1, mx: 26, border: true, pageFormat: "a4", orientation: "landscape", pageW: pw, pageH: ph,
+      slots: [slot(0), slot(half)], sameSheet: true, cut: { type: "v", pos: half, from: 12, to: ph - 12 },
+      note: "A4 aade page ke aadhe-aadhe hisse me side-by-side 2 copy (Office + Student), beech me cut line",
     };
   }
+  const cw = dims.wMm * RECEIPT_PT_PER_MM, ch = dims.hMm * RECEIPT_PT_PER_MM;
+  const f = dims.f, mx = 30 * f;
+  const mkSlot = (x, y) => {
+    const topY = y + Math.max(20, 28 * f);
+    return { x, w: cw, topY, maxH: Math.max(60, ch - (topY - y) - 12 * f) };
+  };
+  if (rs.pageMode === "exact") {
+    return {
+      dims, f, mx, pageFormat: [cw, ch], orientation: cw > ch ? "landscape" : "portrait", pageW: cw, pageH: ch,
+      slots: [mkSlot(0, 0), mkSlot(0, 0)], sameSheet: false, cut: null,
+      note: "har copy alag page par, page ka size = invoice ka size",
+    };
+  }
+  const tol = 1;
+  for (const land of [false, true]) {
+    const pw = land ? A4h : A4w, ph = land ? A4w : A4h;
+    const cols = Math.floor((pw + tol) / cw), rows = Math.floor((ph + tol) / ch);
+    if (cols * rows < 2) continue;
+    const orientation = land ? "landscape" : "portrait";
+    const base = { dims, f, mx, pageFormat: "a4", orientation, pageW: pw, pageH: ph, sameSheet: true };
+    const pageWord = land ? "A4 aada page" : "A4 khada page";
+    if (cols >= 2) {
+      const gx = Math.max(0, (pw - 2 * cw) / 3), y = Math.max(0, (ph - ch) / 2);
+      return { ...base, slots: [mkSlot(gx, y), mkSlot(2 * gx + cw, y)],
+        cut: { type: "v", pos: 1.5 * gx + cw, from: Math.max(8, y - 8), to: Math.min(ph - 8, y + ch + 8) },
+        note: pageWord + " par side-by-side 2 copy (Office + Student)" };
+    }
+    const gy = Math.max(0, (ph - 2 * ch) / 3), x = Math.max(0, (pw - cw) / 2);
+    return { ...base, slots: [mkSlot(x, gy), mkSlot(x, 2 * gy + ch)], cut: { type: "h", pos: 1.5 * gy + ch },
+      note: pageWord + " par upar-neeche 2 copy (Office + Student)" };
+  }
+  // Itna bada invoice ki ek A4 par 2 copy nahi aati — har copy alag A4 page par.
+  const land = cw > ch;
+  const pw = land ? A4h : A4w, ph = land ? A4w : A4h;
+  const x = Math.max(0, (pw - cw) / 2), y = Math.max(0, (ph - ch) / 2);
   return {
-    logoUrl: rs.logoUrl || "",
-    enabled: !!(rs.watermarkEnabled && rs.logoUrl),
-    opacity: rs.watermarkOpacity != null ? rs.watermarkOpacity : 0.12,
-    size: rs.watermarkSize != null ? rs.watermarkSize : 150,
-    offsetX: rs.watermarkOffsetX != null ? rs.watermarkOffsetX : 0,
-    offsetY: rs.watermarkOffsetY != null ? rs.watermarkOffsetY : 0,
+    dims, f, mx, pageFormat: "a4", orientation: land ? "landscape" : "portrait", pageW: pw, pageH: ph,
+    slots: [mkSlot(x, y), mkSlot(x, y)], sameSheet: false, cut: null,
+    note: "ek page par 2 copy nahi aati, isliye har copy alag A4 page par",
   };
 }
 function buildFeeChartPaidReceiptText(entry, receipt) {
   const rs = state.receiptSettings;
-  const instituteName = getReceiptInstituteName(receipt.category);
+  const instituteName = getReceiptInstituteName(getReceiptEntityKey(receipt, entry));
   const sessionLabel = receipt.session || entry.session || "—";
   const classLabel = receipt.className || entry.className || "—";
   const lines = [];
+  const ent0 = getReceiptEntityKey(receipt, entry);
+  const instAddr = getReceiptInstituteAddress(ent0);
+  const instContact = getReceiptInstituteContact(ent0);
   if (instituteName) lines.push(instituteName);
+  if (instAddr) lines.push(instAddr);
+  if (instContact) lines.push(`Contact: ${instContact}`);
   lines.push(`${receipt.label} — Invoice No: ${receipt.invoiceNo}`);
   lines.push(`${TN(entry.name) || "—"} (Enroll No. ${entry.rollNo || "—"}, Class ${classLabel})`);
   lines.push(`Session: ${sessionLabel}${receipt.isArchived ? " (Last Session — dues from the previous session)" : ""}`);
@@ -3981,89 +4198,141 @@ function buildFeeChartPaidReceiptText(entry, receipt) {
   lines.push("Payment received. Thank you.");
   return lines.join("\n");
 }
-function buildFeeChartPaidReceiptNode(entry, receipt) {
+function buildFeeChartPaidReceiptNode(entry, receipt, scaleOverride) {
   const rs = state.receiptSettings;
-  const instituteName = getReceiptInstituteName(receipt.category);
-  const logoUrl = getReceiptLogoUrl(receipt.category);
-  const wm = getReceiptWatermarkSettings(receipt.category);
-  const row = (label, value) => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #E4D9B8;font-size:13.5px;">
+  const dims = getReceiptDims(rs);
+  const S = (scaleOverride != null ? scaleOverride : (rs.fontScale != null ? rs.fontScale : 100)) / 100;
+  const K = dims.f * S;
+  const f = (n) => (Math.round(n * K * 100) / 100) + "px";
+  const ent = getReceiptEntityKey(receipt, entry);
+  const instituteName = getReceiptInstituteName(ent);
+  const logoUrl = getReceiptLogoUrl(ent);
+  const wm = getReceiptWatermarkSettings(ent);
+  const signUrl = getReceiptSignatureUrl(ent);
+  const instAddr = getReceiptInstituteAddress(ent);
+  const wa = getReceiptWaQr();
+  const instContact = getReceiptInstituteContact(ent);
+  const row = (label, value) => `<div style="display:flex;justify-content:space-between;gap:${f(8)};padding:${f(6)} 0;border-bottom:1px solid #E4D9B8;font-size:${f(13.5)};">
       <span style="font-family:'IBM Plex Mono',monospace;color:#6B5F4B;">${escapeHtml(label)}</span>
       <span style="color:#1F2A44;font-weight:600;text-align:right;">${escapeHtml(value)}</span>
     </div>`;
   const showWatermark = wm.enabled;
   const watermarkOpacity = wm.opacity;
-  const watermarkSize = wm.size;
-  const watermarkOffsetX = wm.offsetX;
-  const watermarkOffsetY = wm.offsetY;
+  const watermarkSize = Math.round(wm.size * dims.f);
+  const watermarkOffsetX = Math.round(wm.offsetX * dims.f);
+  const watermarkOffsetY = Math.round(wm.offsetY * dims.f);
   const wrap = document.createElement("div");
-  wrap.style.cssText = "position:relative;width:420px;background:#F3ECDA;border:1px solid #B7A97E;padding:22px;font-family:'Source Serif 4',Georgia,serif;color:#1F2A44;box-sizing:border-box;overflow:hidden;";
+  wrap.style.cssText = `position:relative;width:${dims.wPx}px;${dims.auto ? "" : `height:${dims.hPx}px;`}background:#F3ECDA;border:1px solid #B7A97E;padding:${f(22)};font-family:'Source Serif 4',Georgia,serif;color:#1F2A44;box-sizing:border-box;overflow:hidden;`;
   wrap.innerHTML = `
     ${showWatermark ? `<img src="${escapeAttr(wm.logoUrl)}" crossorigin="anonymous" style="position:absolute;top:calc(50% + ${watermarkOffsetY}px);left:calc(50% + ${watermarkOffsetX}px);transform:translate(-50%,-50%);width:${watermarkSize}px;height:${watermarkSize}px;object-fit:contain;opacity:${watermarkOpacity};z-index:0;pointer-events:none;" />` : ""}
-    <div style="position:relative;z-index:1;">
-    ${instituteName || logoUrl ? `<div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:6px;">
-      ${logoUrl ? `<img src="${escapeAttr(logoUrl)}" crossorigin="anonymous" style="width:26px;height:26px;object-fit:contain;flex-shrink:0;" />` : ""}
-      ${instituteName ? `<div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:17px;text-align:center;">${escapeHtml(instituteName)}</div>` : ""}
+    <div data-rc-body style="position:relative;z-index:1;${dims.auto ? "" : "height:100%;overflow:hidden;"}">
+    ${instituteName || logoUrl ? `<div style="display:flex;align-items:center;justify-content:center;gap:${f(8)};margin-bottom:${instAddr || instContact ? f(2) : f(6)};">
+      ${logoUrl ? `<img src="${escapeAttr(logoUrl)}" crossorigin="anonymous" style="width:${f(26)};height:${f(26)};object-fit:contain;flex-shrink:0;" />` : ""}
+      ${instituteName ? `<div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:${f(17)};text-align:center;">${escapeHtml(instituteName)}</div>` : ""}
+    </div>` : ""}
+    ${instAddr || instContact ? `<div style="text-align:center;font-size:${f(11)};line-height:1.35;color:#6B5F4B;margin-bottom:${f(8)};padding-bottom:${f(8)};border-bottom:1px solid #D9CBA3;">
+      ${instAddr ? `<div>${escapeHtml(instAddr)}</div>` : ""}
+      ${instContact ? `<div style="font-family:'IBM Plex Mono',monospace;font-size:${f(10.5)};">Contact: ${escapeHtml(instContact)}</div>` : ""}
     </div>` : ""}
     <div style="display:flex;justify-content:space-between;align-items:baseline;">
-      <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#1E7A3E;letter-spacing:1px;text-transform:uppercase;">${escapeHtml(receipt.label)}</div>
-      <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#6B5F4B;">Invoice: ${escapeHtml(receipt.invoiceNo)}</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:${f(11)};color:#1E7A3E;letter-spacing:1px;text-transform:uppercase;">${escapeHtml(receipt.label)}</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:${f(10.5)};color:#6B5F4B;">Invoice: ${escapeHtml(receipt.invoiceNo)}</div>
     </div>
-    ${receipt.isArchived ? `<div style="margin-top:4px;display:inline-block;background:#9B3437;color:#F3ECDA;font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:0.5px;text-transform:uppercase;padding:2px 7px;border-radius:3px;">Last Session Due</div>` : ""}
-    <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:22px;margin-top:4px;">${escapeHtml(TN(entry.name)) || "—"}</div>
-    <div style="font-size:13px;color:#6B5F4B;margin-top:2px;">${escapeHtml(TN(entry.fatherName)) || "—"}</div>
-    <div style="margin-top:14px;">
+    ${receipt.isArchived ? `<div style="margin-top:${f(4)};display:inline-block;background:#9B3437;color:#F3ECDA;font-family:'IBM Plex Mono',monospace;font-size:${f(9.5)};letter-spacing:0.5px;text-transform:uppercase;padding:${f(2)} ${f(7)};border-radius:3px;">Last Session Due</div>` : ""}
+    <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:${f(22)};margin-top:${f(4)};">${escapeHtml(TN(entry.name)) || "—"}</div>
+    <div style="font-size:${f(13)};color:#6B5F4B;margin-top:${f(2)};">${escapeHtml(TN(entry.fatherName)) || "—"}</div>
+    <div style="margin-top:${f(14)};">
       ${row("Enroll No.", entry.rollNo)}
       ${row("Class", receipt.className || entry.className)}
       ${row("Session", receipt.session || entry.session)}
     </div>
-    <div style="margin-top:14px;border-top:1px dashed #B7A97E;padding-top:10px;">
-      ${receipt.items.length ? receipt.items.map(it => row(it.detail || `Row ${it.ri + 1}`, feeChartBillLineFormula(it))).join("") : `<p style="font-size:13px;color:#6B5F4B;margin:0;">No payment has been marked "Paid" yet.</p>`}
+    <div style="margin-top:${f(14)};border-top:1px dashed #B7A97E;padding-top:${f(10)};">
+      ${receipt.items.length ? receipt.items.map(it => row(it.detail || `Row ${it.ri + 1}`, feeChartBillLineFormula(it))).join("") : `<p style="font-size:${f(13)};color:#6B5F4B;margin:0;">No payment has been marked "Paid" yet.</p>`}
     </div>
-    <div style="display:flex;justify-content:space-between;margin-top:14px;padding-top:10px;border-top:2px solid #1E7A3E;">
-      <span style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;">Total Paid</span>
-      <span style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1E7A3E;">${fmtINR(receipt.total)}</span>
+    <div style="display:flex;justify-content:space-between;margin-top:${f(14)};padding-top:${f(10)};border-top:2px solid #1E7A3E;">
+      <span style="font-family:'Zilla Slab',serif;font-weight:700;font-size:${f(16)};">Total Paid</span>
+      <span style="font-family:'Zilla Slab',serif;font-weight:700;font-size:${f(16)};color:#1E7A3E;">${fmtINR(receipt.total)}</span>
     </div>
-    <div style="display:flex;justify-content:flex-end;margin-top:20px;">
+    <div style="display:flex;justify-content:${wa.url ? "space-between" : "flex-end"};align-items:flex-end;gap:${f(10)};margin-top:${f(20)};">
+      ${wa.url ? `<div style="display:flex;align-items:center;gap:${f(8)};min-width:0;">
+        <img src="${escapeAttr(wa.url)}" crossorigin="anonymous" style="width:${f(54)};height:${f(54)};object-fit:contain;flex-shrink:0;background:#FFFFFF;" />
+        <div style="font-size:${f(10)};line-height:1.35;color:#6B5F4B;white-space:pre-line;min-width:0;max-width:${f(130)};">${escapeHtml(wa.note)}</div>
+      </div>` : ""}
       <div style="text-align:center;">
-        ${rs.signatureUrl ? `<img src="${escapeAttr(rs.signatureUrl)}" crossorigin="anonymous" style="height:32px;max-width:110px;object-fit:contain;display:block;margin:0 auto 3px;" />` : `<div style="height:32px;"></div>`}
-        <div style="border-top:1px solid #1F2A44;width:100px;padding-top:3px;font-size:10.5px;color:#6B5F4B;">Authority Signature</div>
+        ${signUrl ? `<img src="${escapeAttr(signUrl)}" crossorigin="anonymous" style="height:${f(32)};max-width:${f(110)};object-fit:contain;display:block;margin:0 auto ${f(3)};" />` : `<div style="height:${f(32)};"></div>`}
+        <div style="border-top:1px solid #1F2A44;width:${f(100)};padding-top:${f(3)};font-size:${f(10.5)};color:#6B5F4B;">Authority Signature</div>
       </div>
     </div>
-    <div style="font-size:11px;color:#A69B82;margin-top:14px;">Generated ${new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
+    <div style="font-size:${f(11)};color:#A69B82;margin-top:${f(14)};">Generated ${new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
     </div>
   `;
   return wrap;
 }
+/* Receipt node ko `host` me lagata hai. Agar fixed size (Auto ke alawa) me content bahar nikle to
+   text ko 5% ghata kar dobara banata hai, jab tak sab fit na ho jaye (ID card ke mountIdCardFitted jaisa). */
+function mountReceiptFitted(host, entry, receipt) {
+  const dims = getReceiptDims(state.receiptSettings);
+  let scale = state.receiptSettings.fontScale != null ? state.receiptSettings.fontScale : 100;
+  for (;;) {
+    const node = buildFeeChartPaidReceiptNode(entry, receipt, scale);
+    i18nWalk(node);
+    host.appendChild(node);
+    if (dims.auto) return node;
+    const body = node.querySelector("[data-rc-body]");
+    const overflow = body && (body.scrollHeight > body.clientHeight + 1);
+    if (!overflow || scale <= 30) return node;
+    host.removeChild(node);
+    scale -= 5;
+  }
+}
+async function receiptToBlobFitted(entry, receipt) {
+  const iframe = createIsolatedCaptureFrame();
+  try {
+    const node = mountReceiptFitted(iframe.contentDocument.body, entry, receipt);
+    const canvas = await html2canvas(node, { backgroundColor: "#F3ECDA", scale: 2, useCORS: true, imageTimeout: 3000 });
+    return await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+  } finally {
+    if (iframe.parentNode) document.body.removeChild(iframe);
+  }
+}
 async function shareFeeChartPaidReceiptAsImage(entry, receipt) {
-  const node = buildFeeChartPaidReceiptNode(entry, receipt);
-  const blob = await nodeToBlob(node);
+  const blob = await receiptToBlobFitted(entry, receipt);
   if (blob) {
     const name = `${(entry.name || "student").replace(/[^a-z0-9]+/gi, "_")}_${receipt.category}_receipt.png`;
     await shareOrDownloadBlobs([blob], [name]);
   }
 }
-/* Draws ONE copy of the invoice/receipt starting at `topY`, constrained to
-   roughly fit within `maxH` points of vertical space (used so two copies —
-   "Office Copy" on top, "Student Copy" below — both fit on one A4 page,
-   split by a cut-line, bill-book style). copyLabel is stamped top-right. */
-function drawFeeChartPaidReceiptCopy(doc, entry, receipt, rs, topY, maxH, copyLabel) {
+/* Draws ONE copy of the invoice/receipt inside `slot` ({ x, w, topY, maxH }) — chuni hui size me
+   (default "Auto" me: A4 ke upar/neeche aadhe hisse me, bill-book style). copyLabel top-right me
+   stamp hota hai. sc = { K (text scale), f (size factor), mx (side margin) }. dry=true sirf naap ke
+   liye hai (images skip) — return.needBottom batata hai ki content kitni neeche tak gaya. */
+function drawFeeChartPaidReceiptCopy(doc, entry, receipt, rs, slot, copyLabel, sc, dry) {
+  const { K, f, mx } = sc;
+  const z = (n) => n * K;
   const pageW = doc.internal.pageSize.getWidth();
-  // Compact font sizes so both halves comfortably fit on one A4 page.
+  const topY = slot.topY, maxH = slot.maxH;
+  const L = slot.x + mx, R = slot.x + slot.w - mx;
   let headingY = topY;
-  const logoUrl = getReceiptLogoUrl(receipt.category);
-  const wm = getReceiptWatermarkSettings(receipt.category);
+  const ent = getReceiptEntityKey(receipt, entry);
+  const logoUrl = getReceiptLogoUrl(ent);
+  const wm = getReceiptWatermarkSettings(ent);
+  const signUrl = getReceiptSignatureUrl(ent);
 
   // Watermark: category-specific logo, faded and centred behind this copy's
   // area only (so both the top and bottom copy each get their own centred
   // watermark). Fee's logo/watermark never appears on a Transport receipt
   // and vice versa — each category only uses its own setting, no fallback.
-  if (wm.enabled) {
+  if (sc.border && !dry) {
+    doc.setDrawColor(183, 169, 126);
+    doc.setLineWidth(0.6);
+    doc.roundedRect(slot.x + 10, 12, slot.w - 20, doc.internal.pageSize.getHeight() - 24, 3, 3, "S");
+    doc.setLineWidth(0.2);
+  }
+  if (wm.enabled && !dry) {
     const wmOpacity = wm.opacity;
-    const wmSize = wm.size;
-    const wmOffsetX = wm.offsetX;
-    const wmOffsetY = wm.offsetY;
-    const cx = pageW / 2 + wmOffsetX;
-    const cy = topY + maxH / 2 + wmOffsetY;
+    const wmSize = wm.size * f;
+    const cx = slot.x + slot.w / 2 + wm.offsetX * f;
+    const cy = topY + maxH / 2 + wm.offsetY * f;
     try {
       if (doc.setGState && doc.GState) doc.setGState(new doc.GState({ opacity: wmOpacity }));
       doc.addImage(wm.logoUrl, "PNG", cx - wmSize / 2, cy - wmSize / 2, wmSize, wmSize);
@@ -4075,51 +4344,77 @@ function drawFeeChartPaidReceiptCopy(doc, entry, receipt, rs, topY, maxH, copyLa
   }
 
   doc.setFont("helvetica", "italic");
-  doc.setFontSize(8);
+  doc.setFontSize(z(8));
   doc.setTextColor(120, 120, 120);
-  doc.text(copyLabel, pageW - 30, topY - 6, { align: "right" });
+  if (copyLabel) doc.text(copyLabel, R, topY - z(6), { align: "right" });
   doc.setTextColor(0, 0, 0);
 
-  const logoSize = 16;
+  const logoSize = z(16);
   const hasLogo = !!logoUrl;
-  const headingX = hasLogo ? 30 + logoSize + 6 : 30;
-  if (hasLogo) {
-    try { doc.addImage(logoUrl, "PNG", 30, headingY - logoSize + 3, logoSize, logoSize); } catch (err) { console.error("Logo image PDF embed failed:", err); }
+  const headingX = hasLogo ? L + logoSize + z(6) : L;
+  if (hasLogo && !dry) {
+    try { doc.addImage(logoUrl, "PNG", L, headingY - logoSize + z(3), logoSize, logoSize); } catch (err) { console.error("Logo image PDF embed failed:", err); }
   }
 
-  const instituteName = getReceiptInstituteName(receipt.category);
+  const instituteName = getReceiptInstituteName(ent);
+  const instAddr = getReceiptInstituteAddress(ent);
+  const instContact = getReceiptInstituteContact(ent);
+  // Institute ke naam ke neeche chhote grey akshar me address (zarurat ho to kai line me) aur contact no.
+  const drawInstituteContact = () => {
+    if (!instAddr && !instContact) return false;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(z(8.5));
+    doc.setTextColor(90, 90, 90);
+    if (instAddr) {
+      const r = pdfTextMixedWrapped(doc, instAddr, headingX, headingY, R - headingX, z(11), { fontSize: z(8.5), color: "#5A5A5A" });
+      headingY = r.endY;
+    }
+    if (instContact) {
+      pdfTextMixed(doc, `Contact: ${instContact}`, headingX, headingY, { fontSize: z(8.5), color: "#5A5A5A" });
+      headingY += z(11);
+    }
+    doc.setTextColor(0, 0, 0);
+    return true;
+  };
   if (instituteName) {
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
+    doc.setFontSize(z(13));
     doc.text(instituteName, headingX, headingY);
-    headingY += 16;
+    headingY += z(13);
+    const hadInstituteContact = drawInstituteContact();
+    headingY += hadInstituteContact ? z(6) : z(3);
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
+    doc.setFontSize(z(10));
     doc.setTextColor(30, 122, 62);
-    doc.text(receipt.label, 30, headingY);
+    doc.text(receipt.label, L, headingY);
     doc.setTextColor(0, 0, 0);
-    headingY += 14;
+    headingY += z(14);
   } else {
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
+    doc.setFontSize(z(14));
     doc.text(receipt.label, headingX, headingY);
-    headingY += 16;
+    headingY += z(16);
+    if (drawInstituteContact()) headingY += z(3);
   }
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
+  doc.setFontSize(z(9));
   doc.setTextColor(0, 0, 0);
-  doc.text(`Invoice No: ${receipt.invoiceNo}`, 30, headingY);
-  doc.text(`Generated ${new Date().toLocaleString()}`, pageW - 30, headingY, { align: "right" });
-  headingY += 14;
+  doc.text(`Invoice No: ${receipt.invoiceNo}`, L, headingY);
+  doc.text(`Generated ${new Date().toLocaleString()}`, R, headingY, { align: "right" });
+  headingY += z(14);
+  doc.setDrawColor(215, 204, 168);
+  doc.setLineWidth(0.5);
+  doc.line(L, headingY - z(8), R, headingY - z(8));
+  doc.setLineWidth(0.2);
 
-  doc.setFontSize(9.5);
+  doc.setFontSize(z(9.5));
   const info = [
     `Name: ${TN(entry.name) || "—"}     Father's Name: ${TN(entry.fatherName) || "—"}`,
     `Enroll No.: ${entry.rollNo || "—"}     Class: ${receipt.className || entry.className || "—"}     Session: ${receipt.session || entry.session || "—"}${receipt.isArchived ? " (Last Session)" : ""}`,
     `Mobile: ${entry.mobile || "—"}`,
   ];
-  let y = headingY + 16;
-  info.forEach(line => { pdfTextMixed(doc, line, 30, y); y += 13; });
+  let y = headingY + z(16);
+  info.forEach(line => { pdfTextMixed(doc, line, L, y); y += z(13); });
 
   const body = receipt.items.map(it => [it.detail || `Row ${it.ri + 1}`, feeChartBillLineFormula(it)]);
   if (!body.length) body.push(["No paid items yet", fmtINR(0)]);
@@ -4127,27 +4422,38 @@ function drawFeeChartPaidReceiptCopy(doc, entry, receipt, rs, topY, maxH, copyLa
   const receiptTableCfg = {
     head: [["Details", "Calculation"]],
     body,
-    startY: y + 6,
-    styles: { font: "helvetica", fontSize: 8.5, cellPadding: 3.5 },
+    startY: y + z(6),
+    // "plain" theme = body cells par koi (safed/grey) fill nahi, isliye peeche ka watermark logo table se kata nahi dikhta.
+    theme: "plain",
+    styles: { font: "helvetica", fontSize: z(8.5), cellPadding: z(3.5) },
     headStyles: { fillColor: [30, 122, 62], textColor: 255, fontStyle: "bold" },
+    didDrawCell: (d) => {
+      if (d.section !== "body") return;
+      d.doc.setDrawColor(215, 204, 168);
+      d.doc.setLineWidth(0.3);
+      d.doc.line(d.cell.x, d.cell.y + d.cell.height, d.cell.x + d.cell.width, d.cell.y + d.cell.height);
+      d.doc.setLineWidth(0.2);
+    },
     bodyStyles: { textColor: [31, 42, 68] },
     columnStyles: { 1: { halign: "right" } },
-    margin: { left: 30, right: 30 },
-    tableWidth: pageW - 60,
+    margin: { left: L, right: pageW - R, top: 10, bottom: 10 },
+    tableWidth: R - L,
   };
   doc.autoTable({ ...receiptTableCfg, ...pdfAutoTableHindiHooks(receiptTableCfg) });
 
-  let finalY = doc.lastAutoTable.finalY + 16;
+  let finalY = doc.lastAutoTable.finalY + z(16);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(11.5);
-  doc.text(`Total Paid: ${fmtINR(receipt.total)}`, 30, finalY);
+  doc.setFontSize(z(11.5));
+  pdfTextMixed(doc, `Total Paid: ${fmtINR(receipt.total)}`, L, finalY, { bold: true });
 
   // Authority signature block, bottom-right, above the signature line.
-  const sigLineY = Math.min(finalY + 40, topY + maxH - 14);
-  const sigLineX1 = pageW - 170, sigLineX2 = pageW - 30;
-  if (rs.signatureUrl) {
+  const wa = getReceiptWaQr();
+  const hasWa = !!wa.url;
+  const sigLineY = Math.min(finalY + z(hasWa ? 54 : 40), topY + maxH - z(14));
+  const sigLineX1 = R - z(140), sigLineX2 = R;
+  if (signUrl && !dry) {
     try {
-      doc.addImage(rs.signatureUrl, "PNG", sigLineX1 + 8, sigLineY - 24, 100, 22);
+      doc.addImage(signUrl, "PNG", sigLineX1 + z(8), sigLineY - z(24), z(100), z(22));
     } catch (err) {
       console.error("Signature image PDF embed failed:", err);
     }
@@ -4155,33 +4461,84 @@ function drawFeeChartPaidReceiptCopy(doc, entry, receipt, rs, topY, maxH, copyLa
   doc.setDrawColor(31, 42, 68);
   doc.line(sigLineX1, sigLineY, sigLineX2, sigLineY);
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(8.5);
-  doc.text("Authority Signature", sigLineX1 + 8, sigLineY + 10);
+  doc.setFontSize(z(8.5));
+  doc.text("Authority Signature", sigLineX1 + z(8), sigLineY + z(10));
+  // WhatsApp Contact QR (neeche-bayen) + uska note QR ke bagal me — sirf invoice par.
+  if (hasWa) {
+    const q = z(46);
+    const qx = L, qy = sigLineY + z(12) - q;
+    if (!dry) {
+      try { doc.addImage(wa.url, "PNG", qx, qy, q, q); } catch (err) { console.error("WhatsApp QR PDF embed failed:", err); }
+    }
+    const capX = qx + q + z(6);
+    const capW = Math.max(z(40), sigLineX1 - z(8) - capX);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(z(8));
+    doc.setTextColor(90, 90, 90);
+    const capLines = pdfWrapLinesMixed(doc, wa.note, capW, z(8)).slice(0, 5);
+    const capY = qy + Math.max(z(8), (q - capLines.length * z(10)) / 2 + z(8));
+    capLines.forEach((ln, i) => pdfTextMixed(doc, ln, capX, capY + i * z(10), { fontSize: z(8), color: "#5A5A5A" }));
+    doc.setTextColor(0, 0, 0);
+  }
+  return { needBottom: finalY + z(hasWa ? 54 : 40) + z(14) };
+}
+/* Chuni hui size me content fit hone tak text scale (%) 5% se ghatata hai — pehle ek scratch PDF par
+   naap kar (page badhna = fit nahi hua), taaki asli PDF me kuch bahar/ doosre page par na jaaye. */
+function fitReceiptPdfScale(entry, receipt, rs, layout) {
+  const { jsPDF } = window.jspdf;
+  const slot = layout.slots[0];
+  let scale = rs.fontScale != null ? rs.fontScale : 100;
+  for (;;) {
+    const sc = { K: layout.f * scale / 100, f: layout.f, mx: layout.mx, border: layout.border };
+    let fits = false;
+    try {
+      const scratch = new jsPDF({ orientation: layout.orientation, unit: "pt", format: layout.pageFormat });
+      const r = drawFeeChartPaidReceiptCopy(scratch, entry, receipt, rs, slot, "", sc, true);
+      fits = scratch.getNumberOfPages() === 1 && r.needBottom <= slot.topY + slot.maxH;
+    } catch (err) {
+      console.error("Receipt fit check failed:", err);
+      fits = true;
+    }
+    if (fits || scale <= 35) return scale;
+    scale -= 5;
+  }
 }
 
 function downloadFeeChartPaidReceiptPdf(entry, receipt) {
   const rs = state.receiptSettings;
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
-  const halfH = pageH / 2;
+  const layout = getReceiptPdfLayout(rs);
+  const doc = new jsPDF({ orientation: layout.orientation, unit: "pt", format: layout.pageFormat });
+  const scale = fitReceiptPdfScale(entry, receipt, rs, layout);
+  const sc = { K: layout.f * scale / 100, f: layout.f, mx: layout.mx, border: layout.border };
 
-  // Two copies on the same A4 page — top half "Office Copy", bottom half
-  // "Student Copy" — separated by a dashed cut line (bill-book style).
-  drawFeeChartPaidReceiptCopy(doc, entry, receipt, rs, 34, halfH - 34, "Office Copy");
+  // Do copy — "Office Copy" aur "Student Copy". Ek hi page par hon to beech me dashed cut line
+  // (bill-book style); nahi to dusri copy naye page par.
+  drawFeeChartPaidReceiptCopy(doc, entry, receipt, rs, layout.slots[0], "Office Copy", sc);
 
-  doc.setDrawColor(150, 150, 150);
-  if (doc.setLineDash) doc.setLineDash([4, 3], 0);
-  doc.line(20, halfH, pageW - 20, halfH);
-  if (doc.setLineDash) doc.setLineDash([], 0);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
-  doc.setTextColor(140, 140, 140);
-  doc.text("✂  - - - - - - - - - - - - - - - - - - -  Cut Here  - - - - - - - - - - - - - - - - - - -  ✂", pageW / 2, halfH - 3, { align: "center" });
-  doc.setTextColor(0, 0, 0);
+  if (layout.sameSheet) {
+    const pageW = layout.pageW;
+    doc.setDrawColor(150, 150, 150);
+    if (doc.setLineDash) doc.setLineDash([4, 3], 0);
+    if (layout.cut && layout.cut.type === "h") {
+      doc.line(20, layout.cut.pos, pageW - 20, layout.cut.pos);
+      if (doc.setLineDash) doc.setLineDash([], 0);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(140, 140, 140);
+      doc.text("✂  - - - - - - - - - - - - - - - - - - -  Cut Here  - - - - - - - - - - - - - - - - - - -  ✂", pageW / 2, layout.cut.pos - 3, { align: "center" });
+      doc.setTextColor(0, 0, 0);
+    } else if (layout.cut && layout.cut.type === "v") {
+      doc.line(layout.cut.pos, layout.cut.from, layout.cut.pos, layout.cut.to);
+      if (doc.setLineDash) doc.setLineDash([], 0);
+    } else if (doc.setLineDash) {
+      doc.setLineDash([], 0);
+    }
+  } else {
+    doc.addPage(layout.pageFormat, layout.orientation);
+  }
 
-  drawFeeChartPaidReceiptCopy(doc, entry, receipt, rs, halfH + 30, pageH - halfH - 34, "Student Copy");
+  drawFeeChartPaidReceiptCopy(doc, entry, receipt, rs, layout.slots[1], "Student Copy", sc);
 
   doc.save(`receipt-${receipt.category}-${(entry.name || "student").replace(/[^a-z0-9]+/gi, "_")}-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
@@ -4455,142 +4812,176 @@ async function toggleArchiveActiveStatus(entryId, archiveId) {
   state.saving = false;
   renderAll();
 }
-/* Compact inline form to set Institute Name + Authority Signature, remembered
-   on this device (localStorage) and stamped onto every Paid Receipt. */
-function renderReceiptSettingsForm() {
-  const rs = state.receiptSettings;
+/* "Invoice Size & Shape" — ID card ke "Card Size & Shape" jaisa: aada/khada, size preset ya custom (mm),
+   text size, aur neeche live preview (agar koi asli paid invoice mil jaye to wahi, warna sample).
+   Ye menu ke "Invoice Size & Shape" panel me dikhta hai (renderInvoiceSizePanel). */
+/* Live preview — accordion ke bahar, hamesha dikhta hai (sabhi sections ki settings iska asar dikhati hain). */
+function renderReceiptPreviewBlock() {
+  const pent = state.receiptPreviewEnt || "fee";
+  const hasReal = !!(RECEIPT_PREVIEW_CTX && RECEIPT_PREVIEW_CTX[pent]);
   return `
-    <div style="background:#FFFDF6;border:1px solid #D9CBA3;border-radius:4px;padding:10px;margin-bottom:10px;">
-      <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">Institute Name</label>
-      <input id="receiptInstituteNameInput" class="rule-input" value="${escapeAttr(rs.instituteName)}" placeholder="e.g. Saraswati Vidya Mandir" style="width:100%;box-sizing:border-box;margin-bottom:10px;" />
-      <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">Transport Institute Name <span style="text-transform:none;letter-spacing:0;color:#9B7A1E;">(optional)</span></label>
-      <input id="receiptTransportInstituteNameInput" class="rule-input" value="${escapeAttr(rs.transportInstituteName)}" placeholder="If left blank, the Institute Name above will also be used on the Transport receipt" style="width:100%;box-sizing:border-box;margin-bottom:10px;" />
-      <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">School Logo</label>
+    <div style="background:#FFFDF6;border:1px solid #D9CBA3;border-radius:4px;padding:10px;margin-bottom:8px;">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${Object.keys(RECEIPT_ENTITIES).map(k => `<button type="button" class="receiptPreviewEntBtn" data-ent="${k}" style="border-radius:3px;padding:5px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;cursor:pointer;border:1px solid ${pent === k ? "#1F2A44" : "#B7A97E"};background:${pent === k ? "#1F2A44" : "transparent"};color:${pent === k ? "#F3ECDA" : "#6B5F4B"};">${escapeHtml(RECEIPT_ENTITIES[k].label)}</button>`).join("")}
+      </div>
+      <p style="font-size:11px;color:#6B5F4B;margin:8px 0 0;">Preview ${hasReal ? "(ek asli paid invoice se)" : "(sample)"}:</p>
+      <div id="receiptSizePreviewWrap" style="margin-top:8px;display:flex;justify-content:center;padding:12px;background:#EFE7CE;border-radius:6px;overflow-x:auto;"></div>
+    </div>`;
+}
+function renderReceiptSizeSection() {
+  const rs = state.receiptSettings;
+  const dims = getReceiptDims(rs);
+  const scale = rs.fontScale != null ? rs.fontScale : 100;
+  const preset = rs.sizePreset || "auto";
+  return `
+      <div style="margin-top:10px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${dims.auto ? "" : `<select id="receiptOrientation" class="rule-input" style="flex:1;min-width:150px;box-sizing:border-box;">
+            <option value="landscape" ${rs.orientation !== "portrait" ? "selected" : ""}>Aada (Landscape) ▭</option>
+            <option value="portrait" ${rs.orientation === "portrait" ? "selected" : ""}>Khada (Portrait) ▯</option>
+          </select>`}
+          <select id="receiptSizePreset" class="rule-input" style="flex:2;min-width:200px;box-sizing:border-box;">
+            <option value="auto" ${preset === "auto" ? "selected" : ""}>Auto – A4 ke aadhe page me 2 copy (side-by-side)</option>
+            ${Object.keys(RECEIPT_PRESETS).map(k => `<option value="${k}" ${preset === k ? "selected" : ""}>${escapeHtml(RECEIPT_PRESETS[k].label)}</option>`).join("")}
+            <option value="custom" ${preset === "custom" ? "selected" : ""}>Custom size (mm)</option>
+          </select>
+        </div>
+        ${preset === "custom" ? `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+          <input id="receiptCustomLong" type="number" inputmode="decimal" min="90" max="297" step="0.5" class="rule-input" placeholder="Lambai (mm)" value="${escapeAttr(rs.customLong)}" style="width:120px;box-sizing:border-box;" />
+          <input id="receiptCustomShort" type="number" inputmode="decimal" min="60" max="210" step="0.5" class="rule-input" placeholder="Chaudai (mm)" value="${escapeAttr(rs.customShort)}" style="width:120px;box-sizing:border-box;" />
+        </div>` : ""}
+        ${dims.auto ? "" : `
+        <select id="receiptPageMode" class="rule-input" style="width:100%;box-sizing:border-box;margin-top:8px;">
+          <option value="a4" ${rs.pageMode !== "exact" ? "selected" : ""}>PDF: A4 sheet par Office + Student copy</option>
+          <option value="exact" ${rs.pageMode === "exact" ? "selected" : ""}>PDF: Har copy alag page (page = invoice ka size)</option>
+        </select>`}
+        ${dims.auto ? "" : `<p style="font-size:11px;color:#6B5F4B;margin:6px 0 0;">Size: ${dims.wMm.toFixed(1)} × ${dims.hMm.toFixed(1)} mm</p>`}
+        <div style="margin-top:12px;">
+          <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:6px;">Text Size (Font)</label>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:11px;color:#6B5F4B;">A</span>
+            <input type="range" id="receiptFontScale" min="50" max="150" step="5" value="${scale}" style="flex:1;" />
+            <span style="font-size:15px;color:#6B5F4B;">A</span>
+            <span id="receiptFontScaleVal" style="font-size:12px;color:#1F2A44;width:42px;text-align:right;">${scale}%</span>
+            <button type="button" id="receiptFontScaleReset" style="background:transparent;border:1px solid #B7A97E;border-radius:3px;padding:4px 8px;font-size:11px;color:#6B5F4B;cursor:pointer;">100%</button>
+          </div>
+        </div>
+      </div>`;
+}
+/* Invoice Settings form (menu panel me): UPI QR (sabke liye common) + teen entity cards —
+   School Fee, Class 9–12 Fee, Transport — har ek me apna Institute Name, Logo (+ watermark) aur Authority Signature.
+   Device me (localStorage) save hota hai. */
+/* Invoice Settings ke sections fold/unfold hote hain — shuru me sab band; jis par tap karo wahi khulta hai. */
+function renderInvoiceAccSection(key, title, bodyHtml) {
+  const open = !!(state.invoiceOpenSecs && state.invoiceOpenSecs[key]);
+  return `
+    <div style="background:#FFFDF6;border:1px solid #D9CBA3;border-radius:4px;margin-bottom:8px;">
+      <button type="button" class="invoiceAccBtn" data-sec="${escapeAttr(key)}" style="width:100%;display:flex;justify-content:space-between;align-items:center;gap:8px;background:transparent;border:none;padding:12px 10px;cursor:pointer;font-family:'Zilla Slab',serif;font-weight:700;font-size:15px;color:#1F2A44;text-align:left;">
+        <span>${escapeHtml(title)}</span><span style="font-size:11px;color:#6B5F4B;">${open ? "▲" : "▼"}</span>
+      </button>
+      ${open ? `<div style="padding:0 10px 10px;">${bodyHtml}</div>` : ""}
+    </div>`;
+}
+function renderReceiptImageRow(ent, kind, url, busy, labelText, emptyText, wide) {
+  const btnBase = "display:flex;align-items:center;gap:5px;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;";
+  return `
+      <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">${escapeHtml(labelText)}</label>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
-        <div id="receiptLogoPreviewWrap" style="width:56px;height:56px;flex-shrink:0;border:1px solid #D9CBA3;border-radius:4px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-          ${state.receiptLogoProcessing
+        <div style="width:${wide ? 110 : 56}px;height:${wide ? 44 : 56}px;flex-shrink:0;border:1px solid #D9CBA3;border-radius:4px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+          ${busy
             ? `<span style="font-size:10px;color:#6B5F4B;">...</span>`
-            : rs.logoUrl
-            ? `<img src="${escapeAttr(rs.logoUrl)}" style="max-width:100%;max-height:100%;object-fit:contain;" />`
-            : `<span style="font-size:9px;color:#B7A97E;text-align:center;">No Logo</span>`}
+            : url
+            ? `<img src="${escapeAttr(url)}" style="max-width:100%;max-height:100%;object-fit:contain;" />`
+            : `<span style="font-size:9px;color:#B7A97E;text-align:center;">${escapeHtml(emptyText)}</span>`}
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" id="receiptLogoGalleryBtn" style="display:flex;align-items:center;gap:5px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Gallery se Logo</button>
-          ${rs.logoUrl ? `<button type="button" id="receiptLogoRemoveBtn" style="display:flex;align-items:center;gap:5px;background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Remove</button>` : ""}
+          <button type="button" id="rc_${ent}_${kind}Btn" style="${btnBase}background:#1F2A44;color:#F3ECDA;border:none;">Gallery se ${kind === "logo" ? "Logo" : kind === "qr" ? "QR" : "Sign"}</button>
+          ${url ? `<button type="button" id="rc_${ent}_${kind}Remove" style="${btnBase}background:transparent;color:#9B3437;border:1px solid #9B3437;">Remove</button>` : ""}
         </div>
-        <input type="file" id="receiptLogoGalleryInput" accept="image/*" style="display:none;" />
-      </div>
-      <div style="margin-bottom:10px;padding-top:8px;border-top:1px dashed #D9CBA3;">
-        <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">UPI Payment QR</label>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
-          <div id="receiptUpiQrPreviewWrap" style="width:56px;height:56px;flex-shrink:0;border:1px solid #D9CBA3;border-radius:4px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-            ${state.receiptUpiQrProcessing
-              ? `<span style="font-size:10px;color:#6B5F4B;">...</span>`
-              : rs.upiQrUrl
-              ? `<img src="${escapeAttr(rs.upiQrUrl)}" style="max-width:100%;max-height:100%;object-fit:contain;" />`
-              : `<span style="font-size:9px;color:#B7A97E;text-align:center;">No QR</span>`}
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button type="button" id="receiptUpiQrGalleryBtn" style="display:flex;align-items:center;gap:5px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Gallery se QR</button>
-            ${rs.upiQrUrl ? `<button type="button" id="receiptUpiQrRemoveBtn" style="display:flex;align-items:center;gap:5px;background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Remove</button>` : ""}
-          </div>
-          <input type="file" id="receiptUpiQrGalleryInput" accept="image/*" style="display:none;" />
-        </div>
-      </div>
-      <div style="margin-bottom:10px;padding-top:8px;border-top:1px dashed #D9CBA3;">
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#1F2A44;cursor:${rs.logoUrl ? "pointer" : "not-allowed"};opacity:${rs.logoUrl ? 1 : 0.5};">
-          <input type="checkbox" id="receiptWatermarkChk" ${rs.watermarkEnabled ? "checked" : ""} ${rs.logoUrl ? "" : "disabled"} style="width:16px;height:16px;" />
-          Also show the logo as a background watermark
+        <input type="file" id="rc_${ent}_${kind}Input" accept="image/*" style="display:none;" />
+      </div>`;
+}
+function renderReceiptEntityCard(ent) {
+  const rs = state.receiptSettings;
+  const c = RECEIPT_ENTITIES[ent];
+  const busy = (kind) => !!(state.receiptImgProcessing && state.receiptImgProcessing[ent + "_" + kind]);
+  const logo = rs[c.logo] || "";
+  const wmOn = !!rs[c.wmEnabled];
+  const op = rs[c.wmOpacity] != null ? rs[c.wmOpacity] : 0.12;
+  const sz = rs[c.wmSize] != null ? rs[c.wmSize] : 150;
+  const ox = rs[c.wmX] != null ? rs[c.wmX] : 0;
+  const oy = rs[c.wmY] != null ? rs[c.wmY] : 0;
+  const slider = (key, label, id, min, max, step, val, shown) => `
+        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
+          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">${label}</label>
+          <input type="range" id="rc_${ent}_${id}" min="${min}" max="${max}" step="${step}" value="${val}" style="flex:1;" />
+          <span id="rc_${ent}_${id}Val" style="font-size:11px;color:#6B5F4B;width:38px;text-align:right;">${shown}</span>
+        </div>`;
+  return `
+    <div>
+      <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">${escapeHtml(c.nameLabel)}${ent !== "fee" ? ` <span style="text-transform:none;letter-spacing:0;color:#9B7A1E;">(optional)</span>` : ""}</label>
+      <input id="rc_${ent}_name" class="rule-input" value="${escapeAttr(rs[c.name])}" placeholder="${escapeAttr(c.namePh || "e.g. Saraswati Vidya Mandir")}" style="width:100%;box-sizing:border-box;margin-bottom:8px;" />
+      <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">Address${ent !== "fee" ? ` <span style="text-transform:none;letter-spacing:0;color:#9B7A1E;">(optional)</span>` : ""}</label>
+      <input id="rc_${ent}_addr" class="rule-input" value="${escapeAttr(rs[c.addr])}" placeholder="${escapeAttr(ent === "fee" ? "e.g. Main Road, Reksariya, Dist. Gonda (U.P.)" : "Khali chhodne par School Fee wala Address use hoga")}" style="width:100%;box-sizing:border-box;margin-bottom:8px;" />
+      <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">Contact No.${ent !== "fee" ? ` <span style="text-transform:none;letter-spacing:0;color:#9B7A1E;">(optional)</span>` : ""}</label>
+      <input id="rc_${ent}_contact" class="rule-input" type="text" inputmode="tel" value="${escapeAttr(rs[c.contact])}" placeholder="${escapeAttr(ent === "fee" ? "e.g. 9876543210, 9123456780" : "Khali chhodne par School Fee wala Contact No. use hoga")}" style="width:100%;box-sizing:border-box;margin-bottom:10px;" />
+      ${renderReceiptImageRow(ent, "logo", logo, busy("logo"), c.logoLabel, "No Logo", false)}
+      <div style="margin-bottom:10px;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#1F2A44;cursor:${logo ? "pointer" : "not-allowed"};opacity:${logo ? 1 : 0.5};">
+          <input type="checkbox" id="rc_${ent}_wmChk" ${wmOn ? "checked" : ""} ${logo ? "" : "disabled"} style="width:16px;height:16px;" />
+          ${escapeHtml(c.wmText)}
         </label>
-        ${rs.watermarkEnabled && rs.logoUrl ? `
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Fade</label>
-          <input type="range" id="receiptWatermarkOpacity" min="0.04" max="0.35" step="0.01" value="${rs.watermarkOpacity}" style="flex:1;" />
-          <span style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${Math.round(rs.watermarkOpacity * 100)}%</span>
-        </div>
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Size</label>
-          <input type="range" id="receiptWatermarkSize" min="60" max="260" step="5" value="${rs.watermarkSize}" style="flex:1;" />
-          <span style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${rs.watermarkSize}px</span>
-        </div>
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Left-Right</label>
-          <input type="range" id="receiptWatermarkOffsetX" min="-100" max="100" step="1" value="${rs.watermarkOffsetX}" style="flex:1;" />
-          <span style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${rs.watermarkOffsetX}</span>
-        </div>
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Up-Down</label>
-          <input type="range" id="receiptWatermarkOffsetY" min="-100" max="100" step="1" value="${rs.watermarkOffsetY}" style="flex:1;" />
-          <span style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${rs.watermarkOffsetY}</span>
-        </div>
-        <button type="button" id="receiptWatermarkResetBtn" style="margin-top:8px;background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;border-radius:3px;padding:5px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Reset Watermark Position</button>` : ""}
+        ${wmOn && logo ? `
+        ${slider("op", "Fade", "wmOpacity", 0.04, 0.35, 0.01, op, Math.round(op * 100) + "%")}
+        ${slider("sz", "Size", "wmSize", 60, 260, 5, sz, sz + "px")}
+        ${slider("x", "Left-Right", "wmX", -100, 100, 1, ox, ox)}
+        ${slider("y", "Up-Down", "wmY", -100, 100, 1, oy, oy)}
+        <button type="button" id="rc_${ent}_wmReset" style="margin-top:8px;background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;border-radius:3px;padding:5px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Reset Watermark Position</button>` : ""}
       </div>
-      <div style="margin-bottom:10px;padding-top:8px;border-top:1px dashed #D9CBA3;">
-        <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">Transport Logo</label>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
-          <div id="receiptTransportLogoPreviewWrap" style="width:56px;height:56px;flex-shrink:0;border:1px solid #D9CBA3;border-radius:4px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-            ${state.receiptTransportLogoProcessing
-              ? `<span style="font-size:10px;color:#6B5F4B;">...</span>`
-              : rs.transportLogoUrl
-              ? `<img src="${escapeAttr(rs.transportLogoUrl)}" style="max-width:100%;max-height:100%;object-fit:contain;" />`
-              : `<span style="font-size:9px;color:#B7A97E;text-align:center;">No Logo</span>`}
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button type="button" id="receiptTransportLogoGalleryBtn" style="display:flex;align-items:center;gap:5px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Gallery se Logo</button>
-            ${rs.transportLogoUrl ? `<button type="button" id="receiptTransportLogoRemoveBtn" style="display:flex;align-items:center;gap:5px;background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Remove</button>` : ""}
-          </div>
-          <input type="file" id="receiptTransportLogoGalleryInput" accept="image/*" style="display:none;" />
-        </div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#1F2A44;cursor:${rs.transportLogoUrl ? "pointer" : "not-allowed"};opacity:${rs.transportLogoUrl ? 1 : 0.5};">
-          <input type="checkbox" id="receiptTransportWatermarkChk" ${rs.transportWatermarkEnabled ? "checked" : ""} ${rs.transportLogoUrl ? "" : "disabled"} style="width:16px;height:16px;" />
-          Also show the Transport logo as a background watermark
-        </label>
-        ${rs.transportWatermarkEnabled && rs.transportLogoUrl ? `
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Fade</label>
-          <input type="range" id="receiptTransportWatermarkOpacity" min="0.04" max="0.35" step="0.01" value="${rs.transportWatermarkOpacity}" style="flex:1;" />
-          <span style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${Math.round(rs.transportWatermarkOpacity * 100)}%</span>
-        </div>
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Size</label>
-          <input type="range" id="receiptTransportWatermarkSize" min="60" max="260" step="5" value="${rs.transportWatermarkSize}" style="flex:1;" />
-          <span style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${rs.transportWatermarkSize}px</span>
-        </div>
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Left-Right</label>
-          <input type="range" id="receiptTransportWatermarkOffsetX" min="-100" max="100" step="1" value="${rs.transportWatermarkOffsetX}" style="flex:1;" />
-          <span style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${rs.transportWatermarkOffsetX}</span>
-        </div>
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Up-Down</label>
-          <input type="range" id="receiptTransportWatermarkOffsetY" min="-100" max="100" step="1" value="${rs.transportWatermarkOffsetY}" style="flex:1;" />
-          <span style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${rs.transportWatermarkOffsetY}</span>
-        </div>
-        <button type="button" id="receiptTransportWatermarkResetBtn" style="margin-top:8px;background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;border-radius:3px;padding:5px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Reset Watermark Position</button>` : ""}
-      </div>
-      <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">Authority Signature</label>
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-        <div id="receiptSignaturePreviewWrap" style="width:110px;height:44px;flex-shrink:0;border:1px solid #D9CBA3;border-radius:4px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-          ${state.receiptSignatureProcessing
-            ? `<span style="font-size:9.5px;color:#B7A97E;">Processing…</span>`
-            : rs.signatureUrl
-            ? `<img src="${escapeAttr(rs.signatureUrl)}" style="max-width:100%;max-height:100%;object-fit:contain;" />`
-            : `<span style="font-size:9.5px;color:#B7A97E;">No Signature</span>`}
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" id="receiptSignatureGalleryBtn" style="display:flex;align-items:center;gap:5px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Gallery se Sign</button>
-          ${rs.signatureUrl ? `<button type="button" id="receiptSignatureRemoveBtn" style="display:flex;align-items:center;gap:5px;background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Remove</button>` : ""}
-        </div>
-        <input type="file" id="receiptSignatureGalleryInput" accept="image/*" style="display:none;" />
+      <div style="padding-top:8px;border-top:1px dashed #D9CBA3;">
+        ${renderReceiptImageRow(ent, "sign", rs[c.sign] || "", busy("sign"), "Authority Signature", "No Signature", true)}
       </div>
     </div>`;
+}
+function renderReceiptSettingsForm() {
+  const rs = state.receiptSettings;
+  const upiBody = `
+      <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;display:block;margin:8px 0 4px;">UPI Payment QR</label>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div id="receiptUpiQrPreviewWrap" style="width:56px;height:56px;flex-shrink:0;border:1px solid #D9CBA3;border-radius:4px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+          ${state.receiptUpiQrProcessing
+            ? `<span style="font-size:10px;color:#6B5F4B;">...</span>`
+            : rs.upiQrUrl
+            ? `<img src="${escapeAttr(rs.upiQrUrl)}" style="max-width:100%;max-height:100%;object-fit:contain;" />`
+            : `<span style="font-size:9px;color:#B7A97E;text-align:center;">No QR</span>`}
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" id="receiptUpiQrGalleryBtn" style="display:flex;align-items:center;gap:5px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Gallery se QR</button>
+          ${rs.upiQrUrl ? `<button type="button" id="receiptUpiQrRemoveBtn" style="display:flex;align-items:center;gap:5px;background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Remove</button>` : ""}
+        </div>
+        <input type="file" id="receiptUpiQrGalleryInput" accept="image/*" style="display:none;" />
+      </div>
+      <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;display:block;margin:12px 0 4px;">Footer Note <span style="text-transform:none;letter-spacing:0;color:#9B7A1E;">(optional)</span></label>
+      <textarea id="receiptFooterNote" class="rule-input" rows="2" placeholder="e.g. Fee once paid is non-refundable. Yah rasid computer dwara banayi gayi hai." style="width:100%;box-sizing:border-box;resize:vertical;">${escapeHtml(rs.footerNote || "")}</textarea>
+`;
+  const waBody = `
+      ${renderReceiptImageRow("wa", "qr", rs.waQrUrl || "", !!(state.receiptImgProcessing && state.receiptImgProcessing["wa_qr"]), "WhatsApp QR", "No QR", false)}
+      <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;display:block;margin:4px 0 4px;">WhatsApp QR Footer Note <span style="text-transform:none;letter-spacing:0;color:#9B7A1E;">(optional)</span></label>
+      <textarea id="receiptWaQrNote" class="rule-input" rows="2" placeholder="e.g. WhatsApp par sampark karein: 9876543210" style="width:100%;box-sizing:border-box;resize:vertical;">${escapeHtml(rs.waQrNote || "")}</textarea>
+`;
+  return renderInvoiceAccSection("upi", "Bill ke liye (UPI QR)", upiBody)
+    + renderInvoiceAccSection("wa", "WhatsApp Contact QR", waBody)
+    + Object.keys(RECEIPT_ENTITIES).map(k => renderInvoiceAccSection(k, RECEIPT_ENTITIES[k].label, renderReceiptEntityCard(k))).join("");
 }
 /* One receipt block — Fee or Transport, whichever it is — with its own invoice
    number, item list, total, signature, aur download/share/WhatsApp/SMS
    buttons. Used twice inside renderFeeChartPaidReceipt when both Fee and
    Transport rows were paid within the window. */
 function renderPaidReceiptBlock(e, receipt) {
-  const rs = state.receiptSettings;
+  const ent = getReceiptEntityKey(receipt, e);
+  const blockLogo = getReceiptLogoUrl(ent);
+  const blockSign = getReceiptSignatureUrl(ent);
   const hasMobile = !!(e.mobile && e.mobile.trim());
   const text = buildFeeChartPaidReceiptText(e, receipt);
   const accentColor = receipt.category === "transport" ? "#1F5FA6" : "#1E7A3E";
@@ -4598,7 +4989,7 @@ function renderPaidReceiptBlock(e, receipt) {
     <div style="margin-top:10px;padding:10px;background:#FFFDF6;border:1px solid #D9CBA3;border-radius:4px;">
       <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px;">
         <div style="display:flex;align-items:center;gap:6px;">
-          ${rs.logoUrl ? `<img src="${escapeAttr(rs.logoUrl)}" style="width:16px;height:16px;object-fit:contain;flex-shrink:0;" />` : ""}
+          ${blockLogo ? `<img src="${escapeAttr(blockLogo)}" style="width:16px;height:16px;object-fit:contain;flex-shrink:0;" />` : ""}
           <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:13.5px;color:${accentColor};">${escapeHtml(receipt.label)}</div>
           ${receipt.isArchived ? `<span style="background:#9B3437;color:#F3ECDA;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:0.5px;text-transform:uppercase;padding:2px 6px;border-radius:3px;">Last Session</span>` : ""}
         </div>
@@ -4611,7 +5002,7 @@ function renderPaidReceiptBlock(e, receipt) {
         <span style="font-family:'Zilla Slab',serif;font-weight:700;font-size:14.5px;">Total Paid</span>
         <span style="font-family:'Zilla Slab',serif;font-weight:700;font-size:14.5px;color:${accentColor};">${fmtINR(receipt.total)}</span>
       </div>
-      ${rs.signatureUrl ? `<div style="display:flex;justify-content:flex-end;margin-top:8px;"><img src="${escapeAttr(rs.signatureUrl)}" style="height:26px;max-width:90px;object-fit:contain;" /></div>` : ""}
+      ${blockSign ? `<div style="display:flex;justify-content:flex-end;margin-top:8px;"><img src="${escapeAttr(blockSign)}" style="height:26px;max-width:90px;object-fit:contain;" /></div>` : ""}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
         <button class="downloadFeeChartPaidReceiptPdfBtn" data-entry-id="${e.id}" data-category="${receipt.category}" ${receipt.isArchived ? `data-archive-id="${escapeAttr(receipt.archiveId || "")}"` : ""} style="background:${accentColor};color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Download PDF</button>
         <button class="shareFeeChartPaidReceiptImageBtn" data-entry-id="${e.id}" data-category="${receipt.category}" ${receipt.isArchived ? `data-archive-id="${escapeAttr(receipt.archiveId || "")}"` : ""} style="background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Share as Image</button>
@@ -4628,15 +5019,12 @@ function renderPaidReceiptBlock(e, receipt) {
    whenever both were paid within the window. */
 function renderFeeChartPaidReceipt(e, sheet, archiveMeta, extraSheets) {
   const receipts = computeFeeChartPaidReceipts(sheet, archiveMeta, extraSheets);
-  const settingsOpen = state.receiptSettingsOpenId === e.id;
   const rs = state.receiptSettings;
   const header = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
       <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#1E7A3E;letter-spacing:0.5px;text-transform:uppercase;">Paid Receipt</div>
-      <button class="toggleReceiptSettingsBtn" data-id="${e.id}" style="background:transparent;border:1px solid #B7A97E;border-radius:3px;padding:3px 9px;font-size:11px;color:#6B5F4B;cursor:pointer;white-space:nowrap;">⚙️ ${settingsOpen ? "Close Settings" : "Institute / Sign."}</button>
     </div>
-    ${settingsOpen ? renderReceiptSettingsForm() : ""}
-    ${!settingsOpen && rs.instituteName ? `<div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:13px;color:#1F2A44;margin-bottom:6px;">${escapeHtml(rs.instituteName)}</div>` : ""}`;
+    ${rs.instituteName ? `<div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:13px;color:#1F2A44;margin-bottom:6px;">${escapeHtml(rs.instituteName)}</div>` : ""}`;
   if (!receipts.fee && !receipts.transport) {
     return `
       <div style="margin-top:12px;padding-top:10px;border-top:1px dashed #B7A97E;">
@@ -4685,6 +5073,7 @@ function buildFeeChartBillNode(entry, bill) {
         <div style="font-size:11px;color:#6B5F4B;margin-top:6px;">Scan &amp; Pay via UPI</div>
       </div>
     ` : ""}
+    ${billFooterNoteHtml()}
   `;
   return wrap;
 }
@@ -4740,6 +5129,7 @@ function buildMultiChartBillNode(entry, blocks) {
         <div style="font-size:11px;color:#6B5F4B;margin-top:6px;">Scan &amp; Pay via UPI</div>
       </div>
     ` : ""}
+    ${billFooterNoteHtml()}
   `;
   return wrap;
 }
@@ -5255,7 +5645,7 @@ async function downloadFeeChartBillPdf(entry, bill) {
   const finalY = doc.lastAutoTable.finalY + 24;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13);
-  doc.text(`Payable Total: ${fmtINR(bill.total)}`, 30, finalY);
+  pdfTextMixed(doc, `Payable Total: ${fmtINR(bill.total)}`, 30, finalY, { bold: true });
 
   if (state.receiptSettings.upiQrUrl) {
     try {
@@ -5265,6 +5655,7 @@ async function downloadFeeChartBillPdf(entry, bill) {
       doc.text("Scan & Pay via UPI", 30, finalY + 122);
     } catch (e) { console.error("Could not add UPI QR to bill PDF:", e); }
   }
+  pdfBillFooterNote(doc, finalY + (state.receiptSettings.upiQrUrl ? 138 : 32));
 
   doc.save(`bill-${(entry.name || "student").replace(/[^a-z0-9]+/gi, "_")}-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
@@ -5322,12 +5713,12 @@ async function downloadMultiChartBillPdf(entry, blocks) {
   if (included.length > 1) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    doc.text(`${included.map(b => Math.round(b.bill.total || 0)).join(" + ")} = ${fmtINR(grandTotal)}`, 30, y);
+    pdfTextMixed(doc, `${included.map(b => Math.round(b.bill.total || 0)).join(" + ")} = ${fmtINR(grandTotal)}`, 30, y);
     y += 18;
   }
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13);
-  doc.text(`${included.length > 1 ? T("Grand Total") : "Payable Total"}: ${fmtINR(grandTotal)}`, 30, y);
+  pdfTextMixed(doc, `${included.length > 1 ? T("Grand Total") : "Payable Total"}: ${fmtINR(grandTotal)}`, 30, y, { bold: true });
   const finalY = y;
 
   if (state.receiptSettings.upiQrUrl) {
@@ -5338,6 +5729,7 @@ async function downloadMultiChartBillPdf(entry, blocks) {
       doc.text("Scan & Pay via UPI", 30, finalY + 122);
     } catch (e) { console.error("Could not add UPI QR to bill PDF:", e); }
   }
+  pdfBillFooterNote(doc, finalY + (state.receiptSettings.upiQrUrl ? 138 : 32));
 
   doc.save(`bill-${(entry.name || "student").replace(/[^a-z0-9]+/gi, "_")}-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
@@ -6205,9 +6597,11 @@ const state = {
   expandedCombineSiblingId: null,
   openArchiveReceiptKey: null,
   entryPanelHistoryPushed: false,
-  receiptSettings: { instituteName: "", transportInstituteName: "", signatureUrl: "", logoUrl: "", watermarkEnabled: false, watermarkOpacity: 0.12, watermarkSize: 150, watermarkOffsetX: 0, watermarkOffsetY: 0, transportLogoUrl: "", transportWatermarkEnabled: false, transportWatermarkOpacity: 0.12, transportWatermarkSize: 150, transportWatermarkOffsetX: 0, transportWatermarkOffsetY: 0, upiQrUrl: "" },
-  receiptSettingsOpenId: null,
+  receiptSettings: { instituteName: "", transportInstituteName: "", signatureUrl: "", logoUrl: "", watermarkEnabled: false, watermarkOpacity: 0.12, watermarkSize: 150, watermarkOffsetX: 0, watermarkOffsetY: 0, transportLogoUrl: "", transportWatermarkEnabled: false, transportWatermarkOpacity: 0.12, transportWatermarkSize: 150, transportWatermarkOffsetX: 0, transportWatermarkOffsetY: 0, upiQrUrl: "", footerNote: "", waQrUrl: "", waQrNote: "", instituteAddress: "", instituteContact: "", seniorInstituteAddress: "", seniorInstituteContact: "", transportInstituteAddress: "", transportInstituteContact: "", transportSignatureUrl: "", seniorInstituteName: "", seniorLogoUrl: "", seniorSignatureUrl: "", seniorWatermarkEnabled: false, seniorWatermarkOpacity: 0.12, seniorWatermarkSize: 150, seniorWatermarkOffsetX: 0, seniorWatermarkOffsetY: 0, sizePreset: "auto", orientation: "landscape", customLong: "", customShort: "", pageMode: "a4", fontScale: 100 },
   receiptSignatureProcessing: false,
+  receiptImgProcessing: {},
+  receiptPreviewEnt: "fee",
+  invoiceOpenSecs: {},
   receiptLogoProcessing: false,
   receiptUpiQrProcessing: false,
   receiptTransportLogoProcessing: false,
@@ -6221,6 +6615,7 @@ const state = {
   admitCardSelectedIds: new Set(),
   admitCardGenerating: false, admitCardStatus: "",
   showIdCardPanel: false,
+  showInvoiceSizePanel: false,
   showPassbookStatementPanel: false, passbookStatementEntryId: "", passbookStatementSearchQuery: "",
   passbookStatementFilterType: "all", passbookStatementFilterDate: "", passbookStatementFilterMonth: "",
   passbookStatementFilterFrom: "", passbookStatementFilterTo: "",
@@ -7833,6 +8228,11 @@ function renderHeader() {
   toggleIdCardBtn.style.background = state.showIdCardPanel ? "#1F2A44" : "transparent";
   toggleIdCardBtn.style.color = state.showIdCardPanel ? "#F3ECDA" : "#1F2A44";
   toggleIdCardBtn.style.display = state.isGuestMode ? "none" : "";
+  document.getElementById("icon-invoiceSize").innerHTML = icon("report", { size: 15 });
+  const toggleInvoiceSizeBtn = document.getElementById("toggleInvoiceSizeBtn");
+  toggleInvoiceSizeBtn.style.background = state.showInvoiceSizePanel ? "#1F2A44" : "transparent";
+  toggleInvoiceSizeBtn.style.color = state.showInvoiceSizePanel ? "#F3ECDA" : "#1F2A44";
+  toggleInvoiceSizeBtn.style.display = state.isGuestMode ? "none" : "";
   const togglePassbookStatementBtn = document.getElementById("togglePassbookStatementBtn");
   togglePassbookStatementBtn.style.background = state.showPassbookStatementPanel ? "#1F2A44" : "transparent";
   togglePassbookStatementBtn.style.color = state.showPassbookStatementPanel ? "#F3ECDA" : "#1F2A44";
@@ -9414,6 +9814,253 @@ function renderAdmitCardPanelInner() {
   }
 }
 
+/* ---------- Menu panel: Invoice Size & Shape ---------- */
+function findReceiptPreviewCtx() {
+  const found = {};
+  try {
+    for (const e of state.entries) {
+      const r = computeFeeChartPaidReceiptsSafe(e);
+      [r.fee, r.transport].forEach(rec => {
+        if (!rec) return;
+        const k = getReceiptEntityKey(rec, e);
+        if (!found[k]) found[k] = { entry: e, receipt: rec };
+      });
+      if (found.fee && found.senior && found.transport) break;
+    }
+  } catch (err) { console.error("Receipt preview lookup failed:", err); }
+  return found;
+}
+function computeFeeChartPaidReceiptsSafe(e) {
+  try { return computeFeeChartPaidReceipts(normalizeFeeSheet(e.feeChart)) || {}; } catch (err) { return {}; }
+}
+function renderInvoiceSizePanel() { renderPanelKeepingScroll("invoiceSizePanel", "invoiceSizeNoList", renderInvoiceSizePanelInner); }
+function renderInvoiceSizePanelInner() {
+  const el = document.getElementById("invoiceSizePanel");
+  if (!el) return;
+  if (!state.showInvoiceSizePanel) { el.innerHTML = ""; el.className = ""; return; }
+  el.className = "panel";
+  el.innerHTML = `
+    <span class="stamp" style="font-size:12px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:10px;">Invoice Settings</span>
+    ${renderReceiptPreviewBlock()}
+    ${renderReceiptSettingsForm()}
+    ${renderInvoiceAccSection("size", "Invoice Size & Shape", renderReceiptSizeSection())}`;
+  el.querySelectorAll(".invoiceAccBtn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const k = btn.dataset.sec;
+      state.invoiceOpenSecs[k] = !state.invoiceOpenSecs[k];
+      renderInvoiceSizePanel();
+    });
+  });
+  wireReceiptSettingsForm(el, renderInvoiceSizePanel);
+  wireInvoiceSizePanel(el);
+}
+/* Invoice Settings form ke saare handlers — menu ke "Invoice Settings" panel ke liye.
+   rerender() panel ko dobara banata hai (sliders me nahi — wahan sirf value + preview update hota hai). */
+function wireReceiptSettingsForm(el, rerender) {
+  const receiptUpiQrGalBtn = el.querySelector("#receiptUpiQrGalleryBtn");
+  const receiptUpiQrGalInput = el.querySelector("#receiptUpiQrGalleryInput");
+  if (receiptUpiQrGalBtn && receiptUpiQrGalInput) {
+    receiptUpiQrGalBtn.addEventListener("click", () => receiptUpiQrGalInput.click());
+    receiptUpiQrGalInput.addEventListener("change", async () => {
+      const file = receiptUpiQrGalInput.files && receiptUpiQrGalInput.files[0];
+      receiptUpiQrGalInput.value = "";
+      if (!file) return;
+      state.receiptUpiQrProcessing = true;
+      rerender();
+      try {
+        // PNG (not JPEG) so the QR's fine black/white squares stay crisp and scannable.
+        const compressed = await compressImageFile(file, 500, 0.95, "image/png");
+        const dataUrl = await blobToDataUrl(compressed);
+        state.receiptSettings.upiQrUrl = dataUrl;
+        saveReceiptSettingsToStorage();
+      } catch (err) {
+        console.error("UPI QR processing failed:", err);
+      } finally {
+        state.receiptUpiQrProcessing = false;
+        rerender();
+      }
+    });
+  }
+  const receiptUpiQrRemoveBtn = el.querySelector("#receiptUpiQrRemoveBtn");
+  if (receiptUpiQrRemoveBtn) {
+    receiptUpiQrRemoveBtn.addEventListener("click", () => {
+      state.receiptSettings.upiQrUrl = "";
+      saveReceiptSettingsToStorage();
+      rerender();
+    });
+  }
+  const refreshPreview = () => { if (el._mountPreview) el._mountPreview(); };
+  const waBtn = el.querySelector("#rc_wa_qrBtn");
+  const waInput = el.querySelector("#rc_wa_qrInput");
+  if (waBtn && waInput) {
+    waBtn.addEventListener("click", () => waInput.click());
+    waInput.addEventListener("change", async () => {
+      const file = waInput.files && waInput.files[0];
+      waInput.value = "";
+      if (!file) return;
+      state.receiptImgProcessing["wa_qr"] = true;
+      rerender();
+      try {
+        // PNG taaki QR ke chhote black/white dabbe saaf aur scannable rahen.
+        const compressed = await compressImageFile(file, 500, 0.95, "image/png");
+        state.receiptSettings.waQrUrl = await blobToDataUrl(compressed);
+        saveReceiptSettingsToStorage();
+      } catch (err) {
+        console.error("WhatsApp QR processing failed:", err);
+      } finally {
+        state.receiptImgProcessing["wa_qr"] = false;
+        rerender();
+      }
+    });
+  }
+  const waRm = el.querySelector("#rc_wa_qrRemove");
+  if (waRm) waRm.addEventListener("click", () => {
+    state.receiptSettings.waQrUrl = "";
+    saveReceiptSettingsToStorage();
+    rerender();
+  });
+  const waNoteInp = el.querySelector("#receiptWaQrNote");
+  if (waNoteInp) waNoteInp.addEventListener("input", () => {
+    state.receiptSettings.waQrNote = waNoteInp.value;
+    saveReceiptSettingsToStorage();
+    refreshPreview();
+  });
+  const footerNoteInp = el.querySelector("#receiptFooterNote");
+  if (footerNoteInp) footerNoteInp.addEventListener("input", () => {
+    state.receiptSettings.footerNote = footerNoteInp.value;
+    saveReceiptSettingsToStorage();
+  });
+  Object.keys(RECEIPT_ENTITIES).forEach(ent => {
+    const c = RECEIPT_ENTITIES[ent];
+    const q = (k) => el.querySelector("#rc_" + ent + "_" + k);
+    const save = () => saveReceiptSettingsToStorage();
+    const nameInp = q("name");
+    if (nameInp) nameInp.addEventListener("input", () => { state.receiptSettings[c.name] = nameInp.value; save(); refreshPreview(); });
+    [["addr", c.addr], ["contact", c.contact]].forEach(([id, field]) => {
+      const inp = q(id);
+      if (inp) inp.addEventListener("input", () => { state.receiptSettings[field] = inp.value; save(); refreshPreview(); });
+    });
+    const bindImage = (kind, field, maxDim) => {
+      const btn = q(kind + "Btn"), input = q(kind + "Input"), rm = q(kind + "Remove");
+      if (btn && input) {
+        btn.addEventListener("click", () => input.click());
+        input.addEventListener("change", async () => {
+          const file = input.files && input.files[0];
+          input.value = "";
+          if (!file) return;
+          state.receiptImgProcessing[ent + "_" + kind] = true;
+          rerender();
+          try {
+            // PNG (JPEG nahi) taaki transparent logo/sign transparent hi rahe; chhota size localStorage ke liye.
+            const compressed = await compressImageFile(file, maxDim, 0.9, "image/png");
+            state.receiptSettings[field] = await blobToDataUrl(compressed);
+            save();
+          } catch (err) {
+            console.error("Receipt " + ent + " " + kind + " processing failed:", err);
+          } finally {
+            state.receiptImgProcessing[ent + "_" + kind] = false;
+            rerender();
+          }
+        });
+      }
+      if (rm) rm.addEventListener("click", () => {
+        state.receiptSettings[field] = "";
+        if (kind === "logo") state.receiptSettings[c.wmEnabled] = false;
+        save();
+        rerender();
+      });
+    };
+    bindImage("logo", c.logo, 240);
+    bindImage("sign", c.sign, 300);
+    const chk = q("wmChk");
+    if (chk) chk.addEventListener("change", (e) => { state.receiptSettings[c.wmEnabled] = e.target.checked; save(); rerender(); });
+    [["wmOpacity", c.wmOpacity, (v) => parseFloat(v), (v) => Math.round(v * 100) + "%"],
+     ["wmSize", c.wmSize, (v) => parseInt(v, 10), (v) => v + "px"],
+     ["wmX", c.wmX, (v) => parseInt(v, 10), (v) => v],
+     ["wmY", c.wmY, (v) => parseInt(v, 10), (v) => v]].forEach(([id, field, parse, show]) => {
+      const inp = q(id);
+      if (!inp) return;
+      inp.addEventListener("input", (e) => {
+        state.receiptSettings[field] = parse(e.target.value);
+        const lbl = q(id + "Val");
+        if (lbl) lbl.textContent = show(state.receiptSettings[field]);
+        save();
+        refreshPreview();
+      });
+    });
+    const reset = q("wmReset");
+    if (reset) reset.addEventListener("click", () => {
+      state.receiptSettings[c.wmSize] = 150;
+      state.receiptSettings[c.wmX] = 0;
+      state.receiptSettings[c.wmY] = 0;
+      save();
+      rerender();
+    });
+  });
+}
+function wireInvoiceSizePanel(el) {
+  const mountReceiptPreview = () => {
+    const wrap = el.querySelector("#receiptSizePreviewWrap");
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    const pent = state.receiptPreviewEnt || "fee";
+    const ctx = RECEIPT_PREVIEW_CTX && RECEIPT_PREVIEW_CTX[pent];
+    const pEntry = ctx ? ctx.entry : receiptSampleEntryFor(pent);
+    const pReceipt = ctx ? ctx.receipt : receiptSampleFor(pent);
+    const dims = getReceiptDims(state.receiptSettings);
+    // Chhote phone screen par fit karne ke liye sirf preview ko scale karte hain.
+    const avail = Math.max(200, wrap.clientWidth - 24);
+    const k = Math.min(1, avail / dims.wPx);
+    const outer = document.createElement("div");
+    const inner = document.createElement("div");
+    inner.style.cssText = `width:${dims.wPx}px;transform:scale(${k});transform-origin:top left;`;
+    outer.appendChild(inner);
+    wrap.appendChild(outer);
+    const node = mountReceiptFitted(inner, pEntry, pReceipt);
+    const hPx = dims.auto ? node.offsetHeight : dims.hPx;
+    inner.style.height = hPx + "px";
+    outer.style.cssText = `width:${Math.round(dims.wPx * k)}px;height:${Math.round(hPx * k)}px;flex-shrink:0;`;
+  };
+  mountReceiptPreview();
+  el._mountPreview = mountReceiptPreview;
+  el.querySelectorAll(".receiptPreviewEntBtn").forEach(btn => {
+    btn.addEventListener("click", () => { state.receiptPreviewEnt = btn.dataset.ent; renderInvoiceSizePanel(); });
+  });
+  const setOpt = (key, val) => {
+    state.receiptSettings[key] = val;
+    saveReceiptSettingsToStorage();
+    renderInvoiceSizePanel();
+  };
+  const orientationSel = el.querySelector("#receiptOrientation");
+  if (orientationSel) orientationSel.addEventListener("change", (e) => setOpt("orientation", e.target.value));
+  const presetSel = el.querySelector("#receiptSizePreset");
+  if (presetSel) presetSel.addEventListener("change", (e) => {
+    if (e.target.value === "custom" && !state.receiptSettings.customLong) {
+      state.receiptSettings.customLong = "210";
+      state.receiptSettings.customShort = "148";
+    }
+    setOpt("sizePreset", e.target.value);
+  });
+  const pageModeSel = el.querySelector("#receiptPageMode");
+  if (pageModeSel) pageModeSel.addEventListener("change", (e) => setOpt("pageMode", e.target.value));
+  [["receiptCustomLong", "customLong"], ["receiptCustomShort", "customShort"]].forEach(([id, key]) => {
+    const inp = el.querySelector("#" + id);
+    // "change" (har akshar par nahi) — taaki type karte waqt panel dobara na bane
+    if (inp) inp.addEventListener("change", (e) => setOpt(key, e.target.value));
+  });
+  const fontScale = el.querySelector("#receiptFontScale");
+  if (fontScale) {
+    fontScale.addEventListener("input", (e) => {
+      state.receiptSettings.fontScale = parseInt(e.target.value, 10);
+      const lbl = el.querySelector("#receiptFontScaleVal");
+      if (lbl) lbl.textContent = state.receiptSettings.fontScale + "%";
+      saveReceiptSettingsToStorage();
+      mountReceiptPreview();
+    });
+  }
+  const fontScaleReset = el.querySelector("#receiptFontScaleReset");
+  if (fontScaleReset) fontScaleReset.addEventListener("click", () => setOpt("fontScale", 100));
+}
 function renderIdCardPanel() { renderPanelKeepingScroll("idCardPanel", "icStudentList", renderIdCardPanelInner); }
 function renderIdCardPanelInner() {
   const el = document.getElementById("idCardPanel");
@@ -11277,7 +11924,6 @@ function collectOpenPanelEntryIds() {
   if (state.openMessageId) ids.add(state.openMessageId);
   if (state.openArchiveReceiptKey) ids.add(String(state.openArchiveReceiptKey).split("::")[0]);
   if (state.eventFormOpenId) ids.add(state.eventFormOpenId);
-  if (state.receiptSettingsOpenId) ids.add(state.receiptSettingsOpenId);
   return ids;
 }
 function renderOneEntryRow(e) {
@@ -12143,254 +12789,6 @@ function wireUpEntryRowEvents(el) {
       }
     });
   });
-  el.querySelectorAll(".toggleReceiptSettingsBtn").forEach(btn => {
-    btn.addEventListener("click", () => toggleReceiptSettings(btn.dataset.id));
-  });
-  const receiptInstituteNameInput = document.getElementById("receiptInstituteNameInput");
-  if (receiptInstituteNameInput) {
-    receiptInstituteNameInput.addEventListener("input", () => {
-      state.receiptSettings.instituteName = receiptInstituteNameInput.value;
-      saveReceiptSettingsToStorage();
-    });
-  }
-  const receiptTransportInstituteNameInput = document.getElementById("receiptTransportInstituteNameInput");
-  if (receiptTransportInstituteNameInput) {
-    receiptTransportInstituteNameInput.addEventListener("input", () => {
-      state.receiptSettings.transportInstituteName = receiptTransportInstituteNameInput.value;
-      saveReceiptSettingsToStorage();
-    });
-  }
-  const receiptUpiQrGalBtn = document.getElementById("receiptUpiQrGalleryBtn");
-  const receiptUpiQrGalInput = document.getElementById("receiptUpiQrGalleryInput");
-  if (receiptUpiQrGalBtn && receiptUpiQrGalInput) {
-    receiptUpiQrGalBtn.addEventListener("click", () => receiptUpiQrGalInput.click());
-    receiptUpiQrGalInput.addEventListener("change", async () => {
-      const file = receiptUpiQrGalInput.files && receiptUpiQrGalInput.files[0];
-      receiptUpiQrGalInput.value = "";
-      if (!file) return;
-      state.receiptUpiQrProcessing = true;
-      renderRowInPlace(state.receiptSettingsOpenId);
-      try {
-        // PNG (not JPEG) so the QR's fine black/white squares stay crisp and scannable.
-        const compressed = await compressImageFile(file, 500, 0.95, "image/png");
-        const dataUrl = await blobToDataUrl(compressed);
-        state.receiptSettings.upiQrUrl = dataUrl;
-        saveReceiptSettingsToStorage();
-      } catch (err) {
-        console.error("UPI QR processing failed:", err);
-      } finally {
-        state.receiptUpiQrProcessing = false;
-        renderRowInPlace(state.receiptSettingsOpenId);
-      }
-    });
-  }
-  const receiptUpiQrRemoveBtn = document.getElementById("receiptUpiQrRemoveBtn");
-  if (receiptUpiQrRemoveBtn) {
-    receiptUpiQrRemoveBtn.addEventListener("click", () => {
-      state.receiptSettings.upiQrUrl = "";
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptLogoGalBtn = document.getElementById("receiptLogoGalleryBtn");
-  const receiptLogoGalInput = document.getElementById("receiptLogoGalleryInput");
-  if (receiptLogoGalBtn && receiptLogoGalInput) {
-    receiptLogoGalBtn.addEventListener("click", () => receiptLogoGalInput.click());
-    receiptLogoGalInput.addEventListener("change", async () => {
-      const file = receiptLogoGalInput.files && receiptLogoGalInput.files[0];
-      receiptLogoGalInput.value = "";
-      if (!file) return;
-      state.receiptLogoProcessing = true;
-      renderRowInPlace(state.receiptSettingsOpenId);
-      try {
-        // PNG (not JPEG) so a transparent-background logo stays transparent.
-        const compressed = await compressImageFile(file, 240, 0.9, "image/png");
-        const dataUrl = await blobToDataUrl(compressed);
-        state.receiptSettings.logoUrl = dataUrl;
-        saveReceiptSettingsToStorage();
-      } catch (err) {
-        console.error("Receipt logo processing failed:", err);
-      } finally {
-        state.receiptLogoProcessing = false;
-        renderRowInPlace(state.receiptSettingsOpenId);
-      }
-    });
-  }
-  const receiptLogoRemoveBtn = document.getElementById("receiptLogoRemoveBtn");
-  if (receiptLogoRemoveBtn) {
-    receiptLogoRemoveBtn.addEventListener("click", () => {
-      state.receiptSettings.logoUrl = "";
-      state.receiptSettings.watermarkEnabled = false;
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptWatermarkChk = document.getElementById("receiptWatermarkChk");
-  if (receiptWatermarkChk) {
-    receiptWatermarkChk.addEventListener("change", (e) => {
-      state.receiptSettings.watermarkEnabled = e.target.checked;
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptWatermarkOpacity = document.getElementById("receiptWatermarkOpacity");
-  if (receiptWatermarkOpacity) {
-    receiptWatermarkOpacity.addEventListener("input", (e) => {
-      state.receiptSettings.watermarkOpacity = parseFloat(e.target.value);
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptWatermarkSize = document.getElementById("receiptWatermarkSize");
-  if (receiptWatermarkSize) {
-    receiptWatermarkSize.addEventListener("input", (e) => {
-      state.receiptSettings.watermarkSize = parseInt(e.target.value, 10);
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptWatermarkOffsetX = document.getElementById("receiptWatermarkOffsetX");
-  if (receiptWatermarkOffsetX) {
-    receiptWatermarkOffsetX.addEventListener("input", (e) => {
-      state.receiptSettings.watermarkOffsetX = parseInt(e.target.value, 10);
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptWatermarkOffsetY = document.getElementById("receiptWatermarkOffsetY");
-  if (receiptWatermarkOffsetY) {
-    receiptWatermarkOffsetY.addEventListener("input", (e) => {
-      state.receiptSettings.watermarkOffsetY = parseInt(e.target.value, 10);
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptWatermarkResetBtn = document.getElementById("receiptWatermarkResetBtn");
-  if (receiptWatermarkResetBtn) {
-    receiptWatermarkResetBtn.addEventListener("click", () => {
-      state.receiptSettings.watermarkSize = 150;
-      state.receiptSettings.watermarkOffsetX = 0;
-      state.receiptSettings.watermarkOffsetY = 0;
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptTransportLogoGalBtn = document.getElementById("receiptTransportLogoGalleryBtn");
-  const receiptTransportLogoGalInput = document.getElementById("receiptTransportLogoGalleryInput");
-  if (receiptTransportLogoGalBtn && receiptTransportLogoGalInput) {
-    receiptTransportLogoGalBtn.addEventListener("click", () => receiptTransportLogoGalInput.click());
-    receiptTransportLogoGalInput.addEventListener("change", async () => {
-      const file = receiptTransportLogoGalInput.files && receiptTransportLogoGalInput.files[0];
-      receiptTransportLogoGalInput.value = "";
-      if (!file) return;
-      state.receiptTransportLogoProcessing = true;
-      renderRowInPlace(state.receiptSettingsOpenId);
-      try {
-        // PNG (not JPEG) so a transparent-background logo stays transparent.
-        const compressed = await compressImageFile(file, 240, 0.9, "image/png");
-        const dataUrl = await blobToDataUrl(compressed);
-        state.receiptSettings.transportLogoUrl = dataUrl;
-        saveReceiptSettingsToStorage();
-      } catch (err) {
-        console.error("Transport receipt logo processing failed:", err);
-      } finally {
-        state.receiptTransportLogoProcessing = false;
-        renderRowInPlace(state.receiptSettingsOpenId);
-      }
-    });
-  }
-  const receiptTransportLogoRemoveBtn = document.getElementById("receiptTransportLogoRemoveBtn");
-  if (receiptTransportLogoRemoveBtn) {
-    receiptTransportLogoRemoveBtn.addEventListener("click", () => {
-      state.receiptSettings.transportLogoUrl = "";
-      state.receiptSettings.transportWatermarkEnabled = false;
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptTransportWatermarkChk = document.getElementById("receiptTransportWatermarkChk");
-  if (receiptTransportWatermarkChk) {
-    receiptTransportWatermarkChk.addEventListener("change", (e) => {
-      state.receiptSettings.transportWatermarkEnabled = e.target.checked;
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptTransportWatermarkOpacity = document.getElementById("receiptTransportWatermarkOpacity");
-  if (receiptTransportWatermarkOpacity) {
-    receiptTransportWatermarkOpacity.addEventListener("input", (e) => {
-      state.receiptSettings.transportWatermarkOpacity = parseFloat(e.target.value);
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptTransportWatermarkSize = document.getElementById("receiptTransportWatermarkSize");
-  if (receiptTransportWatermarkSize) {
-    receiptTransportWatermarkSize.addEventListener("input", (e) => {
-      state.receiptSettings.transportWatermarkSize = parseInt(e.target.value, 10);
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptTransportWatermarkOffsetX = document.getElementById("receiptTransportWatermarkOffsetX");
-  if (receiptTransportWatermarkOffsetX) {
-    receiptTransportWatermarkOffsetX.addEventListener("input", (e) => {
-      state.receiptSettings.transportWatermarkOffsetX = parseInt(e.target.value, 10);
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptTransportWatermarkOffsetY = document.getElementById("receiptTransportWatermarkOffsetY");
-  if (receiptTransportWatermarkOffsetY) {
-    receiptTransportWatermarkOffsetY.addEventListener("input", (e) => {
-      state.receiptSettings.transportWatermarkOffsetY = parseInt(e.target.value, 10);
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptTransportWatermarkResetBtn = document.getElementById("receiptTransportWatermarkResetBtn");
-  if (receiptTransportWatermarkResetBtn) {
-    receiptTransportWatermarkResetBtn.addEventListener("click", () => {
-      state.receiptSettings.transportWatermarkSize = 150;
-      state.receiptSettings.transportWatermarkOffsetX = 0;
-      state.receiptSettings.transportWatermarkOffsetY = 0;
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
-  const receiptSigGalBtn = document.getElementById("receiptSignatureGalleryBtn");
-  const receiptSigGalInput = document.getElementById("receiptSignatureGalleryInput");
-  if (receiptSigGalBtn && receiptSigGalInput) {
-    receiptSigGalBtn.addEventListener("click", () => receiptSigGalInput.click());
-    receiptSigGalInput.addEventListener("change", async () => {
-      const file = receiptSigGalInput.files && receiptSigGalInput.files[0];
-      receiptSigGalInput.value = "";
-      if (!file) return;
-      state.receiptSignatureProcessing = true;
-      renderRowInPlace(state.receiptSettingsOpenId);
-      try {
-        // Small maxDim/high quality — signatures are thin line art, not
-        // photos, so keep it crisp while still staying tiny for localStorage.
-        const compressed = await compressImageFile(file, 300, 0.9, "image/png");
-        const dataUrl = await blobToDataUrl(compressed);
-        state.receiptSettings.signatureUrl = dataUrl;
-        saveReceiptSettingsToStorage();
-      } catch (err) {
-        console.error("Receipt signature processing failed:", err);
-      } finally {
-        state.receiptSignatureProcessing = false;
-        renderRowInPlace(state.receiptSettingsOpenId);
-      }
-    });
-  }
-  const receiptSigRemoveBtn = document.getElementById("receiptSignatureRemoveBtn");
-  if (receiptSigRemoveBtn) {
-    receiptSigRemoveBtn.addEventListener("click", () => {
-      state.receiptSettings.signatureUrl = "";
-      saveReceiptSettingsToStorage();
-      renderRowInPlace(state.receiptSettingsOpenId);
-    });
-  }
 }
 
 /* Syncs just the top error banner with state.error — used by targeted
@@ -12426,6 +12824,7 @@ function renderAll() {
   renderCalcCornerPanel();
   renderAdmitCardPanel();
   renderIdCardPanel();
+  renderInvoiceSizePanel();
   renderPassbookStatementPanel();
   renderReportPanel();
   renderMessageReportPanel();
@@ -12784,6 +13183,7 @@ function closeOtherPanels(except) {
   if (except !== "calcCorner") state.showCalcCornerPanel = false;
   if (except !== "admitCard") state.showAdmitCardPanel = false;
   if (except !== "idCard") state.showIdCardPanel = false;
+  if (except !== "invoiceSize") state.showInvoiceSizePanel = false;
   if (except !== "passbookStatement") state.showPassbookStatementPanel = false;
   if (except !== "report") state.showReportPanel = false;
   if (except !== "messageReport") state.showMessageReportPanel = false;
@@ -12805,6 +13205,7 @@ const PANEL_FLAG_RENDER = [
   ["showCalcCornerPanel", renderCalcCornerPanel],
   ["showAdmitCardPanel", renderAdmitCardPanel],
   ["showIdCardPanel", renderIdCardPanel],
+  ["showInvoiceSizePanel", renderInvoiceSizePanel],
   ["showPassbookStatementPanel", renderPassbookStatementPanel],
   ["showReportPanel", renderReportPanel],
   ["showMessageReportPanel", renderMessageReportPanel],
@@ -12927,6 +13328,11 @@ document.getElementById("toggleAdmitCardBtn").addEventListener("click", () => {
 document.getElementById("toggleIdCardBtn").addEventListener("click", () => {
   togglePanelLite("showIdCardPanel", "idCard", () => {
     state.idCardSelectedIds = new Set(getIdCardEligibleEntries().map(e => e.id));
+  });
+});
+document.getElementById("toggleInvoiceSizeBtn").addEventListener("click", () => {
+  togglePanelLite("showInvoiceSizePanel", "invoiceSize", () => {
+    RECEIPT_PREVIEW_CTX = findReceiptPreviewCtx();
   });
 });
 document.getElementById("togglePassbookStatementBtn").addEventListener("click", () => {
@@ -13380,8 +13786,8 @@ document.addEventListener("keydown", (e) => {
 setInterval(() => {
   // Check every few seconds: if the Paid Receipt panel is open, refresh it
   // so rows older than 1 minute automatically disappear.
-  // (Skip if the Settings form is open, so typing doesn't get interrupted.)
-  if (state.openPaidReceiptId && !state.receiptSettingsOpenId) renderEntries();
+  // (Skip if the Invoice Settings panel is open, so typing doesn't get interrupted.)
+  if (state.openPaidReceiptId && !state.showInvoiceSizePanel) renderEntries();
 }, 5000);
 /* Polls for new chat messages: refreshes the unread badge always, and if the
    Messages panel is open, quietly refreshes the open thread/list too so
