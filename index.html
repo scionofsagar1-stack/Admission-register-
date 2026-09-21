@@ -3950,7 +3950,7 @@ function getFilteredReportInvoices() {
     if (state.reportRangeTo) toMs = new Date(state.reportRangeTo + "T23:59:59.999").getTime();
   }
   const reportClassList = state.reportClassSel === "range" ? getClassList() : null;
-  return all.filter(inv => {
+  const filtered = all.filter(inv => {
     if (fromMs != null && (inv.paidAt || 0) < fromMs) return false;
     if (toMs != null && (inv.paidAt || 0) > toMs) return false;
     if (state.reportSessionSel !== "all" && inv.session !== state.reportSessionSel) return false;
@@ -3960,6 +3960,26 @@ function getFilteredReportInvoices() {
     if (state.reportSectionSel !== "all" && (inv.section || "") !== state.reportSectionSel) return false;
     if (state.reportCategorySel !== "all" && inv.category !== state.reportCategorySel) return false;
     return true;
+  });
+  return sortReportInvoices(filtered, state.reportSortOrder);
+}
+/* Invoice No. ke number wale hisse (INV-F-00365 -> 365) ke hisaab se sort. Chhota number pehle = ascending.
+   Number barabar ho (jaise Class 9–12 ka alag counter) to prefix (F/T), phir paid date. Jis invoice ka number
+   nahi hai wo dono order me sabse neeche. "date" = purana default (latest paid sabse upar). */
+function sortReportInvoices(list, order) {
+  if (order !== "invAsc" && order !== "invDesc") return list;
+  const dir = order === "invDesc" ? -1 : 1;
+  const numOf = (inv) => { const m = String(inv.invoiceNo || "").match(/(\d+)\s*$/); return m ? parseInt(m[1], 10) : null; };
+  const preOf = (inv) => String(inv.invoiceNo || "").replace(/(\d+)\s*$/, "");
+  return list.slice().sort((a, b) => {
+    const na = numOf(a), nb = numOf(b);
+    if (na == null && nb == null) return 0;
+    if (na == null) return 1;
+    if (nb == null) return -1;
+    if (na !== nb) return (na - nb) * dir;
+    const pa = preOf(a), pb = preOf(b);
+    if (pa !== pb) return pa < pb ? -dir : dir;
+    return ((a.paidAt || 0) - (b.paidAt || 0)) * dir;
   });
 }
 /* Transport receipts sometimes need to be issued under a separate entity's
@@ -6637,6 +6657,7 @@ const state = {
   reportClassTo: "",
   reportSectionSel: "all",
   reportCategorySel: "all",
+  reportSortOrder: "date", // "date" (latest paid first) | "invAsc" | "invDesc"
   showReportColumns: false,
   /* Which columns appear in the Invoice Report table/PDF/CSV, and in what
      order (tick order = left-to-right order, same idea as the admission
@@ -10605,6 +10626,11 @@ function renderReportPanel() {
         <option value="fee" ${state.reportCategorySel === "fee" ? "selected" : ""}>Fee Only</option>
         <option value="transport" ${state.reportCategorySel === "transport" ? "selected" : ""}>Transport Only</option>
       </select>
+      <select id="repSortSel" class="stamp" style="border:1px solid #B7A97E;border-radius:3px;background:#FBF7EC;padding:6px 8px;">
+        <option value="date" ${state.reportSortOrder === "date" || !state.reportSortOrder ? "selected" : ""}>Sort: Latest Paid First</option>
+        <option value="invAsc" ${state.reportSortOrder === "invAsc" ? "selected" : ""}>Sort: Invoice No. ↑ Ascending</option>
+        <option value="invDesc" ${state.reportSortOrder === "invDesc" ? "selected" : ""}>Sort: Invoice No. ↓ Descending</option>
+      </select>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
       <div style="flex:1;min-width:120px;background:#F3ECDA;border:1px solid #D9CBA3;border-radius:4px;padding:10px 12px;">
@@ -10659,7 +10685,9 @@ function renderReportPanel() {
       <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
         <thead style="position:sticky;top:0;background:#1F2A44;color:#F3ECDA;">
           <tr>
-            ${reportCols.map(c => `<th style="text-align:${c.halign === "right" ? "right" : "left"};padding:8px 10px;">${escapeHtml(c.label)}</th>`).join("")}
+            ${reportCols.map(c => c.key === "invoiceNo"
+              ? `<th class="repSortInvHdr" title="Tap: Ascending / Descending" style="text-align:${c.halign === "right" ? "right" : "left"};padding:8px 10px;cursor:pointer;white-space:nowrap;">${escapeHtml(c.label)} ${state.reportSortOrder === "invAsc" ? "▲" : state.reportSortOrder === "invDesc" ? "▼" : "⇅"}</th>`
+              : `<th style="text-align:${c.halign === "right" ? "right" : "left"};padding:8px 10px;">${escapeHtml(c.label)}</th>`).join("")}
             ${state.editUnlocked ? `<th style="text-align:center;padding:8px 10px;">Action</th>` : ""}
           </tr>
         </thead>
@@ -10724,6 +10752,14 @@ function renderReportPanel() {
         state.reportColumnOrder = state.reportColumnOrder.filter(k => k !== key);
       }
       saveReportColumns();
+      renderReportPanel();
+    });
+  });
+  const sortSel = document.getElementById("repSortSel");
+  if (sortSel) sortSel.addEventListener("change", (e) => { state.reportSortOrder = e.target.value; renderReportPanel(); });
+  el.querySelectorAll(".repSortInvHdr").forEach(th => {
+    th.addEventListener("click", () => {
+      state.reportSortOrder = state.reportSortOrder === "invAsc" ? "invDesc" : "invAsc";
       renderReportPanel();
     });
   });
