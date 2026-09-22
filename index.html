@@ -9478,7 +9478,7 @@ function renderAdmitCardPanelInner() {
   const sectionList = getSectionList();
   const eligible = getAdmitCardEligibleEntries();
   const allSelected = eligible.length > 0 && eligible.every(e => state.admitCardSelectedIds.has(e.id));
-  const selectedCount = eligible.filter(e => state.admitCardSelectedIds.has(e.id)).length;
+  const selectedCount = state.admitCardSelectedIds.size;
   el.innerHTML = `
     <span class="stamp" style="font-size:12px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;">Admit Card Maker</span>
     <div class="field-grid" style="margin-bottom:14px;">
@@ -9752,38 +9752,31 @@ function renderAdmitCardPanelInner() {
   }
   document.getElementById("acClassSel").addEventListener("change", (e) => {
     state.admitCardClassSel = e.target.value;
-    state.admitCardSelectedIds = new Set(getAdmitCardEligibleEntries().map(en => en.id));
     renderAdmitCardPanel();
   });
   document.getElementById("acSessionSel").addEventListener("change", (e) => {
     state.admitCardSessionSel = e.target.value;
-    state.admitCardSelectedIds = new Set(getAdmitCardEligibleEntries().map(en => en.id));
     renderAdmitCardPanel();
   });
   document.getElementById("acSectionSel").addEventListener("change", (e) => {
     state.admitCardSectionSel = e.target.value;
-    state.admitCardSelectedIds = new Set(getAdmitCardEligibleEntries().map(en => en.id));
     renderAdmitCardPanel();
   });
   document.getElementById("acStarFilterSel").addEventListener("change", (e) => {
     state.admitCardStarFilter = e.target.value;
-    state.admitCardSelectedIds = new Set(getAdmitCardEligibleEntries().map(en => en.id));
     renderAdmitCardPanel();
   });
   document.getElementById("acFMonthFilterSel").addEventListener("change", (e) => {
     state.admitCardFMonthFilter = e.target.value;
-    state.admitCardSelectedIds = new Set(getAdmitCardEligibleEntries().map(en => en.id));
     renderAdmitCardPanel();
   });
   document.getElementById("acNotPaidTillFilterSel").addEventListener("change", (e) => {
     state.admitCardNotPaidTillFilter = e.target.value;
-    state.admitCardSelectedIds = new Set(getAdmitCardEligibleEntries().map(en => en.id));
     renderAdmitCardPanel();
   });
   const acAddressInput = document.getElementById("acAddressFilterInput");
   acAddressInput.addEventListener("input", () => {
     state.admitCardAddressFilter = acAddressInput.value;
-    state.admitCardSelectedIds = new Set(getAdmitCardEligibleEntries().map(en => en.id));
     const cursorPos = acAddressInput.selectionStart;
     renderAdmitCardPanel();
     const refocused = document.getElementById("acAddressFilterInput");
@@ -9792,7 +9785,6 @@ function renderAdmitCardPanelInner() {
   const acNoteInput = document.getElementById("acNoteFilterInput");
   acNoteInput.addEventListener("input", () => {
     state.admitCardNoteFilter = acNoteInput.value;
-    state.admitCardSelectedIds = new Set(getAdmitCardEligibleEntries().map(en => en.id));
     const cursorPos = acNoteInput.selectionStart;
     renderAdmitCardPanel();
     const refocused = document.getElementById("acNoteFilterInput");
@@ -9816,7 +9808,9 @@ function renderAdmitCardPanelInner() {
   const genBtn = document.getElementById("acGenerateBtn");
   if (genBtn) {
     genBtn.addEventListener("click", async () => {
-      const selected = eligible.filter(e => state.admitCardSelectedIds.has(e.id));
+      // Filter se bahar (jaise pichhle Class filter me) chuni gayi entries bhi shaamil rahen — sirf
+      // abhi dikh rahi `eligible` list tak simit nahi, poori state.entries me se dhoondte hain.
+      const selected = state.entries.filter(e => state.admitCardSelectedIds.has(e.id));
       if (!selected.length) return;
       state.admitCardGenerating = true;
       state.admitCardStatus = "";
@@ -10091,7 +10085,7 @@ function renderIdCardPanelInner() {
   const sessionList = getSessionList();
   const eligible = getIdCardEligibleEntries();
   const allSelected = eligible.length > 0 && eligible.every(e => state.idCardSelectedIds.has(e.id));
-  const selectedCount = eligible.filter(e => state.idCardSelectedIds.has(e.id)).length;
+  const selectedCount = state.idCardSelectedIds.size;
   el.innerHTML = `
     <span class="stamp" style="font-size:12px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;">ID Card Maker</span>
     <div class="field-grid" style="margin-bottom:14px;">
@@ -10426,12 +10420,10 @@ function renderIdCardPanelInner() {
   }
   document.getElementById("icClassSel").addEventListener("change", (e) => {
     state.idCardClassSel = e.target.value;
-    state.idCardSelectedIds = new Set(getIdCardEligibleEntries().map(en => en.id));
     renderIdCardPanel();
   });
   document.getElementById("icSessionSel").addEventListener("change", (e) => {
     state.idCardSessionSel = e.target.value;
-    state.idCardSelectedIds = new Set(getIdCardEligibleEntries().map(en => en.id));
     renderIdCardPanel();
   });
   const selectAllChk = document.getElementById("icSelectAllChk");
@@ -10452,7 +10444,9 @@ function renderIdCardPanelInner() {
   const genBtn = document.getElementById("icGenerateBtn");
   if (genBtn) {
     genBtn.addEventListener("click", async () => {
-      const selected = eligible.filter(e => state.idCardSelectedIds.has(e.id));
+      // Filter se bahar (jaise pichhle Class filter me) chuni gayi entries bhi shaamil rahen — sirf
+      // abhi dikh rahi `eligible` list tak simit nahi, poori state.entries me se dhoondte hain.
+      const selected = state.entries.filter(e => state.idCardSelectedIds.has(e.id));
       if (!selected.length) return;
       state.idCardGenerating = true;
       state.idCardStatus = "";
