@@ -68,6 +68,7 @@
 </div>
 
 <!-- Login Screen -->
+<div id="publicQrPage" style="display:none;position:fixed;inset:0;z-index:3000;background:#F3ECDA;overflow-y:auto;padding:24px 16px;box-sizing:border-box;font-family:'Source Serif 4',Georgia,serif;"></div>
 <div id="loginScreen" style="position:fixed;inset:0;background:#F3ECDA;z-index:1000;display:flex;align-items:center;justify-content:center;font-family:'Source Serif 4',Georgia,serif;overflow-y:auto;padding:24px 0;box-sizing:border-box;">
   <div style="width:320px;max-width:90vw;padding:32px 28px;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:6px;border-top:3px solid #9B3437;margin:auto;">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:18px;">
@@ -488,6 +489,9 @@ const HI_DICT = {
   "Scan this QR with any UPI app": "किसी भी UPI ऐप से यह QR स्कैन करें",
   "Save QR to Gallery": "QR गैलरी में सेव करें",
   "QR saved": "QR सेव हो गया",
+  "WhatsApp QR": "WhatsApp QR",
+  "Scan this QR with WhatsApp": "WhatsApp से यह QR स्कैन करें",
+  "QR not available": "QR उपलब्ध नहीं है",
   "As per Passbook balance": "पासबुक बैलेंस के अनुसार",
   "Combined Total Due (All Students)": "सभी छात्रों का कुल बकाया (संयुक्त)",
   "Admission\\Development Charge": "प्रवेश\\विकास शुल्क",
@@ -1722,7 +1726,7 @@ function incrementSessionYear(session) {
 /* ---------- Message Template (SMS / WhatsApp) — one shared template for all classes ---------- */
 const MSG_TEMPLATE_KEY = "adm_reg_msg_template";
 const OLD_MSG_TEMPLATES_BY_CLASS_KEY = "adm_reg_msg_templates_by_class";
-const MSG_PLACEHOLDERS = ["name", "fatherName", "motherName", "dob", "rollNo", "mobile", "address", "className", "session", "fMonth", "tMonth", "currentMonth", "notes", "billItems", "billTotal", "openingBalance", "closingBalance", "passbookRows"];
+const MSG_PLACEHOLDERS = ["name", "fatherName", "motherName", "dob", "rollNo", "mobile", "address", "className", "session", "fMonth", "tMonth", "currentMonth", "notes", "billItems", "billTotal", "openingBalance", "closingBalance", "passbookRows", "upiQrLink", "waQrLink"];
 const DEFAULT_MSG_TEMPLATE =
 `Dear Parent,
 
@@ -1765,6 +1769,25 @@ function passbookRowsText(sheet) {
   });
   return "```" + lines.join("\n") + "```";
 }
+/* ---------- QR links for the Message Template ----------
+   Every uploaded QR (UPI QR / WhatsApp QR, set in Invoice Settings) gets a
+   short link — <app address>?qr=upi  or  ?qr=wa — that can be placed in the
+   Message Template with {upiQrLink} / {waQrLink}. Whoever taps that link
+   lands on a simple public page (no login) showing the QR with a
+   "Save QR to Gallery" button (see showPublicQrPage). If the app is opened
+   from an address that isn't the one parents should use, the admin can type
+   the correct public address in the Message Template panel (publicBaseUrl). */
+function getQrLinkBase() {
+  const custom = (((state.receiptSettings || {}).publicBaseUrl) || "").trim();
+  const raw = custom || location.href;
+  return raw.split("#")[0].split("?")[0];
+}
+function getQrLink(kind) {
+  const rs = state.receiptSettings || {};
+  const has = kind === "wa" ? rs.waQrUrl : rs.upiQrUrl;
+  if (!has) return "";
+  return getQrLinkBase() + "?qr=" + (kind === "wa" ? "wa" : "upi");
+}
 function fillMsgTemplate(template, e, bill, passbook) {
   const opening = passbook ? (parseFloat(passbook.openingBalance) || 0) : 0;
   const balances = passbook ? computePassbookBalances(passbook) : [];
@@ -1785,6 +1808,7 @@ function fillMsgTemplate(template, e, bill, passbook) {
     openingBalance: passbook ? fmtINR(opening) : "",
     closingBalance: passbook ? fmtINR(closing) : "",
     passbookRows: passbook ? passbookRowsText(passbook) : "",
+    upiQrLink: getQrLink("upi"), waQrLink: getQrLink("wa"),
   };
   return (template || "").replace(/\{(\w+)\}/g, (m, k) => (k in map ? map[k] : m));
 }
@@ -3704,6 +3728,7 @@ function fillMsgTemplateCombined(template, group) {
     billItems: combinedMsgBillItemsText(group),
     billTotal: fmtINR(combinedMsgTotal(group)),
     openingBalance: "", closingBalance: "", passbookRows: "",
+    upiQrLink: getQrLink("upi"), waQrLink: getQrLink("wa"),
   };
   let out = (template || "").replace(/\{(\w+)\}/g, (m, k) => (k in map ? map[k] : m));
   // Clean up a dangling " - " (or trailing " -") left behind where the now-
@@ -8724,6 +8749,21 @@ function renderTemplatePanel() {
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0;">
       ${MSG_PLACEHOLDERS.map(p => `<button class="insertTagBtn" data-tag="${p}" style="background:#F3ECDA;border:1px solid #D9CBA3;border-radius:3px;padding:4px 8px;font-size:11px;font-family:'IBM Plex Mono',monospace;cursor:pointer;color:#1F2A44;">{${p}}</button>`).join("")}
     </div>
+    <div style="border:1px dashed #B7A97E;border-radius:3px;padding:8px 10px;margin-bottom:10px;background:#FBF7EA;">
+      <div style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">QR Links</div>
+      ${[["upi", "UPI QR"], ["wa", "WhatsApp QR"]].map(([k, label]) => `
+        <div style="margin-bottom:6px;">
+          <div style="font-size:12px;color:#1F2A44;font-weight:600;">${label}</div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+            <span id="qrLinkText_${k}" style="font-size:11.5px;word-break:break-all;color:#1F2A44;flex:1;min-width:140px;"></span>
+            <button type="button" class="qrLinkCopyBtn" data-kind="${k}" style="background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:4px 10px;font-size:11.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Copy</button>
+            <a class="qrLinkOpenBtn" id="qrLinkOpen_${k}" target="_blank" rel="noopener" style="border:1px solid #D9CBA3;border-radius:3px;padding:3px 10px;font-size:11.5px;font-family:'IBM Plex Mono',monospace;color:#1F2A44;text-decoration:none;">Open</a>
+          </div>
+        </div>`).join("")}
+      <label style="font-size:11px;color:#6B5F4B;display:block;margin-top:6px;">App ka public address</label>
+      <input id="templateQrBaseUrl" class="rule-input" placeholder="https://aapki-site.netlify.app/" value="${escapeAttr((state.receiptSettings || {}).publicBaseUrl || "")}" style="margin-top:3px;" />
+      <p id="qrLinkWarn" style="font-size:11.5px;color:#9B3437;margin:6px 0 0;display:none;"></p>
+    </div>
     <textarea id="templateTextarea" rows="8" placeholder="No template set yet — write one below." style="width:100%;font-family:'Source Serif 4',Georgia,serif;font-size:13.5px;padding:10px;border:1px solid #B7A97E;border-radius:3px;resize:vertical;color:#1F2A44;">${escapeHtml(state.messageTemplate)}</textarea>
     <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
       <button id="saveTemplateBtn" style="display:flex;align-items:center;gap:6px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${icon("check", { size: 13 })} Save Template</button>
@@ -8734,6 +8774,47 @@ function renderTemplatePanel() {
     <p id="templateSavedMsg" style="font-size:11.5px;color:#1F2A44;margin:8px 0 0;display:none;">Saved — this message will appear on every student's bill.</p>
   `;
   const ta = document.getElementById("templateTextarea");
+  const refreshQrLinkRows = () => {
+    ["upi", "wa"].forEach(k => {
+      const link = getQrLink(k);
+      const t = document.getElementById("qrLinkText_" + k);
+      const o = document.getElementById("qrLinkOpen_" + k);
+      const c = el.querySelector('.qrLinkCopyBtn[data-kind="' + k + '"]');
+      if (t) t.textContent = link || "QR upload nahi hua";
+      if (t) t.style.color = link ? "#1F2A44" : "#9B3437";
+      if (o) { if (link) { o.href = link; o.style.display = ""; } else { o.removeAttribute("href"); o.style.display = "none"; } }
+      if (c) c.style.display = link ? "" : "none";
+    });
+    const warn = document.getElementById("qrLinkWarn");
+    const base = getQrLinkBase();
+    if (warn) {
+      const bad = !/^https?:/i.test(base);
+      warn.style.display = bad ? "" : "none";
+      if (bad) warn.textContent = "Ye link internet par nahi chalega — public address daalein.";
+    }
+  };
+  refreshQrLinkRows();
+  const qrBaseInp = document.getElementById("templateQrBaseUrl");
+  if (qrBaseInp) qrBaseInp.addEventListener("input", () => {
+    state.receiptSettings.publicBaseUrl = qrBaseInp.value.trim();
+    saveReceiptSettingsToStorage();
+    refreshQrLinkRows();
+  });
+  el.querySelectorAll(".qrLinkCopyBtn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const link = getQrLink(btn.dataset.kind);
+      if (!link) return;
+      try { await navigator.clipboard.writeText(link); }
+      catch (e) {
+        const tmp = document.createElement("textarea");
+        tmp.value = link; document.body.appendChild(tmp); tmp.select();
+        try { document.execCommand("copy"); } catch (e2) {}
+        tmp.remove();
+      }
+      const old = btn.textContent; btn.textContent = "Copied ✓";
+      setTimeout(() => { btn.textContent = old; }, 1500);
+    });
+  });
   el.querySelectorAll(".insertTagBtn").forEach(btn => {
     btn.addEventListener("click", () => {
       const tag = `{${btn.dataset.tag}}`;
@@ -13633,7 +13714,10 @@ function renderStudentLookupResults() {
    returns jsonb language sql security definer set search_path = public stable as $$
      select jsonb_build_object(
        'upiQrUrl', coalesce(value->>'upiQrUrl', ''),
-       'footerNote', coalesce(value->>'footerNote', ''))
+       'footerNote', coalesce(value->>'footerNote', ''),
+       'waQrUrl', coalesce(value->>'waQrUrl', ''),
+       'waQrNote', coalesce(value->>'waQrNote', ''),
+       'instituteName', coalesce(value->>'instituteName', ''))
      from app_config where key = 'receipt_settings';
    $$;
    grant execute on function public_payment_info() to anon, authenticated;
@@ -13648,7 +13732,7 @@ async function loadStudentPaymentInfo() {
     console.warn("Could not load payment info for student screen (run the public_payment_info SQL?):", e);
     // Fall back to this device's local copy (works if the admin uses this same device).
     const rs = state.receiptSettings || {};
-    studentPaymentInfo = (rs.upiQrUrl || rs.footerNote) ? { upiQrUrl: rs.upiQrUrl || "", footerNote: rs.footerNote || "" } : null;
+    studentPaymentInfo = (rs.upiQrUrl || rs.footerNote || rs.waQrUrl) ? { upiQrUrl: rs.upiQrUrl || "", footerNote: rs.footerNote || "", waQrUrl: rs.waQrUrl || "", waQrNote: rs.waQrNote || "", instituteName: rs.instituteName || "" } : null;
   }
 }
 function renderStudentPaymentBox() {
@@ -13663,7 +13747,7 @@ function renderStudentPaymentBox() {
       ${qr ? `
         <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:15px;color:#1F2A44;margin-bottom:4px;">${T("Pay via UPI")}</div>
         <div style="font-size:11.5px;color:#6B5F4B;margin-bottom:8px;">${T("Scan this QR with any UPI app")}</div>
-        <img id="studentUpiQrImg" src="${escapeAttr(qr)}" alt="UPI QR" style="width:200px;max-width:80%;height:auto;background:#fff;padding:8px;border:1px solid #D9CBA3;border-radius:4px;" />
+        <img id="studentUpiQrImg" data-allow-menu="1" src="${escapeAttr(qr)}" alt="UPI QR" style="width:200px;max-width:80%;height:auto;background:#fff;padding:8px;border:1px solid #D9CBA3;border-radius:4px;" />
         <button id="studentUpiQrSaveBtn" type="button" style="display:block;width:100%;margin-top:10px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:10px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${T("Save QR to Gallery")}</button>
         <div id="studentUpiQrMsg" style="font-size:11.5px;color:#1E7A3E;min-height:14px;margin-top:4px;"></div>` : ""}
       ${note ? `<div style="font-size:12px;color:#1F2A44;margin-top:${qr ? "8px" : "0"};white-space:pre-wrap;text-align:left;">${escapeHtml(note)}</div>` : ""}
@@ -13671,9 +13755,9 @@ function renderStudentPaymentBox() {
   const btn = document.getElementById("studentUpiQrSaveBtn");
   if (btn) btn.addEventListener("click", () => saveStudentUpiQr(qr));
 }
-async function saveStudentUpiQr(dataUrl) {
-  const msg = document.getElementById("studentUpiQrMsg");
-  const fileName = "UPI-QR.png";
+async function saveStudentUpiQr(dataUrl, msgId, fileName) {
+  const msg = document.getElementById(msgId || "studentUpiQrMsg");
+  fileName = fileName || "UPI-QR.png";
   try {
     const blob = await (await fetch(dataUrl)).blob();
     const file = new File([blob], fileName, { type: blob.type || "image/png" });
@@ -13701,6 +13785,35 @@ async function saveStudentUpiQr(dataUrl) {
       } catch (e2) {}
     }
   }
+}
+/* ---------- Public QR page (opened via a {upiQrLink} / {waQrLink} link) ---------- */
+async function showPublicQrPage(kind) {
+  const page = document.getElementById("publicQrPage");
+  document.getElementById("loginScreen").style.display = "none";
+  document.getElementById("mainApp").style.display = "none";
+  page.style.display = "block";
+  page.innerHTML = `<p style="text-align:center;color:#6B5F4B;font-size:13px;margin-top:40px;">Loading…</p>`;
+  await loadStudentPaymentInfo();
+  const info = studentPaymentInfo || {};
+  const isWa = kind === "wa";
+  const qr = isWa ? info.waQrUrl : info.upiQrUrl;
+  const note = ((isWa ? info.waQrNote : info.footerNote) || "").trim();
+  const inst = (info.instituteName || "").trim();
+  if (!qr) {
+    page.innerHTML = `<div style="max-width:380px;margin:60px auto;text-align:center;color:#9B3437;font-size:14px;">${T("QR not available")}</div>`;
+    return;
+  }
+  page.innerHTML = `
+    <div style="max-width:380px;margin:20px auto;background:#F3ECDA;border:1px solid #D9CBA3;border-radius:4px;padding:18px;text-align:center;">
+      ${inst ? `<div style="font-size:12.5px;color:#6B5F4B;margin-bottom:6px;">${escapeHtml(inst)}</div>` : ""}
+      <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:18px;color:#1F2A44;margin-bottom:4px;">${isWa ? T("WhatsApp QR") : T("Pay via UPI")}</div>
+      <div style="font-size:12px;color:#6B5F4B;margin-bottom:10px;">${isWa ? T("Scan this QR with WhatsApp") : T("Scan this QR with any UPI app")}</div>
+      <img data-allow-menu="1" src="${escapeAttr(qr)}" alt="QR" style="width:240px;max-width:85%;height:auto;background:#fff;padding:8px;border:1px solid #D9CBA3;border-radius:4px;" />
+      <button id="publicQrSaveBtn" type="button" style="display:block;width:100%;margin-top:12px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:11px;font-size:13.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${T("Save QR to Gallery")}</button>
+      <div id="publicQrMsg" style="font-size:11.5px;color:#1E7A3E;min-height:14px;margin-top:4px;"></div>
+      ${note ? `<div style="font-size:12.5px;color:#1F2A44;margin-top:10px;white-space:pre-wrap;text-align:left;">${escapeHtml(note)}</div>` : ""}
+    </div>`;
+  document.getElementById("publicQrSaveBtn").addEventListener("click", () => saveStudentUpiQr(qr, "publicQrMsg", isWa ? "WhatsApp-QR.png" : "UPI-QR.png"));
 }
 async function studentLookup() {
   const val = document.getElementById("studentMobileInput").value.trim();
@@ -14079,6 +14192,13 @@ function subscribeToChatLock() {
 }
 i18nStartObserver();
 (async () => {
+  // Link from a message ({upiQrLink} / {waQrLink}): show only the QR page, no login.
+  const _qrKind = new URLSearchParams(location.search).get("qr");
+  if (_qrKind === "upi" || _qrKind === "wa") {
+    await showPublicQrPage(_qrKind);
+    i18nApplyAll();
+    return;
+  }
   const ok = await loadSessionAndProfile();
   if (ok) {
     document.getElementById("loginScreen").style.display = "none";
