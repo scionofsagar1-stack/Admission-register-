@@ -99,6 +99,7 @@
       <p id="studentLookupError" style="color:#9B3437;font-size:12.5px;min-height:16px;margin:0 0 12px;"></p>
       <button id="studentLookupSubmitBtn" style="width:100%;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:10px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">View Details</button>
       <div id="studentLookupResults" style="margin-top:12px;"></div>
+      <div id="studentPaymentBox" style="display:none;"></div>
       <div id="studentChatBox" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid #D9CBA3;"></div>
     </div>
   </div>
@@ -483,6 +484,10 @@ const HI_DICT = {
   "Total Due Till": "तक कुल बकाया",
   "Total Due": "कुल बकाया",
   "No dues till this month.": "इस माह तक कोई बकाया नहीं है।",
+  "Pay via UPI": "UPI से भुगतान करें",
+  "Scan this QR with any UPI app": "किसी भी UPI ऐप से यह QR स्कैन करें",
+  "Save QR to Gallery": "QR गैलरी में सेव करें",
+  "QR saved": "QR सेव हो गया",
   "As per Passbook balance": "पासबुक बैलेंस के अनुसार",
   "Combined Total Due (All Students)": "सभी छात्रों का कुल बकाया (संयुक्त)",
   "Admission\\Development Charge": "प्रवेश\\विकास शुल्क",
@@ -2323,6 +2328,7 @@ function loadAdmitCardSettingsFromStorage() {
 }
 function saveAdmitCardSettingsToStorage() {
   try { localStorage.setItem(ADMIT_CARD_KEY, JSON.stringify(state.admitCard)); } catch (e) {}
+  queueCloudSave("admit_card");
 }
 function getAdmitCardEligibleEntries() {
   const addrQ = state.admitCardAddressFilter.trim().toLowerCase();
@@ -2591,12 +2597,15 @@ function loadColumnPrefsFromStorage() {
 }
 function saveExportColumns() {
   try { localStorage.setItem(EXPORT_COLUMNS_KEY, JSON.stringify(state.exportColumnOrder)); } catch (e) {}
+  queueCloudSave("export_columns");
 }
 function saveReportColumns() {
   try { localStorage.setItem(REPORT_COLUMNS_KEY, JSON.stringify(state.reportColumnOrder)); } catch (e) {}
+  queueCloudSave("report_columns");
 }
 function saveIdCardSettingsToStorage() {
   try { localStorage.setItem(ID_CARD_KEY, JSON.stringify(state.idCard)); } catch (e) {}
+  queueCloudSave("id_card");
 }
 /* ---------- Paid Receipt: Institute Name + Authority Signature settings ----------
    Same localStorage pattern as Admit Card / ID Card settings above — set once,
@@ -2611,6 +2620,105 @@ function loadReceiptSettingsFromStorage() {
 }
 function saveReceiptSettingsToStorage() {
   try { localStorage.setItem(RECEIPT_SETTINGS_KEY, JSON.stringify(state.receiptSettings)); } catch (e) {}
+  queueCloudSave("receipt_settings");
+}
+
+/* ==================== Cloud-synced settings (Supabase: app_config) ====================
+   Invoice/Receipt settings (institute name, logo, signature, UPI & WhatsApp QR,
+   watermark...), Admit Card settings, ID Card settings and the Export/Report
+   column choices used to live ONLY in localStorage — so "clear cache / clear
+   site data" wiped them and they had to be entered again. Now every change is
+   ALSO saved to Supabase (one row per setting in the `app_config` table) and
+   loaded back at startup, on any device. localStorage is still kept as a fast
+   local copy. Only admins write; every logged-in user can read.
+   Existing local data is uploaded automatically the first time an admin opens
+   the app after the table is created.
+
+   Run this ONCE in the Supabase SQL editor:
+
+   create table if not exists app_config (
+     key text primary key,
+     value jsonb not null,
+     updated_at timestamptz not null default now()
+   );
+   alter table app_config enable row level security;
+   create policy "Authenticated read" on app_config
+     for select using (auth.role() = 'authenticated');
+   create policy "Admins insert" on app_config
+     for insert with check (
+       exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+   create policy "Admins update" on app_config
+     for update using (
+       exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+*/
+const CLOUD_CONFIGS = {
+  receipt_settings: {
+    lsKey: RECEIPT_SETTINGS_KEY,
+    get: () => state.receiptSettings,
+    set: (v) => { if (v && typeof v === "object" && !Array.isArray(v)) state.receiptSettings = { ...state.receiptSettings, ...v }; },
+  },
+  admit_card: {
+    lsKey: ADMIT_CARD_KEY,
+    get: () => state.admitCard,
+    set: (v) => { if (v && typeof v === "object" && !Array.isArray(v)) state.admitCard = { ...state.admitCard, ...v }; },
+  },
+  id_card: {
+    lsKey: ID_CARD_KEY,
+    get: () => state.idCard,
+    set: (v) => { if (v && typeof v === "object" && !Array.isArray(v)) state.idCard = { ...state.idCard, ...v }; },
+  },
+  export_columns: {
+    lsKey: EXPORT_COLUMNS_KEY,
+    get: () => state.exportColumnOrder,
+    set: (v) => { if (Array.isArray(v)) state.exportColumnOrder = v.filter(k => EXPORT_COLUMN_DEFS.some(c => c.key === k)); },
+  },
+  report_columns: {
+    lsKey: REPORT_COLUMNS_KEY,
+    get: () => state.reportColumnOrder,
+    set: (v) => { if (Array.isArray(v)) state.reportColumnOrder = v.filter(k => REPORT_COLUMN_DEFS.some(c => c.key === k)); },
+  },
+};
+const _cloudSaveTimers = {};
+function canWriteCloudConfig() { return !!(state.editUnlocked && !state.isGuestMode && currentUser); }
+// Debounced: typing in a settings box fires on every keystroke, so wait
+// until the person pauses before sending to Supabase.
+function queueCloudSave(name) {
+  if (!CLOUD_CONFIGS[name] || !canWriteCloudConfig()) return;
+  clearTimeout(_cloudSaveTimers[name]);
+  _cloudSaveTimers[name] = setTimeout(() => { delete _cloudSaveTimers[name]; pushCloudConfig(name); }, 900);
+}
+async function pushCloudConfig(name) {
+  const def = CLOUD_CONFIGS[name];
+  if (!def || !canWriteCloudConfig()) return;
+  try {
+    const { error } = await supabaseClient.from("app_config")
+      .upsert({ key: name, value: def.get(), updated_at: new Date().toISOString() });
+    if (error) console.warn("Could not save '" + name + "' to Supabase (app_config table created? admin login?):", error);
+  } catch (e) { console.warn("Cloud save failed for '" + name + "':", e); }
+}
+// If the app is closed/backgrounded right after an edit, send pending changes now.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "hidden") return;
+  Object.keys(_cloudSaveTimers).forEach(name => { clearTimeout(_cloudSaveTimers[name]); delete _cloudSaveTimers[name]; pushCloudConfig(name); });
+});
+async function loadCloudConfigs() {
+  try {
+    const { data, error } = await supabaseClient.from("app_config").select("key,value");
+    if (error) { console.warn("app_config not available — using this device's local copy only:", error); return; }
+    const rows = {};
+    (data || []).forEach(r => { rows[r.key] = r.value; });
+    Object.keys(CLOUD_CONFIGS).forEach(name => {
+      const def = CLOUD_CONFIGS[name];
+      if (rows[name] !== undefined && rows[name] !== null) {
+        // Cloud copy wins; refresh the local cache with it.
+        def.set(rows[name]);
+        try { localStorage.setItem(def.lsKey, JSON.stringify(def.get())); } catch (e) {}
+      } else if (canWriteCloudConfig() && localStorage.getItem(def.lsKey) !== null) {
+        // First run after setup: upload what this device already has.
+        pushCloudConfig(name);
+      }
+    });
+  } catch (e) { console.warn("Cloud settings load failed:", e); }
 }
 /* ---------- Message Send Lock — per-student toggle so a message never gets
    sent by accident to the wrong entry. Saved locally per device (this is a
@@ -7013,6 +7121,7 @@ async function loadEntries() {
   loadIdCardSettingsFromStorage();
   loadColumnPrefsFromStorage();
   loadReceiptSettingsFromStorage();
+  await loadCloudConfigs();
   loadMessageLocksFromStorage();
   loadMessageCombineFromStorage();
   loadMessageCombineExcludeFromStorage();
@@ -13513,6 +13622,86 @@ function renderStudentLookupResults() {
         <span style="font-size:15px;font-weight:700;color:#F3ECDA;">${fmtINR(combinedTotal)}</span>
       </div>` : "");
 }
+/* ---------- Student screen: UPI QR + footer note ----------
+   The student lookup screen has no login (anon key only), so it can't read
+   the app_config table directly. It calls a tiny SECURITY DEFINER function,
+   public_payment_info(), that returns ONLY the UPI QR image and footer note
+   from the admin's receipt settings — nothing else is exposed. Run once in
+   the Supabase SQL editor:
+
+   create or replace function public_payment_info()
+   returns jsonb language sql security definer set search_path = public stable as $$
+     select jsonb_build_object(
+       'upiQrUrl', coalesce(value->>'upiQrUrl', ''),
+       'footerNote', coalesce(value->>'footerNote', ''))
+     from app_config where key = 'receipt_settings';
+   $$;
+   grant execute on function public_payment_info() to anon, authenticated;
+*/
+let studentPaymentInfo = null;
+async function loadStudentPaymentInfo() {
+  try {
+    const { data, error } = await supabaseClient.rpc("public_payment_info");
+    if (error) throw error;
+    studentPaymentInfo = data && typeof data === "object" ? data : null;
+  } catch (e) {
+    console.warn("Could not load payment info for student screen (run the public_payment_info SQL?):", e);
+    // Fall back to this device's local copy (works if the admin uses this same device).
+    const rs = state.receiptSettings || {};
+    studentPaymentInfo = (rs.upiQrUrl || rs.footerNote) ? { upiQrUrl: rs.upiQrUrl || "", footerNote: rs.footerNote || "" } : null;
+  }
+}
+function renderStudentPaymentBox() {
+  const box = document.getElementById("studentPaymentBox");
+  if (!box) return;
+  const qr = studentPaymentInfo && studentPaymentInfo.upiQrUrl;
+  const note = studentPaymentInfo && (studentPaymentInfo.footerNote || "").trim();
+  if (!qr && !note) { box.style.display = "none"; box.innerHTML = ""; return; }
+  box.style.display = "";
+  box.innerHTML = `
+    <div style="background:#F3ECDA;border:1px solid #D9CBA3;border-radius:4px;padding:12px;margin-top:10px;text-align:center;">
+      ${qr ? `
+        <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:15px;color:#1F2A44;margin-bottom:4px;">${T("Pay via UPI")}</div>
+        <div style="font-size:11.5px;color:#6B5F4B;margin-bottom:8px;">${T("Scan this QR with any UPI app")}</div>
+        <img id="studentUpiQrImg" src="${escapeAttr(qr)}" alt="UPI QR" style="width:200px;max-width:80%;height:auto;background:#fff;padding:8px;border:1px solid #D9CBA3;border-radius:4px;" />
+        <button id="studentUpiQrSaveBtn" type="button" style="display:block;width:100%;margin-top:10px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:10px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${T("Save QR to Gallery")}</button>
+        <div id="studentUpiQrMsg" style="font-size:11.5px;color:#1E7A3E;min-height:14px;margin-top:4px;"></div>` : ""}
+      ${note ? `<div style="font-size:12px;color:#1F2A44;margin-top:${qr ? "8px" : "0"};white-space:pre-wrap;text-align:left;">${escapeHtml(note)}</div>` : ""}
+    </div>`;
+  const btn = document.getElementById("studentUpiQrSaveBtn");
+  if (btn) btn.addEventListener("click", () => saveStudentUpiQr(qr));
+}
+async function saveStudentUpiQr(dataUrl) {
+  const msg = document.getElementById("studentUpiQrMsg");
+  const fileName = "UPI-QR.png";
+  try {
+    const blob = await (await fetch(dataUrl)).blob();
+    const file = new File([blob], fileName, { type: blob.type || "image/png" });
+    const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    // iPhone/iPad: a plain download goes to Files, not Photos — the share sheet's
+    // "Save Image" is the only way into the gallery.
+    if (isIOS && navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: "UPI QR" });
+      return;
+    }
+    // Android / desktop: download — the image lands in Downloads and shows up in Gallery.
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    if (msg) msg.textContent = T("QR saved");
+  } catch (err) {
+    if (err && err.name === "AbortError") return; // person closed the share sheet
+    console.error("QR save failed:", err);
+    if (navigator.canShare) {
+      try {
+        const blob = await (await fetch(dataUrl)).blob();
+        await navigator.share({ files: [new File([blob], fileName, { type: blob.type || "image/png" })], title: "UPI QR" });
+      } catch (e2) {}
+    }
+  }
+}
 async function studentLookup() {
   const val = document.getElementById("studentMobileInput").value.trim();
   const errEl = document.getElementById("studentLookupError");
@@ -13527,12 +13716,15 @@ async function studentLookup() {
       resultsEl.innerHTML = "";
       errEl.textContent = "No details found for this mobile number.";
       document.getElementById("studentChatBox").style.display = "none";
+      const payBox = document.getElementById("studentPaymentBox"); if (payBox) { payBox.style.display = "none"; payBox.innerHTML = ""; }
       if (studentChatState.pollTimer) { clearInterval(studentChatState.pollTimer); studentChatState.pollTimer = null; }
       studentChatState.mobile = "";
       return;
     }
     studentLookupEntries = data.map(fromDbRow).sort((a, b) => a.serial - b.serial);
     renderStudentLookupResults();
+    await loadStudentPaymentInfo();
+    renderStudentPaymentBox();
     studentChatState.mobile = val;
     studentChatState.messages = [];
     document.getElementById("studentChatBox").style.display = "";
@@ -13711,6 +13903,7 @@ function showLogin() {
   document.getElementById("studentLookupError").textContent = "";
   document.getElementById("studentLookupResults").innerHTML = "";
   studentLookupEntries = [];
+  const _payBox = document.getElementById("studentPaymentBox"); if (_payBox) { _payBox.style.display = "none"; _payBox.innerHTML = ""; }
   document.getElementById("studentChatBox").style.display = "none";
   document.getElementById("studentChatBox").innerHTML = "";
   if (studentChatState.pollTimer) { clearInterval(studentChatState.pollTimer); studentChatState.pollTimer = null; }
