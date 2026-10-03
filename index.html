@@ -1627,6 +1627,18 @@ function blobToDataUrl(blob) {
     reader.readAsDataURL(blob);
   });
 }
+/* QR images must NOT be shrunk hard: a bank QR card (QR + logos + text) is
+   often a tall image where the QR itself is only ~60% of the width, and its
+   modules are tiny. Shrinking the whole card to 500px blurred the modules
+   and the payment app misread the code ("Format not supported"). So: keep
+   the original file untouched when it's reasonably small; otherwise only
+   downscale to 1400px (long side) — still plenty sharp to scan. */
+async function prepareQrImageDataUrl(file) {
+  const okType = /^image\/(png|jpe?g)$/i.test(file.type || "");
+  if (okType && file.size <= 1200 * 1024) return await blobToDataUrl(file);
+  const compressed = await compressImageFile(file, 1400, 0.95, "image/png");
+  return await blobToDataUrl(compressed);
+}
 /* ---------- Icons (inline lucide-style SVGs) ---------- */
 /* Hoisted out of icon() so this ~30-entry object literal is built once at
    parse time instead of being re-allocated on every single icon() call —
@@ -10074,8 +10086,7 @@ function wireReceiptSettingsForm(el, rerender) {
       rerender();
       try {
         // PNG (not JPEG) so the QR's fine black/white squares stay crisp and scannable.
-        const compressed = await compressImageFile(file, 500, 0.95, "image/png");
-        const dataUrl = await blobToDataUrl(compressed);
+        const dataUrl = await prepareQrImageDataUrl(file);
         state.receiptSettings.upiQrUrl = dataUrl;
         saveReceiptSettingsToStorage();
       } catch (err) {
@@ -10107,8 +10118,7 @@ function wireReceiptSettingsForm(el, rerender) {
       rerender();
       try {
         // PNG taaki QR ke chhote black/white dabbe saaf aur scannable rahen.
-        const compressed = await compressImageFile(file, 500, 0.95, "image/png");
-        state.receiptSettings.waQrUrl = await blobToDataUrl(compressed);
+        state.receiptSettings.waQrUrl = await prepareQrImageDataUrl(file);
         saveReceiptSettingsToStorage();
       } catch (err) {
         console.error("WhatsApp QR processing failed:", err);
@@ -13747,7 +13757,7 @@ function renderStudentPaymentBox() {
       ${qr ? `
         <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:15px;color:#1F2A44;margin-bottom:4px;">${T("Pay via UPI")}</div>
         <div style="font-size:11.5px;color:#6B5F4B;margin-bottom:8px;">${T("Scan this QR with any UPI app")}</div>
-        <img id="studentUpiQrImg" data-allow-menu="1" src="${escapeAttr(qr)}" alt="UPI QR" style="width:200px;max-width:80%;height:auto;background:#fff;padding:8px;border:1px solid #D9CBA3;border-radius:4px;" />
+        <img id="studentUpiQrImg" data-allow-menu="1" src="${escapeAttr(qr)}" alt="UPI QR" style="width:100%;max-width:340px;height:auto;background:#fff;padding:8px;box-sizing:border-box;border:1px solid #D9CBA3;border-radius:4px;" />
         <button id="studentUpiQrSaveBtn" type="button" style="display:block;width:100%;margin-top:10px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:10px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${T("Save QR to Gallery")}</button>
         <div id="studentUpiQrMsg" style="font-size:11.5px;color:#1E7A3E;min-height:14px;margin-top:4px;"></div>` : ""}
       ${note ? `<div style="font-size:12px;color:#1F2A44;margin-top:${qr ? "8px" : "0"};white-space:pre-wrap;text-align:left;">${escapeHtml(note)}</div>` : ""}
@@ -13808,7 +13818,7 @@ async function showPublicQrPage(kind) {
       ${inst ? `<div style="font-size:12.5px;color:#6B5F4B;margin-bottom:6px;">${escapeHtml(inst)}</div>` : ""}
       <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:18px;color:#1F2A44;margin-bottom:4px;">${isWa ? T("WhatsApp QR") : T("Pay via UPI")}</div>
       <div style="font-size:12px;color:#6B5F4B;margin-bottom:10px;">${isWa ? T("Scan this QR with WhatsApp") : T("Scan this QR with any UPI app")}</div>
-      <img data-allow-menu="1" src="${escapeAttr(qr)}" alt="QR" style="width:240px;max-width:85%;height:auto;background:#fff;padding:8px;border:1px solid #D9CBA3;border-radius:4px;" />
+      <img data-allow-menu="1" src="${escapeAttr(qr)}" alt="QR" style="width:100%;max-width:360px;height:auto;background:#fff;padding:8px;box-sizing:border-box;border:1px solid #D9CBA3;border-radius:4px;" />
       <button id="publicQrSaveBtn" type="button" style="display:block;width:100%;margin-top:12px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:11px;font-size:13.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${T("Save QR to Gallery")}</button>
       <div id="publicQrMsg" style="font-size:11.5px;color:#1E7A3E;min-height:14px;margin-top:4px;"></div>
       ${note ? `<div style="font-size:12.5px;color:#1F2A44;margin-top:10px;white-space:pre-wrap;text-align:left;">${escapeHtml(note)}</div>` : ""}
