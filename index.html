@@ -4184,6 +4184,11 @@ function getReceiptWaQr() {
   const rs = state.receiptSettings || {};
   return { url: rs.waQrUrl || "", note: String(rs.waQrNote || "").trim() || "Scan for WhatsApp" };
 }
+/* Note ke andar ka 10-digit mobile number clickable WhatsApp link banata hai (wa.me, seedha WhatsApp khulta hai) */
+function linkifyWaNumbers(text) {
+  return escapeHtml(text).replace(/(?<!\d)(?:\+?91[\s-]?)?([6-9]\d{9})(?!\d)/g,
+    (m, num) => `<a href="https://wa.me/91${num}" target="_blank" rel="noopener" style="color:#1E7A3E;font-weight:700;text-decoration:underline;">${m}</a>`);
+}
 function billFooterNoteHtml() {
   const n = state.receiptSettings.upiQrUrl ? getReceiptFooterNote() : "";
   return n ? `<div style="margin-top:12px;text-align:center;font-size:11px;font-style:italic;line-height:1.4;color:#6B5F4B;white-space:pre-line;">${escapeHtml(n)}</div>` : "";
@@ -13760,7 +13765,7 @@ function renderStudentPaymentBox() {
         <img id="studentUpiQrImg" data-allow-menu="1" src="${escapeAttr(qr)}" alt="UPI QR" style="width:100%;max-width:340px;height:auto;background:#fff;padding:8px;box-sizing:border-box;border:1px solid #D9CBA3;border-radius:4px;" />
         <button id="studentUpiQrSaveBtn" type="button" style="display:block;width:100%;margin-top:10px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:10px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${T("Save QR to Gallery")}</button>
         <div id="studentUpiQrMsg" style="font-size:11.5px;color:#1E7A3E;min-height:14px;margin-top:4px;"></div>` : ""}
-      ${note ? `<div style="font-size:12px;color:#1F2A44;margin-top:${qr ? "8px" : "0"};white-space:pre-wrap;text-align:left;">${escapeHtml(note)}</div>` : ""}
+      ${note ? `<div style="font-size:12px;color:#1F2A44;margin-top:${qr ? "8px" : "0"};white-space:pre-wrap;text-align:left;">${linkifyWaNumbers(note)}</div>` : ""}
     </div>`;
   const btn = document.getElementById("studentUpiQrSaveBtn");
   if (btn) btn.addEventListener("click", () => saveStudentUpiQr(qr));
@@ -13821,7 +13826,7 @@ async function showPublicQrPage(kind) {
       <img data-allow-menu="1" src="${escapeAttr(qr)}" alt="QR" style="width:100%;max-width:360px;height:auto;background:#fff;padding:8px;box-sizing:border-box;border:1px solid #D9CBA3;border-radius:4px;" />
       <button id="publicQrSaveBtn" type="button" style="display:block;width:100%;margin-top:12px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:11px;font-size:13.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${T("Save QR to Gallery")}</button>
       <div id="publicQrMsg" style="font-size:11.5px;color:#1E7A3E;min-height:14px;margin-top:4px;"></div>
-      ${note ? `<div style="font-size:12.5px;color:#1F2A44;margin-top:10px;white-space:pre-wrap;text-align:left;">${escapeHtml(note)}</div>` : ""}
+      ${note ? `<div style="font-size:12.5px;color:#1F2A44;margin-top:10px;white-space:pre-wrap;text-align:left;">${linkifyWaNumbers(note)}</div>` : ""}
     </div>`;
   document.getElementById("publicQrSaveBtn").addEventListener("click", () => saveStudentUpiQr(qr, "publicQrMsg", isWa ? "WhatsApp-QR.png" : "UPI-QR.png"));
 }
