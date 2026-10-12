@@ -7706,7 +7706,46 @@ async function loadBackupManifest() {
   if (!error && data) state.backups = data.map(r => ({ key: r.id, timestamp: r.ts }));
 }
 
-async function createBackup() {
+/* SPEED FIX: pehle har save ke baad poore register ka backup upload hota tha
+   aur save uska intezaar karta tha (bahut slow). Ab backup background mein
+   hota hai, aur kam se kam 5 minute ke gap par (last change zaroor capture hota hai). */
+let _backupTimer = null;
+let _lastBackupAt = 0;
+const BACKUP_MIN_GAP_MS = 5 * 60 * 1000;
+function createBackup() {
+  if (_backupTimer) return Promise.resolve();
+  const wait = Math.max(3000, BACKUP_MIN_GAP_MS - (Date.now() - _lastBackupAt));
+  _backupTimer = setTimeout(() => {
+    _backupTimer = null;
+    _lastBackupAt = Date.now();
+    runBackupNow();
+  }, wait);
+  return Promise.resolve();
+}
+/* Background refresh: save ke baad list ko server se sync karta hai, par UI ko block nahi karta */
+let _bgRefreshBusy = false;
+function refreshEntriesInBackground() {
+  if (_bgRefreshBusy) return;
+  _bgRefreshBusy = true;
+  setTimeout(async () => {
+    try {
+      await refreshEntries();
+      if (!state.saving && !state.editingId && !state.showForm) renderAll();
+    } catch (e) {}
+    _bgRefreshBusy = false;
+  }, 1500);
+}
+/* Saved entry ko turant local list mein daal/badal deta hai (full re-download ka wait nahi) */
+function applySavedEntryLocally(entryObj) {
+  const clean = fromDbRow(toDbRow(entryObj));
+  [state.entries, state.allEntries].forEach(list => {
+    if (!Array.isArray(list)) return;
+    const i = list.findIndex(e => e.id === clean.id);
+    if (i >= 0) list[i] = clean;
+    else { list.push(clean); list.sort((a, b) => (a.serial || 0) - (b.serial || 0)); }
+  });
+}
+async function runBackupNow() {
   try {
     const timestamp = new Date().toISOString();
     await supabaseClient.from("register_backups").insert({ id: timestamp, ts: timestamp, data: state.entries });
@@ -7834,8 +7873,9 @@ async function handleAdd() {
       state.error = "Could not save. Try again.";
     } else {
       state.error = "";
-      await refreshEntries();
-      await createBackup();
+      applySavedEntryLocally(entry);
+      refreshEntriesInBackground();
+      createBackup();
       state.form = { ...EMPTY, className: state.form.className, session: state.form.session };
       state.showForm = false;
     }
@@ -8026,7 +8066,7 @@ async function saveEdit() {
   state.saving = true;
   const editedId = state.editingId;
   try {
-    renderHeader(); renderEntries();
+    renderHeader(); renderRowInPlace(editedId);
     // Defense in depth for a guest (Class Teacher) save: even if the form
     // markup were somehow bypassed, force every field back to its original
     // value except Mother's Name, DOB, and the photo (handled separately
@@ -8074,8 +8114,9 @@ async function saveEdit() {
       state.error = "Could not save. Try again.";
     } else {
       if (!photoFile) state.error = "";
-      await refreshEntries();
-      await createBackup();
+      applySavedEntryLocally(state.editForm);
+      refreshEntriesInBackground();
+      createBackup();
       state.editingId = null;
     }
   } catch (err) {
