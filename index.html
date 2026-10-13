@@ -337,7 +337,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pptxgenjs/3.12.0/pptxgen.bundle.js"></script>
 <script>
 /* ---------- Supabase connection ---------- */
 const SUPABASE_URL = "https://zeumswqaoaqzfvlwtplk.supabase.co";
@@ -11859,16 +11858,44 @@ async function pptPhotoDataUrl(url) {
     } finally { URL.revokeObjectURL(objUrl); }
   } catch (err) { console.error("PPT photo fetch failed:", err); return null; }
 }
+/* PPT library tab hi load hoti hai jab "Save as PPT" dabaya jaye; ek source fail ho to doosra try hota hai. */
+let _pptxLoading = null;
+function loadPptxLib() {
+  if (typeof PptxGenJS !== "undefined") return Promise.resolve(true);
+  if (_pptxLoading) return _pptxLoading;
+  const urls = [
+    "https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/pptxgenjs/3.12.0/pptxgen.bundle.js",
+    "https://unpkg.com/pptxgenjs@3.12.0/dist/pptxgen.bundle.js",
+  ];
+  _pptxLoading = (async () => {
+    for (const u of urls) {
+      const ok = await new Promise((resolve) => {
+        const sc = document.createElement("script");
+        sc.src = u;
+        const to = setTimeout(() => { sc.remove(); resolve(false); }, 15000);
+        sc.onload = () => { clearTimeout(to); resolve(typeof PptxGenJS !== "undefined"); };
+        sc.onerror = () => { clearTimeout(to); sc.remove(); resolve(false); };
+        document.head.appendChild(sc);
+      });
+      if (ok) return true;
+    }
+    return false;
+  })();
+  _pptxLoading.then(ok => { if (!ok) _pptxLoading = null; });
+  return _pptxLoading;
+}
 async function exportSelectedToPpt() {
   const selected = getSelectedEntriesSorted();
   if (!selected.length) return;
   const cols = selectedPdfColumns();
   if (!cols.length) { alert("Please tick at least one column to include in the PPT."); return; }
-  if (typeof PptxGenJS === "undefined") { alert("PPT library load nahi hui. Internet check karke dobara try karein."); return; }
   const btn = document.getElementById("exportPptBtn");
   const origHtml = btn ? btn.innerHTML : "";
   const setBusy = (txt) => { if (btn) { btn.disabled = true; btn.textContent = txt; } };
   try {
+    setBusy("Loading…");
+    if (!(await loadPptxLib())) { alert("PPT library load nahi hui. Internet check karke dobara try karein."); return; }
     const pres = new PptxGenJS();
     pres.layout = "LAYOUT_WIDE"; // 13.33 x 7.5 in
     pres.title = "Fee Register";
