@@ -228,6 +228,9 @@
         <button id="toggleBackupsBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-history"></span>Backups
         </button>
+        <button id="downloadContactsVcfBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
+          📇 Contacts (.vcf)
+        </button>
         <button id="toggleTemplateBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-filetext-tpl"></span>Message Template
         </button>
@@ -7781,6 +7784,125 @@ async function restoreBackup(backup) {
   renderAll();
 }
 
+/* Saare students ke mobile number + pita ka naam .vcf file mein (phone ke Contacts mein import ke liye) */
+function vcfEscape(v) {
+  return String(v == null ? "" : v).replace(/\\/g, "\\\\").replace(/\r?\n/g, "\\n").replace(/;/g, "\\;").replace(/,/g, "\\,");
+}
+function vcfPhone(mobile) {
+  let d = String(mobile || "").replace(/\D/g, "");
+  if (d.length === 12 && d.startsWith("91")) d = d.slice(2);
+  if (d.length === 11 && d.startsWith("0")) d = d.slice(1);
+  return d.length === 10 ? "+91" + d : d;
+}
+function downloadContactsVcf() {
+  const list = (state.allEntries && state.allEntries.length ? state.allEntries : state.entries) || [];
+  const cards = [];
+  const skippedList = [];
+  list.forEach(e => {
+    const phone = vcfPhone(e.mobile);
+    if (!phone || phone.replace(/\D/g, "").length < 10) {
+      skippedList.push({
+        name: (e.name || "").trim() || "(naam nahi)",
+        father: (e.fatherName || "").trim(),
+        cls: [e.className, e.section].filter(x => (x || "").toString().trim()).join(" "),
+        roll: e.rollNo || "",
+        reason: (e.mobile || "").toString().trim() ? `Number galat: ${String(e.mobile).trim()}` : "Mobile number nahi hai",
+      });
+      return;
+    }
+    const student = (e.name || "").trim();
+    const father = (e.fatherName || "").trim();
+    const display = father ? `${student} (${father})` : student;
+    const cls = [e.className, e.section].filter(x => (x || "").toString().trim()).join(" ");
+    const note = [cls ? "Class: " + cls : "", e.session ? "Session: " + e.session : "", father ? "Father: " + father : ""].filter(Boolean).join(" | ");
+    cards.push([
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      `N:${vcfEscape(display)};;;;`,
+      `FN:${vcfEscape(display)}`,
+      `TEL;TYPE=CELL:${phone}`,
+      note ? `NOTE:${vcfEscape(note)}` : "",
+      "END:VCARD",
+    ].filter(Boolean).join("\r\n"));
+  });
+  if (!cards.length) {
+    if (skippedList.length) showVcfSkippedList(0, skippedList); else alert("Koi student nahi mila.");
+    return;
+  }
+  const blob = new Blob([cards.join("\r\n") + "\r\n"], { type: "text/vcard;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `student-contacts-${new Date().toISOString().slice(0, 10)}.vcf`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  if (skippedList.length) showVcfSkippedList(cards.length, skippedList);
+}
+/* Skip list ko PDF mein save karta hai: print-ready page kholta hai, usme "Save as PDF" chuno */
+function downloadVcfSkippedPdf(savedCount, skippedList) {
+  const today = new Date().toLocaleDateString("en-GB");
+  const rows = skippedList.map((r, i) => `<tr>
+      <td>${i + 1}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.father)}</td>
+      <td>${escapeHtml(r.cls)}</td><td>${escapeHtml(String(r.roll || ""))}</td><td>${escapeHtml(r.reason)}</td></tr>`).join("");
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>skipped-contacts-${new Date().toISOString().slice(0, 10)}</title>
+    <style>
+      @page { size: A4; margin: 12mm; }
+      body { font-family: Arial, "Noto Sans Devanagari", sans-serif; color:#111; font-size:12px; }
+      h2 { margin:0 0 4px; font-size:16px; }
+      p { margin:0 0 10px; color:#444; }
+      table { width:100%; border-collapse:collapse; }
+      th, td { border:1px solid #999; padding:5px 6px; text-align:left; vertical-align:top; }
+      th { background:#eee; }
+      tr { page-break-inside:avoid; }
+    </style></head><body>
+    <h2>Contacts skip hue students (${skippedList.length})</h2>
+    <p>Date: ${today} &nbsp;|&nbsp; Download hue contacts: ${savedCount} &nbsp;|&nbsp; Skip hue: ${skippedList.length}</p>
+    <table><thead><tr><th>#</th><th>Student</th><th>Father</th><th>Class</th><th>Roll</th><th>Wajah</th></tr></thead>
+    <tbody>${rows}</tbody></table></body></html>`;
+  const old = document.getElementById("vcfPrintFrame");
+  if (old) old.remove();
+  const fr = document.createElement("iframe");
+  fr.id = "vcfPrintFrame";
+  fr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
+  document.body.appendChild(fr);
+  const doc = fr.contentWindow.document;
+  doc.open(); doc.write(html); doc.close();
+  setTimeout(() => {
+    try { fr.contentWindow.focus(); fr.contentWindow.print(); }
+    catch (e) { alert("PDF nahi ban paya. Chrome mein kholke dobara try karein."); }
+  }, 400);
+}
+/* Skip hue students ki list (naam, class, wajah) ek window mein dikhata hai */
+function showVcfSkippedList(savedCount, skippedList) {
+  const old = document.getElementById("vcfSkippedOverlay");
+  if (old) old.remove();
+  const ov = document.createElement("div");
+  ov.id = "vcfSkippedOverlay";
+  ov.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(31,42,68,0.55);display:flex;align-items:center;justify-content:center;padding:14px;box-sizing:border-box;";
+  const rows = skippedList.map((r, i) => `
+    <div style="padding:8px 4px;border-bottom:1px solid #D9CBA3;font-size:13px;color:#1F2A44;">
+      <div><b>${i + 1}. ${escapeHtml(r.name)}</b>${r.father ? ` <span style="color:#6B5F4B;">(${escapeHtml(r.father)})</span>` : ""}</div>
+      <div style="font-size:12px;color:#6B5F4B;">${r.cls ? "Class: " + escapeHtml(r.cls) + " · " : ""}${r.roll ? "Roll: " + escapeHtml(String(r.roll)) + " · " : ""}<span style="color:#9B3437;">${escapeHtml(r.reason)}</span></div>
+    </div>`).join("");
+  ov.innerHTML = `
+    <div style="background:#FBF7EC;border:1px solid #D9CBA3;border-radius:6px;max-width:460px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 24px rgba(0,0,0,0.3);">
+      <div style="padding:12px 14px;border-bottom:1px solid #D9CBA3;">
+        <div style="font-weight:700;color:#1F2A44;font-size:14px;">${savedCount} contacts download hue</div>
+        <div style="font-size:12.5px;color:#9B3437;margin-top:2px;">${skippedList.length} students skip hue (mobile number nahi / galat):</div>
+      </div>
+      <div style="overflow-y:auto;padding:4px 14px;flex:1;">${rows}</div>
+      <div style="padding:10px 14px;border-top:1px solid #D9CBA3;display:flex;justify-content:space-between;gap:8px;">
+        <button id="vcfSkippedPdfBtn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;border-radius:3px;padding:8px 14px;font-size:13px;cursor:pointer;">📄 PDF</button>
+        <button id="vcfSkippedCloseBtn" style="background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:8px 18px;font-size:13px;cursor:pointer;">Theek hai</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  document.getElementById("vcfSkippedCloseBtn").addEventListener("click", () => ov.remove());
+  document.getElementById("vcfSkippedPdfBtn").addEventListener("click", () => downloadVcfSkippedPdf(savedCount, skippedList));
+  ov.addEventListener("click", (e) => { if (e.target === ov) ov.remove(); });
+}
 function downloadBackup() {
   const blob = new Blob([JSON.stringify(state.entries, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -8414,6 +8536,7 @@ function renderHeader() {
   toggleBackupsBtn.style.background = state.showBackups ? "#1F2A44" : "transparent";
   toggleBackupsBtn.style.color = state.showBackups ? "#F3ECDA" : "#1F2A44";
   toggleBackupsBtn.style.display = state.isGuestMode ? "none" : "";
+  document.getElementById("downloadContactsVcfBtn").style.display = state.isGuestMode ? "none" : "";
   document.getElementById("icon-filetext-tpl").innerHTML = icon("filetext", { size: 15 });
   const toggleTemplateBtn = document.getElementById("toggleTemplateBtn");
   toggleTemplateBtn.style.background = state.showTemplatePanel ? "#1F2A44" : "transparent";
@@ -13583,6 +13706,11 @@ document.getElementById("toggleLangBtn").addEventListener("click", () => {
   renderHeader();
   const nextLang = APP_LANG === "hi" ? "en" : "hi";
   requestAnimationFrame(() => setAppLanguage(nextLang));
+});
+document.getElementById("downloadContactsVcfBtn").addEventListener("click", () => {
+  state.showSettingsMenu = false;
+  renderHeader();
+  downloadContactsVcf();
 });
 document.getElementById("toggleBackupsBtn").addEventListener("click", () => {
   togglePanelLite("showBackups", "backups");
