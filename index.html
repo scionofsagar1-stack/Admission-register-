@@ -337,6 +337,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pptxgenjs/3.12.0/pptxgen.bundle.js"></script>
 <script>
 /* ---------- Supabase connection ---------- */
 const SUPABASE_URL = "https://zeumswqaoaqzfvlwtplk.supabase.co";
@@ -7794,8 +7795,7 @@ function vcfPhone(mobile) {
   if (d.length === 11 && d.startsWith("0")) d = d.slice(1);
   return d.length === 10 ? "+91" + d : d;
 }
-function downloadContactsVcf() {
-  const list = (state.allEntries && state.allEntries.length ? state.allEntries : state.entries) || [];
+function buildContactsVcf(list, fileTag) {
   const cards = [];
   const skippedList = [];
   list.forEach(e => {
@@ -7833,7 +7833,7 @@ function downloadContactsVcf() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `student-contacts-${new Date().toISOString().slice(0, 10)}.vcf`;
+  a.download = `student-contacts-${fileTag ? fileTag + "-" : ""}${new Date().toISOString().slice(0, 10)}.vcf`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -7902,6 +7902,159 @@ function showVcfSkippedList(savedCount, skippedList) {
   document.getElementById("vcfSkippedCloseBtn").addEventListener("click", () => ov.remove());
   document.getElementById("vcfSkippedPdfBtn").addEventListener("click", () => downloadVcfSkippedPdf(savedCount, skippedList));
   ov.addEventListener("click", (e) => { if (e.target === ov) ov.remove(); });
+}
+/* Contacts picker: class (ya individual students) chun kar sirf unhi ki .vcf download karo */
+function downloadContactsVcf() {
+  const all = ((state.allEntries && state.allEntries.length ? state.allEntries : state.entries) || []).slice();
+  if (!all.length) { alert("Koi student nahi mila."); return; }
+  const old = document.getElementById("vcfPickerOverlay");
+  if (old) old.remove();
+
+  const sessions = Array.from(new Set(all.map(e => (e.session || "").trim()).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  /* App ki list par jo filter laga hai (class/section/session/search/more filters), wahi students yahan aate hain */
+  const filteredIds = new Set(getFiltered().map(e => e.id));
+  const hasAppFilter = filteredIds.size > 0 && filteredIds.size < state.entries.length;
+  const ui = { session: sessions.length ? sessions[sessions.length - 1] : "", q: "", scope: hasAppFilter ? "filtered" : "all" };
+  const selected = new Set();
+  const grpKey = e => (e.className || "").trim() + "||" + (e.section || "").trim();
+  const grpLabel = e => [(e.className || "").trim(), (e.section || "").trim()].filter(Boolean).join(" ") || "(class nahi)";
+  const inScope = e => ui.scope === "filtered" ? filteredIds.has(e.id) : (!ui.session || (e.session || "").trim() === ui.session);
+  const sortStudents = (a, b) => compareClassNames(a.className, b.className)
+    || String(a.section || "").localeCompare(String(b.section || ""))
+    || String(a.rollNo || "").localeCompare(String(b.rollNo || ""), undefined, { numeric: true })
+    || String(a.name || "").localeCompare(String(b.name || ""));
+  const visible = () => {
+    const q = ui.q.trim().toLowerCase();
+    return all.filter(inScope).filter(e => !q ||
+      [e.name, e.fatherName, e.mobile, e.rollNo, grpLabel(e)].some(v => String(v || "").toLowerCase().includes(q))).sort(sortStudents);
+  };
+
+  const ov = document.createElement("div");
+  ov.id = "vcfPickerOverlay";
+  ov.style.cssText = "position:fixed;inset:0;z-index:9998;background:rgba(31,42,68,0.55);display:flex;align-items:center;justify-content:center;padding:10px;box-sizing:border-box;";
+  ov.innerHTML = `
+    <div style="background:#FBF7EC;border:1px solid #D9CBA3;border-radius:6px;max-width:520px;width:100%;height:min(88vh,720px);display:flex;flex-direction:column;box-shadow:0 8px 24px rgba(0,0,0,0.3);">
+      <div style="padding:10px 14px;border-bottom:1px solid #D9CBA3;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <b style="color:#1F2A44;font-size:14.5px;">📇 Contacts (.vcf) — students chuno</b>
+        <button id="vcfPickClose" style="background:transparent;border:none;font-size:20px;line-height:1;color:#6B5F4B;cursor:pointer;">×</button>
+      </div>
+      <div style="padding:8px 14px;border-bottom:1px solid #D9CBA3;display:flex;flex-direction:column;gap:8px;">
+        ${hasAppFilter ? `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:#E8F1E4;border:1px solid #A9C7A0;border-radius:3px;padding:6px 8px;">
+          <span id="vcfPickScopeTxt" style="font-size:12.5px;color:#1E5A2E;"></span>
+          <button id="vcfPickScopeBtn" style="background:transparent;border:1px solid #1E5A2E;color:#1E5A2E;border-radius:3px;padding:4px 8px;font-size:12px;cursor:pointer;white-space:nowrap;"></button>
+        </div>` : ""}
+        <div style="display:flex;gap:8px;">
+          ${sessions.length > 1 ? `<select id="vcfPickSession" style="display:${hasAppFilter ? "none" : ""};flex:0 0 auto;padding:7px;border:1px solid #B7A97E;border-radius:3px;background:#fff;font-size:13px;">
+            ${sessions.map(x => `<option value="${escapeAttr(x)}" ${x === ui.session ? "selected" : ""}>${escapeHtml(x)}</option>`).join("")}
+            <option value="">Saare session</option></select>` : ""}
+          <input id="vcfPickSearch" type="search" placeholder="Naam / pita / mobile / roll khojein" style="flex:1;min-width:0;padding:7px 9px;border:1px solid #B7A97E;border-radius:3px;background:#fff;font-size:13px;" />
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button id="vcfPickAll" style="flex:1;background:transparent;color:#1F2A44;border:1px solid #B7A97E;border-radius:3px;padding:6px;font-size:12.5px;cursor:pointer;">Sab chuno</button>
+          <button id="vcfPickNone" style="flex:1;background:transparent;color:#1F2A44;border:1px solid #B7A97E;border-radius:3px;padding:6px;font-size:12.5px;cursor:pointer;">Sab hatao</button>
+        </div>
+        <div style="font-size:11.5px;color:#6B5F4B;">Class par tap karke poori class chuno, ya neeche se ek-ek student:</div>
+        <div id="vcfPickChips" style="display:flex;flex-wrap:wrap;gap:6px;max-height:96px;overflow-y:auto;"></div>
+      </div>
+      <div id="vcfPickList" style="flex:1;overflow-y:auto;padding:2px 14px;"></div>
+      <div style="padding:10px 14px;border-top:1px solid #D9CBA3;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <span id="vcfPickCount" style="font-size:13px;color:#1F2A44;"></span>
+        <button id="vcfPickGo" style="background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:9px 16px;font-size:13px;cursor:pointer;">⬇ Download</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+
+  const $ = id => document.getElementById(id);
+  const chipsEl = $("vcfPickChips"), listEl = $("vcfPickList");
+
+  function renderChips() {
+    const groups = new Map();
+    all.filter(inScope).forEach(e => {
+      const k = grpKey(e);
+      if (!groups.has(k)) groups.set(k, { key: k, label: grpLabel(e), cls: e.className, sec: e.section, ids: [] });
+      groups.get(k).ids.push(e.id);
+    });
+    const arr = Array.from(groups.values()).sort((a, b) => compareClassNames(a.cls, b.cls) || String(a.sec || "").localeCompare(String(b.sec || "")));
+    chipsEl.innerHTML = arr.map(g => {
+      const n = g.ids.filter(id => selected.has(id)).length;
+      const full = n === g.ids.length, part = n > 0 && !full;
+      return `<button data-g="${escapeAttr(g.key)}" style="border:1px solid ${full || part ? "#1F2A44" : "#B7A97E"};background:${full ? "#1F2A44" : part ? "#E8DFC0" : "transparent"};color:${full ? "#F3ECDA" : "#1F2A44"};border-radius:14px;padding:5px 11px;font-size:12.5px;cursor:pointer;">${escapeHtml(g.label)} <span style="opacity:.75;">(${part ? n + "/" : ""}${g.ids.length})</span></button>`;
+    }).join("");
+    chipsEl._groups = groups;
+  }
+  function renderList() {
+    const rows = visible();
+    listEl.innerHTML = rows.length ? rows.map(e => {
+      const ok = vcfPhone(e.mobile).replace(/\D/g, "").length >= 10;
+      return `<label data-id="${escapeAttr(e.id)}" style="display:flex;gap:10px;align-items:center;padding:8px 2px;border-bottom:1px solid #E6DCBC;cursor:pointer;">
+        <input type="checkbox" data-id="${escapeAttr(e.id)}" ${selected.has(e.id) ? "checked" : ""} style="width:18px;height:18px;flex:0 0 auto;" />
+        <span style="min-width:0;flex:1;">
+          <span style="display:block;font-size:13.5px;color:#1F2A44;"><b>${escapeHtml(e.name || "(naam nahi)")}</b>${e.fatherName ? ` <span style="color:#6B5F4B;">(${escapeHtml(e.fatherName)})</span>` : ""}</span>
+          <span style="display:block;font-size:12px;color:#6B5F4B;">${escapeHtml(grpLabel(e))}${e.rollNo ? " · Roll " + escapeHtml(String(e.rollNo)) : ""} · ${ok ? escapeHtml(String(e.mobile)) : `<span style="color:#9B3437;">number nahi / galat</span>`}</span>
+        </span></label>`;
+    }).join("") : `<p style="text-align:center;color:#6B5F4B;font-size:13px;margin-top:24px;">Koi student nahi mila.</p>`;
+  }
+  function updateCount() {
+    $("vcfPickCount").textContent = selected.size ? `${selected.size} student chune` : "Koi student nahi chuna";
+    $("vcfPickGo").disabled = !selected.size;
+    $("vcfPickGo").style.opacity = selected.size ? "1" : "0.5";
+  }
+  function updateScopeBar() {
+    const sel = $("vcfPickSession");
+    if (sel) sel.style.display = ui.scope === "filtered" ? "none" : "";
+    if (!hasAppFilter) return;
+    $("vcfPickScopeTxt").textContent = ui.scope === "filtered"
+      ? `App ka filter laga hai — sirf ${filteredIds.size} students`
+      : "Saare students dikh rahe hain";
+    $("vcfPickScopeBtn").textContent = ui.scope === "filtered" ? "Saare dikhao" : "Filter wale";
+  }
+  function preselectScope() {
+    selected.clear();
+    if (ui.scope === "filtered") all.filter(inScope).forEach(e => selected.add(e.id));
+  }
+  function refresh() { updateScopeBar(); renderChips(); renderList(); updateCount(); }
+
+  chipsEl.addEventListener("click", ev => {
+    const b = ev.target.closest("button[data-g]"); if (!b) return;
+    const g = chipsEl._groups.get(b.dataset.g); if (!g) return;
+    const allOn = g.ids.every(id => selected.has(id));
+    g.ids.forEach(id => allOn ? selected.delete(id) : selected.add(id));
+    renderChips(); updateCount();
+    listEl.querySelectorAll("input[type=checkbox]").forEach(cb => { cb.checked = selected.has(cb.dataset.id); });
+  });
+  listEl.addEventListener("change", ev => {
+    const cb = ev.target.closest("input[type=checkbox]"); if (!cb) return;
+    cb.checked ? selected.add(cb.dataset.id) : selected.delete(cb.dataset.id);
+    renderChips(); updateCount();
+  });
+  let t = null;
+  $("vcfPickSearch").addEventListener("input", ev => {
+    clearTimeout(t); t = setTimeout(() => { ui.q = ev.target.value; renderList(); }, 200);
+  });
+  if ($("vcfPickSession")) $("vcfPickSession").addEventListener("change", ev => {
+    ui.session = ev.target.value; selected.clear(); refresh();
+  });
+  $("vcfPickAll").addEventListener("click", () => {
+    all.filter(inScope).forEach(e => selected.add(e.id)); refresh();
+  });
+  $("vcfPickNone").addEventListener("click", () => { selected.clear(); refresh(); });
+  $("vcfPickClose").addEventListener("click", () => ov.remove());
+  ov.addEventListener("click", e => { if (e.target === ov) ov.remove(); });
+  $("vcfPickGo").addEventListener("click", () => {
+    if (!selected.size) return;
+    const chosen = all.filter(e => selected.has(e.id)).sort(sortStudents);
+    const gset = new Set(chosen.map(grpKey));
+    const tag = gset.size === 1 ? grpLabel(chosen[0]).replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") : (chosen.length === all.filter(inScope).length ? "all" : `${chosen.length}-students`);
+    ov.remove();
+    buildContactsVcf(chosen, tag);
+  });
+  if ($("vcfPickScopeBtn")) $("vcfPickScopeBtn").addEventListener("click", () => {
+    ui.scope = ui.scope === "filtered" ? "all" : "filtered";
+    preselectScope(); refresh();
+  });
+  preselectScope();
+  refresh();
 }
 function downloadBackup() {
   const blob = new Blob([JSON.stringify(state.entries, null, 2)], { type: "application/json" });
@@ -11324,6 +11477,7 @@ const EXPORT_COLUMN_DEFS = [
   // actual register number.
   { key: "serial",     label: "Sr. No.",         width: 18, get: (e, idx) => String(idx + 1).padStart(3, "0") },
   { key: "name",       label: "Name",            width: 55, get: e => TN(e.name) || "" },
+  { key: "photo",      label: "Photo",           width: 28, get: e => e.photoUrl ? "Yes" : "No" },
   { key: "fatherName", label: "Father's Name",   width: 55, get: e => TN(e.fatherName) || "" },
   { key: "motherName", label: "Mother's Name",   width: 40, get: e => TN(e.motherName) || "" },
   { key: "dob",        label: "DOB",             width: 40, get: e => e.dob || "" },
@@ -11369,6 +11523,7 @@ function renderSelectionPanel() {
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button id="toggleExportColumnsBtn" style="display:flex;align-items:center;gap:6px;background:transparent;color:#1F2A44;border:1px solid #B7A97E;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${icon("filetext", { size: 14 })} Columns (${colCount})</button>
         <button id="exportPdfBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#9B3437;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("filetext", { size: 14 })} Save as PDF</button>
+        <button id="exportPptBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#C4572B;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("filetext", { size: 14 })} Save as PPT</button>
         <button id="shareImageBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("image", { size: 14 })} Share as Image</button>
         <button id="bulkMsgBtn" ${count === 0 ? "disabled" : ""} title="Opens each selected student's WhatsApp/SMS one by one — you just tap Send in each" style="display:flex;align-items:center;gap:6px;background:#25D366;color:#fff;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("messageCircle", { size: 14 })} Send Messages</button>
         ${state.isGuestMode ? "" : `<button id="externalExportBtn" ${count === 0 ? "disabled" : ""} title="Selected students ka data ek doosre app ke Supabase project mein bhejo" style="display:flex;align-items:center;gap:6px;background:#6B5F4B;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("share", { size: 14 })} Export to App</button>`}
@@ -11413,6 +11568,8 @@ function renderSelectionPanel() {
   });
   const exportBtn = document.getElementById("exportPdfBtn");
   if (exportBtn) exportBtn.addEventListener("click", exportSelectedToPdf);
+  const exportPptBtn = document.getElementById("exportPptBtn");
+  if (exportPptBtn) exportPptBtn.addEventListener("click", exportSelectedToPpt);
   const shareBtn = document.getElementById("shareImageBtn");
   if (shareBtn) shareBtn.addEventListener("click", shareSelectedAsImages);
   const bulkMsgBtn = document.getElementById("bulkMsgBtn");
@@ -11670,6 +11827,102 @@ function exportSelectedToPdfDirect(mode) {
     } catch (e) { /* fall through to plain download */ }
   }
   built.doc.save(built.filename);
+}
+/* ---------- "Save as PPT": har selected student ki ek slide (photo + Columns me tick ki hui details) ---------- */
+/* PPT chhoti rakhne ke liye: photo ko max 420px me resize + JPEG 0.7 me compress karke daalte hain (~20-40 KB per photo). */
+async function pptPhotoDataUrl(url) {
+  if (!url) return null;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(url, { mode: "cors", signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    const objUrl = URL.createObjectURL(blob);
+    try {
+      const img = await new Promise((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => resolve(im);
+        im.onerror = reject;
+        im.src = objUrl;
+      });
+      const MAX = 420;
+      const k = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(1, Math.round(img.naturalWidth * k)), h = Math.max(1, Math.round(img.naturalHeight * k));
+      const cv = document.createElement("canvas");
+      cv.width = w; cv.height = h;
+      const ctx = cv.getContext("2d");
+      ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      return cv.toDataURL("image/jpeg", 0.7);
+    } finally { URL.revokeObjectURL(objUrl); }
+  } catch (err) { console.error("PPT photo fetch failed:", err); return null; }
+}
+async function exportSelectedToPpt() {
+  const selected = getSelectedEntriesSorted();
+  if (!selected.length) return;
+  const cols = selectedPdfColumns();
+  if (!cols.length) { alert("Please tick at least one column to include in the PPT."); return; }
+  if (typeof PptxGenJS === "undefined") { alert("PPT library load nahi hui. Internet check karke dobara try karein."); return; }
+  const btn = document.getElementById("exportPptBtn");
+  const origHtml = btn ? btn.innerHTML : "";
+  const setBusy = (txt) => { if (btn) { btn.disabled = true; btn.textContent = txt; } };
+  try {
+    const pres = new PptxGenJS();
+    pres.layout = "LAYOUT_WIDE"; // 13.33 x 7.5 in
+    pres.title = "Fee Register";
+    const FONT = "Calibri";
+    const showPhoto = cols.some(c => c.key === "photo");
+    const infoCols = cols.filter(c => c.key !== "serial" && c.key !== "photo");
+    for (let i = 0; i < selected.length; i++) {
+      const e = selected[i];
+      setBusy(`PPT ${i + 1}/${selected.length}…`);
+      const slide = pres.addSlide();
+      slide.background = { color: "FBF7EC" };
+      // Header bar
+      slide.addShape(pres.ShapeType.rect, { x: 0, y: 0, w: 13.33, h: 1.0, fill: { color: "9B3437" }, line: { color: "9B3437" } });
+      slide.addText(TN(e.name) || "Student", { x: 0.5, y: 0.1, w: 10.3, h: 0.8, fontFace: FONT, fontSize: 28, bold: true, color: "F3ECDA", valign: "middle", fit: "shrink" });
+      slide.addText(`${i + 1} / ${selected.length}`, { x: 10.9, y: 0.1, w: 1.95, h: 0.8, fontFace: FONT, fontSize: 14, color: "F3ECDA", align: "right", valign: "middle" });
+      // Photo (agar ho) warna placeholder
+      const photo = showPhoto ? await pptPhotoDataUrl(e.photoUrl) : null;
+      const px = 0.5, py = 1.4, pw = 3.2, ph = 4.0;
+      if (showPhoto) {
+      if (photo) {
+        slide.addImage({ data: photo, x: px, y: py, w: pw, h: ph, sizing: { type: "cover", w: pw, h: ph } });
+        slide.addShape(pres.ShapeType.rect, { x: px, y: py, w: pw, h: ph, fill: { type: "none" }, line: { color: "B7A97E", width: 1.5 } });
+      } else {
+        slide.addShape(pres.ShapeType.rect, { x: px, y: py, w: pw, h: ph, fill: { color: "F3ECDA" }, line: { color: "B7A97E", width: 1.5 } });
+        slide.addText("No Photo", { x: px, y: py, w: pw, h: ph, fontFace: FONT, fontSize: 16, color: "B7A97E", align: "center", valign: "middle" });
+      }
+      if (e.rollNo) slide.addText(`Enroll No. ${e.rollNo}`, { x: px, y: py + ph + 0.1, w: pw, h: 0.4, fontFace: FONT, fontSize: 14, bold: true, color: "9B3437", align: "center" });
+      }
+      // Details: 2 columns of label/value rows
+      const rows = infoCols.map((c, idx) => [
+        { text: c.label, options: { bold: true, color: "6B5F4B", fontFace: FONT, fontSize: 13 } },
+        { text: String(c.get(e, i) ?? "") || "—", options: { bold: true, color: "1F2A44", fontFace: FONT, fontSize: 13 } },
+      ]);
+      const perCol = rows.length > 9 ? Math.ceil(rows.length / 2) : rows.length;
+      const chunks = [rows.slice(0, perCol), rows.slice(perCol)].filter(r => r.length);
+      const areaX = showPhoto ? 4.1 : 0.5, areaW = showPhoto ? 8.75 : 12.33;
+      const colW = chunks.length === 2 ? areaW / 2 - 0.1 : areaW;
+      chunks.forEach((chunk, ci) => {
+        slide.addTable(chunk, {
+          x: areaX + ci * (colW + 0.2), y: 1.4, w: colW, colW: [colW * 0.4, colW * 0.6],
+          border: { type: "solid", pt: 0.5, color: "D9CBA3" },
+          fill: { color: "FFFFFF" }, valign: "middle", margin: [0.04, 0.08, 0.04, 0.08],
+          autoPage: false,
+        });
+      });
+    }
+    setBusy("Saving…");
+    await pres.writeFile({ compression: true, fileName: `fee-register-selected-${new Date().toISOString().slice(0, 10)}.pptx` });
+  } catch (err) {
+    console.error("PPT export failed:", err);
+    alert("PPT banane me dikkat aayi: " + (err && err.message ? err.message : err));
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
+  }
 }
 function buildSelectedPdfDoc() {
   const selected = getSelectedEntriesSorted();
