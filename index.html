@@ -240,12 +240,6 @@
         <button id="toggleCalcCornerBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-calcCorner"></span>Calculation Corner
         </button>
-        <button id="toggleAdmitCardBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
-          <span id="icon-admitCard"></span>Admit Card Maker
-        </button>
-        <button id="toggleIdCardBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
-          <span id="icon-idCard"></span>ID Card Maker
-        </button>
         <button id="toggleInvoiceSizeBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-invoiceSize"></span>Invoice Settings
         </button>
@@ -310,8 +304,6 @@
   <div id="templatePanel"></div>
   <div id="feeChartTemplatePanel"></div>
   <div id="calcCornerPanel"></div>
-  <div id="admitCardPanel"></div>
-  <div id="idCardPanel"></div>
   <div id="invoiceSizePanel"></div>
   <div id="passbookStatementPanel"></div>
   <div id="reportPanel"></div>
@@ -499,8 +491,6 @@ const HI_DICT = {
   "Combined Total Due (All Students)": "सभी छात्रों का कुल बकाया (संयुक्त)",
   "Admission\\Development Charge": "प्रवेश\\विकास शुल्क",
   "Calculation Corner": "कैलकुलेशन कॉर्नर",
-  "Admit Card Maker": "एडमिट कार्ड मेकर",
-  "ID Card Maker": "आईडी कार्ड मेकर",
   "Passbook Statement": "पासबुक स्टेटमेंट",
   "Receipt / Invoice Report": "रसीद / इनवॉइस रिपोर्ट",
   "Message Report": "मैसेज रिपोर्ट",
@@ -625,7 +615,6 @@ const HI_DICT = {
   "Size": "साइज़",
   "Status": "स्थिति",
   "Student": "छात्र",
-  "Student ID Card": "छात्र आईडी कार्ड",
   "Student Record": "छात्र रिकॉर्ड",
   "Student Sign.": "छात्र हस्ताक्षर",
   "Student Copy": "छात्र प्रति",
@@ -1390,7 +1379,6 @@ function setAppLanguage(lang) {
 }
 /* ================= end i18n ================= */
 
-
 /* Builds a short, human-readable list of what changed between the entry as
    it was before editing (original) and the form as it's about to be saved
    (updated) — shown next to "Last updated" so it's not just a bare
@@ -1619,9 +1607,7 @@ async function uploadChatImage(file, threadType, threadKey) {
   return { path, url: data.publicUrl };
 }
 // Converts a compressed image blob to a base64 data URL so it can be stored
-// directly in localStorage (used for the ID Card Maker's principal
-// signature, which is a single shared image rather than a per-student
-// upload, so it doesn't need its own Supabase Storage bucket).
+// directly in localStorage (used for small shared images such as the QR code).
 function blobToDataUrl(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1670,8 +1656,6 @@ const ICON_PATHS = {
     morevertical: '<circle cx="12" cy="5" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="19" r="1.5" fill="currentColor" stroke="none"></circle>',
     calculator: '<rect x="4" y="2" width="16" height="20" rx="2"></rect><line x1="8" y1="6" x2="16" y2="6"></line><line x1="8" y1="10" x2="8" y2="10.01"></line><line x1="12" y1="10" x2="12" y2="10.01"></line><line x1="16" y1="10" x2="16" y2="10.01"></line><line x1="8" y1="14" x2="8" y2="14.01"></line><line x1="12" y1="14" x2="12" y2="14.01"></line><line x1="16" y1="14" x2="16" y2="14.01"></line><line x1="8" y1="18" x2="8" y2="18.01"></line><line x1="12" y1="18" x2="12" y2="18.01"></line><line x1="16" y1="18" x2="16" y2="18.01"></line>',
     camera: '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle>',
-    admitCard: '<rect x="2" y="4" width="20" height="16" rx="2"></rect><circle cx="8" cy="10.5" r="2"></circle><path d="M5.5 16c.5-1.7 1.9-2.5 2.5-2.5s2 .8 2.5 2.5"></path><line x1="14" y1="9" x2="19" y2="9"></line><line x1="14" y1="12.5" x2="19" y2="12.5"></line><line x1="14" y1="16" x2="17" y2="16"></line>',
-    idCard: '<rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="9" cy="10" r="2"></circle><path d="M6 16c.4-1.6 1.7-2.4 3-2.4s2.6.8 3 2.4"></path><line x1="14" y1="9" x2="18" y2="9"></line><line x1="14" y1="12" x2="18" y2="12"></line>',
     report: '<path d="M4 20V4"></path><path d="M4 20h16"></path><rect x="7" y="12" width="3" height="8"></rect><rect x="12" y="8" width="3" height="12"></rect><rect x="17" y="14" width="3" height="6"></rect>',
     passbookStatement: '<path d="M4 3h13a3 3 0 0 1 3 3v15H7a3 3 0 0 1-3-3Z"></path><path d="M4 3v15a3 3 0 0 0 3 3"></path><line x1="9" y1="8" x2="15" y2="8"></line><line x1="9" y1="12" x2="15" y2="12"></line><line x1="9" y1="16" x2="13" y2="16"></line>',
     share: '<circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>',
@@ -2352,272 +2336,8 @@ function saveCalcCornerToStorage() {
   try { localStorage.setItem(CALC_CORNER_KEY, JSON.stringify(state.calcCorner)); } catch (e) {}
 }
 
-/* ---------- Admit Card Maker ----------
-   Exam details (institute name, exam name, date, venue, instructions) are a
-   scratch/one-off input each time cards are made, so — like Calculation
-   Corner — they're kept in localStorage only, not synced to the cloud. Each
-   selected student's own record (name, father's name, class, session, enroll
-   no., photo) is pulled straight from state.entries. */
-const ADMIT_CARD_KEY = "adm_reg_admit_card_settings";
-function loadAdmitCardSettingsFromStorage() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(ADMIT_CARD_KEY) || "null");
-    if (saved && typeof saved === "object") state.admitCard = { ...state.admitCard, ...saved };
-  } catch (e) {}
-}
-function saveAdmitCardSettingsToStorage() {
-  try { localStorage.setItem(ADMIT_CARD_KEY, JSON.stringify(state.admitCard)); } catch (e) {}
-  queueCloudSave("admit_card");
-}
-function getAdmitCardEligibleEntries() {
-  const addrQ = state.admitCardAddressFilter.trim().toLowerCase();
-  const noteQ = state.admitCardNoteFilter.trim().toLowerCase();
-  const filterMonthIdx = MONTHS.indexOf(state.admitCardFMonthFilter);
-  const notPaidFilterIdx = MONTHS.indexOf(state.admitCardNotPaidTillFilter);
-  return state.entries.filter(e => {
-    const matchesClass = state.admitCardClassSel === "all" || (e.className || "").trim() === state.admitCardClassSel;
-    const matchesSection = state.admitCardSectionSel === "all" || (e.section || "").trim() === state.admitCardSectionSel;
-    const matchesSession = state.admitCardSessionSel === "all" || (e.session || "").trim() === state.admitCardSessionSel;
-    const entryMonthIdx = MONTHS.indexOf((e.fMonth || "").trim());
-    const matchesFMonth = state.admitCardFMonthFilter === "all" || (entryMonthIdx !== -1 && entryMonthIdx >= filterMonthIdx);
-    const matchesNotPaidTill = state.admitCardNotPaidTillFilter === "all" || entryMonthIdx === -1 || entryMonthIdx < notPaidFilterIdx;
-    const matchesAddress = !addrQ || (e.address || "").toLowerCase().includes(addrQ);
-    const matchesNote = !noteQ || (e.notes || "").toLowerCase().includes(noteQ);
-    const matchesStar = state.admitCardStarFilter === "all"
-      || (state.admitCardStarFilter === "none" && !(e.starMarks && [1, 2, 3, 4].some(n => e.starMarks[n])))
-      || (state.admitCardStarFilter !== "none" && !!(e.starMarks && e.starMarks[state.admitCardStarFilter]));
-    return matchesClass && matchesSection && matchesSession && matchesFMonth && matchesNotPaidTill && matchesAddress && matchesNote && matchesStar;
-  }).sort((a, b) => a.serial - b.serial);
-}
-/* Admit card ka size aur shape (aada = landscape / khada = portrait) settings se aata hai — ID card jaisa hi system.
-   Presets: Standard (8 per A4 page), Compact PVC, A6 Big, Wide Card ya Custom (mm me).
-   Text card ke size ke hisaab se apne aap chhota/bada hota hai, settings.fontScale (%) se aur adjust hota hai,
-   aur agar phir bhi kuch card se bahar jaaye to mountAdmitCardFitted() font ghata kar dobara banata hai
-   taaki koi detail hide na ho. Logo ko background watermark bhi banaya ja sakta hai. */
-const ADMIT_CARD_PRESETS = {
-  std:  { label: "Standard – 8 per page (96 × 68 mm)", long: 96,   short: 68 },
-  cr80: { label: "Compact PVC size (85.6 × 54 mm)",    long: 85.6, short: 53.98 },
-  a6:   { label: "A6 Big (148 × 105 mm)",              long: 148,  short: 105 },
-  wide: { label: "Wide Card (170 × 80 mm)",            long: 170,  short: 80 },
-};
-const ADMIT_CARD_PX_PER_MM = 400 / 96;
-/* Admin "Cards per A4 page" me koi number (1–30) set kare to page us number me barabar bant jaata hai
-   (grid apne aap chunta hai — jaise 6 = 2 × 3) aur card ka size us khane ke hisaab se ban jaata hai.
-   "Auto" me card apni chuni hui size (preset/custom) me rehta hai aur jitne A4 par fit hon utne lagte hain. */
-const ADMIT_PAGE = { w: 595.28, h: 841.89, margin: 18, gap: 10 }; // A4 in pt
-function admitPerPageCount(settings) {
-  const m = settings.perPage;
-  if (!m || m === "auto") return 0;
-  const n = parseInt(m === "custom" ? settings.perPageCustom : m, 10);
-  return n >= 1 ? Math.min(30, n) : 0;
-}
-function getAdmitCardDims(settings) {
-  const MM_TO_PT = 72 / 25.4;
-  const { margin, gap } = ADMIT_PAGE;
-  const N = admitPerPageCount(settings);
-  const portraitPref = settings.orientation === "portrait";
-  let wMm, hMm, layout = null;
-  if (N) {
-    // Card aada chuna ho to chaude khane pasand karte hain, khada ho to lambe khane.
-    const target = portraitPref ? 0.71 : 1.41;
-    let best = null;
-    for (const land of [false, true]) {
-      const pw = land ? ADMIT_PAGE.h : ADMIT_PAGE.w, ph = land ? ADMIT_PAGE.w : ADMIT_PAGE.h;
-      for (let c = 1; c <= N; c++) {
-        const r = Math.ceil(N / c);
-        const cw = (pw - 2 * margin - (c - 1) * gap) / c;
-        const ch = (ph - 2 * margin - (r - 1) * gap) / r;
-        if (cw < 70 || ch < 70) continue;
-        const score = (c * r - N) * 0.35 + Math.abs(Math.log((cw / ch) / target));
-        if (!best || score < best.score) best = { score, land, c, r, cw, ch, pw, ph };
-      }
-    }
-    if (best) {
-      wMm = best.cw / MM_TO_PT; hMm = best.ch / MM_TO_PT;
-      layout = { pageLandscape: best.land, pageW: best.pw, pageH: best.ph, cols: best.c, rows: best.r, cellW: best.cw, cellH: best.ch, perPage: N, originX: margin, originY: margin };
-    }
-  }
-  if (!layout) {
-    let L, Sh;
-    if (settings.sizePreset === "custom") {
-      L = Math.min(170, Math.max(60, parseFloat(settings.customLong) || 96));
-      Sh = Math.min(120, Math.max(40, parseFloat(settings.customShort) || 68));
-      if (Sh > L) { const tmp = L; L = Sh; Sh = tmp; }
-    } else {
-      const pr = ADMIT_CARD_PRESETS[settings.sizePreset] || ADMIT_CARD_PRESETS.std;
-      L = pr.long; Sh = pr.short;
-    }
-    wMm = portraitPref ? Sh : L;
-    hMm = portraitPref ? L : Sh;
-    const cellW = wMm * MM_TO_PT, cellH = hMm * MM_TO_PT;
-    const availW = ADMIT_PAGE.w - 2 * margin, availH = ADMIT_PAGE.h - 2 * margin;
-    const cols = Math.max(1, Math.floor((availW + gap) / (cellW + gap)));
-    const rows = Math.max(1, Math.floor((availH + gap) / (cellH + gap)));
-    layout = {
-      pageLandscape: false, pageW: ADMIT_PAGE.w, pageH: ADMIT_PAGE.h, cols, rows, cellW, cellH, perPage: cols * rows,
-      originX: margin + (availW - (cols * cellW + (cols - 1) * gap)) / 2,
-      originY: margin + (availH - (rows * cellH + (rows - 1) * gap)) / 2,
-    };
-  }
-  const Lm = Math.max(wMm, hMm), Sm = Math.min(wMm, hMm);
-  return {
-    portrait: hMm > wMm, wMm, hMm,
-    w: Math.round(wMm * ADMIT_CARD_PX_PER_MM),
-    h: Math.round(hMm * ADMIT_CARD_PX_PER_MM),
-    factor: Math.min(2, Math.max(0.6, Math.min(Lm / 96, Sm / 68))),
-    layout,
-  };
-}
-function buildAdmitCardNode(entry, settings) {
-  const dims = getAdmitCardDims(settings);
-  const S = (settings.fontScale != null ? settings.fontScale : 100) / 100;
-  const K = dims.factor * S;
-  const f = (n) => (Math.round(n * K * 100) / 100) + "px";
-  const photoK = dims.factor * Math.min(S, 1);
-  const photoW = Math.round(52 * photoK), photoH = Math.round(64 * photoK);
-  const kv = (label, value, opts) => value
-    ? `<div style="display:flex;gap:4px;font-size:${f(8.5)};line-height:1.4;${(opts && opts.mb) || ""}">
-        <span style="font-family:'IBM Plex Mono',monospace;color:#6B5F4B;flex-shrink:0;">${escapeHtml(label)}:</span>
-        <span style="color:#1F2A44;font-weight:600;min-width:0;word-break:break-word;">${escapeHtml(value)}</span>
-      </div>`
-    : "";
-  const examLine = [
-    settings.examDate ? `Date: ${settings.examDate}` : "",
-    settings.examTime ? `Time: ${settings.examTime}` : "",
-  ].filter(Boolean).join("  ·  ");
-  const showWatermark = settings.watermarkEnabled && settings.logoUrl;
-  const watermarkOpacity = settings.watermarkOpacity != null ? settings.watermarkOpacity : 0.12;
-  const watermarkSize = settings.watermarkSize != null ? settings.watermarkSize : 150;
-  const watermarkOffsetX = settings.watermarkOffsetX != null ? settings.watermarkOffsetX : 0;
-  const watermarkOffsetY = settings.watermarkOffsetY != null ? settings.watermarkOffsetY : 0;
-  const wrap = document.createElement("div");
-  wrap.style.cssText = `position:relative;width:${dims.w}px;height:${dims.h}px;background:#FBF7EC;border:2px solid #9B3437;font-family:'Source Serif 4',Georgia,serif;color:#1F2A44;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;`;
-  wrap.innerHTML = `
-    ${showWatermark ? `<img src="${escapeAttr(settings.logoUrl)}" crossorigin="anonymous" style="position:absolute;top:calc(50% + ${watermarkOffsetY}px);left:calc(50% + ${watermarkOffsetX}px);transform:translate(-50%,-50%);width:${watermarkSize}px;height:${watermarkSize}px;object-fit:contain;opacity:${watermarkOpacity};z-index:0;pointer-events:none;" />` : ""}
-    <div style="position:relative;z-index:1;flex-shrink:0;background:#9B3437;color:#F3ECDA;padding:6px 10px;text-align:center;">
-      <div style="display:flex;align-items:center;justify-content:center;gap:6px;">
-        ${settings.logoUrl ? `<img src="${escapeAttr(settings.logoUrl)}" crossorigin="anonymous" style="width:${Math.round(22 * dims.factor)}px;height:${Math.round(22 * dims.factor)}px;object-fit:contain;flex-shrink:0;" />` : ""}
-        ${settings.instituteName ? `<div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:${f(11.5)};line-height:1.25;">${escapeHtml(settings.instituteName)}</div>` : ""}
-      </div>
-      <div style="font-family:'IBM Plex Mono',monospace;font-size:${f(8)};letter-spacing:2px;text-transform:uppercase;margin-top:2px;">Admit Card</div>
-    </div>
-    <div data-adm-body style="position:relative;z-index:1;flex:1;min-height:0;overflow:hidden;">
-      <div style="display:flex;gap:8px;padding:8px 10px 2px;">
-        <div style="width:${photoW}px;height:${photoH}px;flex-shrink:0;border:1px solid #B7A97E;background:#F3ECDA;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-          ${entry.photoUrl ? `<img src="${escapeAttr(entry.photoUrl)}" crossorigin="anonymous" style="width:100%;height:100%;object-fit:cover;" />` : `<span style="font-size:7px;color:#B7A97E;text-align:center;">No Photo</span>`}
-        </div>
-        <div style="flex:1;min-width:0;">
-          <div style="font-weight:700;font-size:${f(11)};line-height:1.3;word-break:break-word;">${escapeHtml(TN(entry.name)) || "—"}</div>
-          <div style="font-size:${f(8.5)};color:#6B5F4B;line-height:1.35;word-break:break-word;">${escapeHtml(TN(entry.fatherName)) || "—"}</div>
-          <div style="font-size:${f(8.5)};margin-top:3px;line-height:1.4;">Class: <b>${escapeHtml(entry.className) || "—"}</b>&nbsp; Session: <b>${escapeHtml(entry.session) || "—"}</b></div>
-          <div style="font-size:${f(8.5)};line-height:1.4;">Enroll No.: <b>${escapeHtml(entry.rollNo) || "—"}</b></div>
-        </div>
-      </div>
-      <div style="padding:5px 10px 2px;border-top:1px dashed #B7A97E;margin-top:4px;">
-        ${kv("Exam", settings.examName, { mb: "margin-bottom:2px;" })}
-        ${examLine ? `<div style="font-size:${f(8.5)};line-height:1.4;color:#1F2A44;font-weight:600;">${escapeHtml(examLine)}</div>` : ""}
-        ${kv("Reporting", settings.reportingTime, { mb: "margin-top:2px;" })}
-        ${kv("Venue", settings.venue, { mb: "margin-top:2px;" })}
-      </div>
-      ${settings.instructions ? `
-      <div style="padding:4px 10px 2px;font-size:${f(7.5)};line-height:1.35;color:#6B5F4B;">${escapeHtml(settings.instructions)}</div>` : ""}
-    </div>
-    <div style="position:relative;z-index:1;flex-shrink:0;display:flex;justify-content:space-between;padding:8px 10px 6px;">
-      <div style="text-align:center;"><div style="border-top:1px solid #1F2A44;width:100px;padding-top:2px;font-size:${f(7)};color:#6B5F4B;">Student Sign.</div></div>
-      <div style="text-align:center;"><div style="border-top:1px solid #1F2A44;width:100px;padding-top:2px;font-size:${f(7)};color:#6B5F4B;">Invigilator Sign.</div></div>
-    </div>
-    ${(entry.fMonth || entry.notes) ? `
-    <div style="position:relative;z-index:1;flex-shrink:0;border-top:1px solid #B7A97E;padding:3px 10px;font-size:${f(6.5)};line-height:1.3;color:#6B5F4B;">
-      ${entry.fMonth ? `Fee Till: <b style="color:#1F2A44;">${escapeHtml(T(entry.fMonth))}</b>` : ""}${entry.fMonth && entry.notes ? "  ·  " : ""}${entry.notes ? `Note: <b style="color:#1F2A44;">${escapeHtml(TD(entry.notes))}</b>` : ""}
-    </div>` : ""}
-  `;
-  return wrap;
-}
-/* Card ko host me lagata hai aur check karta hai ki andar ka content card se
-   bahar to nahi ja raha; jaa raha ho to font 5% ghata kar dobara banata hai. */
-function mountAdmitCardFitted(host, entry, settings) {
-  let scale = settings.fontScale != null ? settings.fontScale : 100;
-  for (;;) {
-    const node = buildAdmitCardNode(entry, { ...settings, fontScale: scale });
-    host.appendChild(node);
-    const body = node.querySelector("[data-adm-body]");
-    const overflow = body && (body.scrollHeight > body.clientHeight + 1);
-    if (!overflow || scale <= 40) return node;
-    host.removeChild(node);
-    scale -= 5;
-  }
-}
-async function renderAdmitCardCanvas(entry, settings, renderScale) {
-  const cvScale = renderScale || 3;
-  const iframe = createIsolatedCaptureFrame();
-  const node = mountAdmitCardFitted(iframe.contentDocument.body, entry, settings);
-  try {
-    // imageTimeout caps how long html2canvas waits per resource (webfonts
-    // included) — without it, a slow connection makes every export sit
-    // stuck for a long time (each font timing out at the 15s default) with
-    // no visible feedback. See nodeToBlob() for the full explanation of
-    // why this is captured inside its own isolated iframe rather than the
-    // main page.
-    return await html2canvas(node, { backgroundColor: "#FBF7EC", scale: cvScale, useCORS: true, imageTimeout: 3000 });
-  } catch (err) {
-    // Photo likely blocked the canvas from being read out (cross-origin taint).
-    // Retry once without the photo so the rest of the card still generates.
-    console.error("Admit card render failed, retrying without photo:", err);
-    document.body.removeChild(iframe);
-    const fallbackFrame = createIsolatedCaptureFrame();
-    const fallbackNode = mountAdmitCardFitted(fallbackFrame.contentDocument.body, { ...entry, photoUrl: "" }, settings);
-    try {
-      return await html2canvas(fallbackNode, { backgroundColor: "#FBF7EC", scale: cvScale, imageTimeout: 3000 });
-    } finally {
-      document.body.removeChild(fallbackFrame);
-    }
-  } finally {
-    if (iframe.parentNode) document.body.removeChild(iframe);
-  }
-}
-/* Admin ke set kiye "Cards per A4 page" (ya Auto me card size) ke hisaab se A4 page par cards arrange hote hain,
-   taaki poori class ek do sheets se print karke kaat li jaaye. Zyada card chune to naye page ban jaate hain. */
-async function generateAdmitCardsPdf(selected, settings) {
-  const { jsPDF } = window.jspdf;
-  const dims = getAdmitCardDims(settings);
-  const L = dims.layout;
-  const gap = ADMIT_PAGE.gap;
-  const doc = new jsPDF({ orientation: L.pageLandscape ? "landscape" : "portrait", unit: "pt", format: "a4", compress: true });
-  // PDF ka size kam rakhne ke liye: JPEG (PNG nahi) + compression + ~250-300 DPI render.
-  // Bade card (jaise 1-2 per page) ke liye render size thoda kam rakhte hain taaki file/memory halki rahe.
-  const renderScale = dims.w > 700 ? 1.8 : 2.5;
-  for (let i = 0; i < selected.length; i++) {
-    const posInPage = i % L.perPage;
-    if (i > 0 && posInPage === 0) doc.addPage("a4", L.pageLandscape ? "landscape" : "portrait");
-    const row = Math.floor(posInPage / L.cols);
-    const col = posInPage % L.cols;
-    const cellX = L.originX + col * (L.cellW + gap);
-    const cellY = L.originY + row * (L.cellH + gap);
-    const canvas = await renderAdmitCardCanvas(selected[i], settings, renderScale);
-    const imgData = canvas.toDataURL("image/jpeg", 0.85);
-    // Fit the card into its cell preserving aspect ratio (contain), centered,
-    // so cards of slightly different content height never overflow the grid.
-    const scale = Math.min(L.cellW / canvas.width, L.cellH / canvas.height);
-    const imgW = canvas.width * scale;
-    const imgH = canvas.height * scale;
-    const x = cellX + (L.cellW - imgW) / 2;
-    const y = cellY + (L.cellH - imgH) / 2;
-    doc.addImage(imgData, "JPEG", x, y, imgW, imgH, undefined, "FAST");
-  }
-  doc.save(`admit_cards_${Date.now()}.pdf`);
-}
-/* ---------- ID Card Maker — a compact student identity card (photo, name,
-   parents' names, DOB, class/session, enroll no.) generated straight from
-   each selected student's own record. Institute name / validity / footer
-   note are set once and remembered (localStorage), same pattern as Admit
-   Card Maker above. ---------- */
-const ID_CARD_KEY = "adm_reg_id_card_settings";
-function loadIdCardSettingsFromStorage() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(ID_CARD_KEY) || "null");
-    if (saved && typeof saved === "object") state.idCard = { ...state.idCard, ...saved };
-  } catch (e) {}
-}
+ 
+
 /* Columns ki selection (student list PDF / Share as Image ke liye "Columns" aur Invoice Report ke "Columns")
    is device par yaad rehti hai — logout ya app band karne par bhi — jab tak "Reset" na dabaya jaaye. */
 const EXPORT_COLUMNS_KEY = "adm_reg_export_columns_v1";
@@ -2642,12 +2362,9 @@ function saveReportColumns() {
   try { localStorage.setItem(REPORT_COLUMNS_KEY, JSON.stringify(state.reportColumnOrder)); } catch (e) {}
   queueCloudSave("report_columns");
 }
-function saveIdCardSettingsToStorage() {
-  try { localStorage.setItem(ID_CARD_KEY, JSON.stringify(state.idCard)); } catch (e) {}
-  queueCloudSave("id_card");
-}
+
 /* ---------- Paid Receipt: Institute Name + Authority Signature settings ----------
-   Same localStorage pattern as Admit Card / ID Card settings above — set once,
+   Settings are set once,
    remembered on this device, and stamped onto every Paid Receipt (view panel,
    PDF, and shared image). */
 const RECEIPT_SETTINGS_KEY = "adm_reg_receipt_settings";
@@ -2664,7 +2381,7 @@ function saveReceiptSettingsToStorage() {
 
 /* ==================== Cloud-synced settings (Supabase: app_config) ====================
    Invoice/Receipt settings (institute name, logo, signature, UPI & WhatsApp QR,
-   watermark...), Admit Card settings, ID Card settings and the Export/Report
+   watermark...) and the Export/Report
    column choices used to live ONLY in localStorage — so "clear cache / clear
    site data" wiped them and they had to be entered again. Now every change is
    ALSO saved to Supabase (one row per setting in the `app_config` table) and
@@ -2695,16 +2412,6 @@ const CLOUD_CONFIGS = {
     lsKey: RECEIPT_SETTINGS_KEY,
     get: () => state.receiptSettings,
     set: (v) => { if (v && typeof v === "object" && !Array.isArray(v)) state.receiptSettings = { ...state.receiptSettings, ...v }; },
-  },
-  admit_card: {
-    lsKey: ADMIT_CARD_KEY,
-    get: () => state.admitCard,
-    set: (v) => { if (v && typeof v === "object" && !Array.isArray(v)) state.admitCard = { ...state.admitCard, ...v }; },
-  },
-  id_card: {
-    lsKey: ID_CARD_KEY,
-    get: () => state.idCard,
-    set: (v) => { if (v && typeof v === "object" && !Array.isArray(v)) state.idCard = { ...state.idCard, ...v }; },
   },
   export_columns: {
     lsKey: EXPORT_COLUMNS_KEY,
@@ -2846,240 +2553,7 @@ function toggleCombineSiblingExpanded(entryId, sibId) {
   state.expandedCombineSiblingId = state.expandedCombineSiblingId === key ? null : key;
   renderRowInPlace(entryId);
 }
-function getIdCardEligibleEntries() {
-  return state.entries.filter(e => {
-    const matchesClass = state.idCardClassSel === "all" || (e.className || "").trim() === state.idCardClassSel;
-    const matchesSession = state.idCardSessionSel === "all" || (e.session || "").trim() === state.idCardSessionSel;
-    return matchesClass && matchesSession;
-  }).sort((a, b) => a.serial - b.serial);
-}
-/* 14 ready-made design/colour presets for the ID card — each controls the
-   header colour, badge colour, border style/radius, and footer strip so a
-   school can pick a look without touching any code. */
-const ID_CARD_THEMES = [
-  { id: "maroon",   label: "Classic Maroon",  headerBg: "#9B3437", headerText: "#F3ECDA", badgeBg: "#1F2A44", badgeText: "#F3ECDA", border: "2px solid #1F2A44", radius: "8px",  cardBg: "#FBF7EC", nameColor: "#1F2A44", accentColor: "#9B3437", footerBg: "#EFE6C8" },
-  { id: "navy",     label: "Royal Navy",      headerBg: "#1F2A44", headerText: "#F3ECDA", badgeBg: "#9B3437", badgeText: "#F3ECDA", border: "2px solid #9B3437", radius: "8px",  cardBg: "#FBF7EC", nameColor: "#1F2A44", accentColor: "#9B3437", footerBg: "#E7ECF3" },
-  { id: "emerald",  label: "Emerald Green",   headerBg: "#1B5E3F", headerText: "#F3ECDA", badgeBg: "#C9A227", badgeText: "#1F2A44", border: "2px solid #1B5E3F", radius: "4px",  cardBg: "#F5FAF6", nameColor: "#1B5E3F", accentColor: "#1B5E3F", footerBg: "#E3F1E7" },
-  { id: "purple",   label: "Royal Purple",    headerBg: "#4A2E6D", headerText: "#F3ECDA", badgeBg: "#C9A227", badgeText: "#1F2A44", border: "3px double #4A2E6D", radius: "6px",  cardBg: "#FAF7FC", nameColor: "#4A2E6D", accentColor: "#4A2E6D", footerBg: "#EEE6F5" },
-  { id: "golden",   label: "Golden Elite",    headerBg: "#8A6D1F", headerText: "#FFF8E1", badgeBg: "#1F2A44", badgeText: "#F3ECDA", border: "3px double #8A6D1F", radius: "10px", cardBg: "#FFFDF5", nameColor: "#6B5416", accentColor: "#8A6D1F", footerBg: "#FBF0CE" },
-  { id: "crimson",  label: "Crimson Bold",    headerBg: "#A31621", headerText: "#FFFFFF", badgeBg: "#1F2A44", badgeText: "#F3ECDA", border: "2px solid #A31621", radius: "4px",  cardBg: "#FFF7F7", nameColor: "#7A0F18", accentColor: "#A31621", footerBg: "#F7DEDF" },
-  { id: "slate",    label: "Slate Grey Modern", headerBg: "#37474F", headerText: "#ECEFF1", badgeBg: "#A31621", badgeText: "#FFFFFF", border: "1px solid #37474F", radius: "12px", cardBg: "#FAFAFA", nameColor: "#263238", accentColor: "#37474F", footerBg: "#E4E9EB" },
-  { id: "ocean",    label: "Ocean Blue",      headerBg: "#0B5394", headerText: "#FFFFFF", badgeBg: "#F4B400", badgeText: "#1F2A44", border: "2px solid #0B5394", radius: "8px",  cardBg: "#F5FAFF", nameColor: "#0B5394", accentColor: "#0B5394", footerBg: "#DCEBF9" },
-  { id: "sunset",   label: "Sunset Orange",   headerBg: "#C1440E", headerText: "#FFF3E0", badgeBg: "#1F2A44", badgeText: "#F3ECDA", border: "2px solid #C1440E", radius: "6px",  cardBg: "#FFFAF5", nameColor: "#8F3209", accentColor: "#C1440E", footerBg: "#FBE3D2" },
-  { id: "teal",     label: "Teal Fresh",      headerBg: "#00695C", headerText: "#E0F2F1", badgeBg: "#D84315", badgeText: "#FFFFFF", border: "2px solid #00695C", radius: "10px", cardBg: "#F4FBFA", nameColor: "#00695C", accentColor: "#00695C", footerBg: "#D9EFEC" },
-  { id: "rose",     label: "Rose Pink",       headerBg: "#AD1457", headerText: "#FCE4EC", badgeBg: "#37474F", badgeText: "#FFFFFF", border: "2px solid #AD1457", radius: "10px", cardBg: "#FFF7FA", nameColor: "#880E45", accentColor: "#AD1457", footerBg: "#F8DCE7" },
-  { id: "charcoal", label: "Charcoal Formal", headerBg: "#212121", headerText: "#FAFAFA", badgeBg: "#9B3437", badgeText: "#F3ECDA", border: "3px double #212121", radius: "2px",  cardBg: "#FAFAFA", nameColor: "#212121", accentColor: "#212121", footerBg: "#E6E6E6" },
-  { id: "mustard",  label: "Mustard Yellow",  headerBg: "#C9A227", headerText: "#1F2A44", badgeBg: "#1F2A44", badgeText: "#F3ECDA", border: "2px solid #C9A227", radius: "6px",  cardBg: "#FFFDF3", nameColor: "#6B5416", accentColor: "#C9A227", footerBg: "#F7EFCB" },
-  { id: "brown",    label: "Forest Brown",    headerBg: "#4E342E", headerText: "#EFEBE9", badgeBg: "#C9A227", badgeText: "#1F2A44", border: "2px solid #4E342E", radius: "4px",  cardBg: "#FBF8F6", nameColor: "#4E342E", accentColor: "#4E342E", footerBg: "#E9DFDB" },
-  { id: "skyline",  label: "Skyline Cyan",    headerBg: "#0097A7", headerText: "#FFFFFF", badgeBg: "#1F2A44", badgeText: "#F3ECDA", border: "2px solid #0097A7", radius: "12px", cardBg: "#F3FCFD", nameColor: "#00707A", accentColor: "#0097A7", footerBg: "#D7F0F3" },
-];
-function getIdCardTheme(themeId) {
-  return ID_CARD_THEMES.find(t => t.id === themeId) || ID_CARD_THEMES[0];
-}
-// Used to render a live preview card in the ID Card Maker panel when no
-// student is selected yet, so switching themes shows an immediate result.
-const ID_CARD_SAMPLE_ENTRY = {
-  name: "Student Name", fatherName: "Father's Name", motherName: "Mother's Name",
-  dob: "01/01/2015", rollNo: "01", className: "5th", session: "2026-27",
-  mobile: "9876543210", address: "Sample Address, City", photoUrl: "",
-};
-/* ID card ka size aur shape (aada = landscape / khada = portrait) settings se aata hai.
-   Presets: Standard PVC / Voter ID (CR-80), Large Badge (CR-100), A7, A6 ya Custom (mm me).
-   Card ke andar ka text card ke size ke hisaab se apne aap chhota/bada hota hai, settings.fontScale (%)
-   se aur adjust hota hai, aur agar phir bhi kuch card se bahar jaaye to mountIdCardFitted()
-   font ghata kar dobara banata hai taaki koi detail hide na ho. */
-const ID_CARD_PRESETS = {
-  cr80:  { label: "Standard PVC / Voter ID (85.6 × 54 mm)", long: 85.60, short: 53.98 },
-  cr100: { label: "Large Badge (98.5 × 67 mm)",             long: 98.5,  short: 67 },
-  a7:    { label: "A7 Card (105 × 74 mm)",                  long: 105,   short: 74 },
-  a6:    { label: "A6 Big Card (148 × 105 mm)",             long: 148,   short: 105 },
-};
-const ID_CARD_PX_PER_MM = 400 / 85.6;
-function getIdCardDims(settings) {
-  let L, Sh;
-  if (settings.sizePreset === "custom") {
-    L = Math.min(170, Math.max(50, parseFloat(settings.customLong) || 85.6));
-    Sh = Math.min(120, Math.max(35, parseFloat(settings.customShort) || 54));
-    if (Sh > L) { const tmp = L; L = Sh; Sh = tmp; }
-  } else {
-    const pr = ID_CARD_PRESETS[settings.sizePreset] || ID_CARD_PRESETS.cr80;
-    L = pr.long; Sh = pr.short;
-  }
-  const portrait = settings.orientation === "portrait";
-  const wMm = portrait ? Sh : L;
-  const hMm = portrait ? L : Sh;
-  return {
-    portrait, wMm, hMm,
-    w: Math.round(wMm * ID_CARD_PX_PER_MM),
-    h: Math.round(hMm * ID_CARD_PX_PER_MM),
-    factor: Math.min(2, Math.max(0.6, Math.min(L / 85.6, Sh / 53.98))),
-  };
-}
-function buildIdCardNode(entry, settings) {
-  const t = getIdCardTheme(settings.themeId);
-  const dims = getIdCardDims(settings);
-  const portrait = dims.portrait;
-  const S = (settings.fontScale != null ? settings.fontScale : 100) / 100;
-  const K = dims.factor * S;
-  const f = (n) => (Math.round(n * K * 100) / 100) + "px";
-  const photoK = dims.factor * Math.min(S, 1);
-  const photoW = Math.round(76 * photoK), photoH = Math.round(92 * photoK);
-  const kv = (label, value, full) => value
-    ? `<div style="display:flex;align-items:baseline;gap:4px;font-size:${f(9.5)};line-height:1.3;padding-bottom:2px;border-bottom:1px dotted #D9CBA3;${full ? "grid-column:1 / -1;" : ""}">
-        <span style="font-family:'IBM Plex Mono',monospace;color:#6B5F4B;flex-shrink:0;white-space:nowrap;">${escapeHtml(label)}:</span>
-        <span style="color:${t.nameColor};font-weight:600;min-width:0;word-break:break-word;">${escapeHtml(value)}</span>
-      </div>`
-    : "";
-  const wrap = document.createElement("div");
-  wrap.style.cssText = `position:relative;width:${dims.w}px;height:${dims.h}px;background:${t.cardBg};border:${t.border};border-radius:${t.radius};font-family:'Source Serif 4',Georgia,serif;color:${t.nameColor};box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;`;
-  const showWatermark = settings.watermarkEnabled && settings.logoUrl;
-  const watermarkOpacity = settings.watermarkOpacity != null ? settings.watermarkOpacity : 0.12;
-  const watermarkSize = settings.watermarkSize != null ? settings.watermarkSize : 150;
-  const watermarkOffsetX = settings.watermarkOffsetX != null ? settings.watermarkOffsetX : 0;
-  const watermarkOffsetY = settings.watermarkOffsetY != null ? settings.watermarkOffsetY : 0;
-  const logoImg = (sz) => settings.logoUrl ? `<img src="${escapeAttr(settings.logoUrl)}" crossorigin="anonymous" style="width:${sz}px;height:${sz}px;object-fit:contain;flex-shrink:0;" />` : "";
-  const badge = `<div style="font-family:'IBM Plex Mono',monospace;font-size:${f(7)};letter-spacing:1.5px;text-transform:uppercase;background:${t.badgeBg};color:${t.badgeText};padding:3px 6px;border-radius:2px;flex-shrink:0;white-space:nowrap;display:inline-block;">Student ID Card</div>`;
-  const nameBlock = `${settings.instituteName ? `<div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:${f(13)};line-height:1.2;">${escapeHtml(settings.instituteName)}</div>` : ""}
-        ${settings.schoolAddress ? `<div style="font-size:${f(7.5)};opacity:0.85;margin-top:1px;line-height:1.3;">${escapeHtml(settings.schoolAddress)}</div>` : ""}`;
-  const header = portrait
-    ? `<div style="background:${t.headerBg};color:${t.headerText};padding:8px 10px;flex-shrink:0;text-align:center;">
-        <div style="display:flex;align-items:center;justify-content:center;gap:7px;">
-          ${logoImg(Math.round(28 * dims.factor))}
-          <div style="min-width:0;">${nameBlock}</div>
-        </div>
-        <div style="margin-top:5px;">${badge}</div>
-      </div>`
-    : `<div style="background:${t.headerBg};color:${t.headerText};padding:6px 10px;flex-shrink:0;display:flex;align-items:center;gap:8px;">
-        ${logoImg(Math.round(30 * dims.factor))}
-        <div style="flex:1;min-width:0;text-align:center;">${nameBlock}</div>
-        ${badge}
-      </div>`;
-  const photo = `<div style="width:${photoW}px;height:${photoH}px;flex-shrink:0;border:1px solid #B7A97E;background:#F3ECDA;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:4px;">
-            ${entry.photoUrl ? `<img src="${escapeAttr(entry.photoUrl)}" crossorigin="anonymous" style="width:100%;height:100%;object-fit:cover;" />` : `<span style="font-size:7px;color:#B7A97E;text-align:center;">No Photo</span>`}
-          </div>`;
-  const enroll = `<div style="font-size:${f(8.5)};color:#6B5F4B;margin-top:4px;text-align:center;line-height:1.3;">Enroll No.<br/><b style="color:${t.accentColor};font-size:${f(10)};">${escapeHtml(entry.rollNo) || "—"}</b></div>`;
-  const nameEl = `<div style="font-weight:700;font-size:${f(14)};line-height:1.2;color:${t.nameColor};word-break:break-word;${portrait ? "text-align:center;" : ""}">${escapeHtml(TN(entry.name)) || "—"}</div>`;
-  const grid = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;${portrait ? "width:100%;" : ""}">
-            ${kv("Father", entry.fatherName, portrait)}
-            ${kv("Mother", entry.motherName, portrait)}
-            ${kv("DOB", entry.dob)}
-            ${kv("Class", entry.className)}
-            ${kv("Section", entry.section)}
-            ${kv("Session", entry.session)}
-            ${kv("Mobile", entry.mobile)}
-            ${kv("Address", TD(entry.address), true)}
-          </div>`;
-  const bodyInner = portrait
-    ? `<div style="position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:5px;padding:8px 12px 4px;box-sizing:border-box;">
-        <div style="display:flex;flex-direction:column;align-items:center;">${photo}${enroll}</div>
-        ${nameEl}
-        <div style="width:100%;border-top:1px dashed #B7A97E;padding-top:5px;">${grid}</div>
-      </div>`
-    : `<div style="position:relative;z-index:1;display:flex;gap:10px;padding:8px 12px 4px;box-sizing:border-box;">
-        <div style="width:${photoW + 4}px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;">${photo}${enroll}</div>
-        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;">${nameEl}${grid}</div>
-      </div>`;
-  wrap.innerHTML = `
-    ${header}
-    <div data-idc-body style="position:relative;flex:1;min-height:0;overflow:hidden;">
-      ${showWatermark ? `<img src="${escapeAttr(settings.logoUrl)}" crossorigin="anonymous" style="position:absolute;top:calc(50% + ${watermarkOffsetY}px);left:calc(50% + ${watermarkOffsetX}px);transform:translate(-50%,-50%);width:${watermarkSize}px;height:${watermarkSize}px;object-fit:contain;opacity:${watermarkOpacity};z-index:0;pointer-events:none;" />` : ""}
-      ${bodyInner}
-    </div>
-    <div style="flex-shrink:0;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;padding:3px 12px 5px;">
-        <div style="font-size:${f(8)};color:#6B5F4B;line-height:1.4;max-width:60%;">
-          ${settings.validUpto ? `Valid Upto: <b style="color:${t.nameColor};">${escapeHtml(settings.validUpto)}</b><br/>` : ""}
-          ${settings.contactPhone ? `Contact: <b style="color:${t.nameColor};">${escapeHtml(settings.contactPhone)}</b>` : ""}
-        </div>
-        <div style="text-align:center;">
-          ${settings.signatureUrl ? `<img src="${escapeAttr(settings.signatureUrl)}" crossorigin="anonymous" style="height:22px;max-width:85px;object-fit:contain;display:block;margin:0 auto;" />` : ""}
-          <div style="border-top:1px solid ${t.nameColor};width:76px;padding-top:2px;font-size:${f(7.5)};color:#6B5F4B;margin-top:${settings.signatureUrl ? "2px" : "0"};">Principal Sign.</div>
-        </div>
-      </div>
-      ${settings.footerNote ? `
-      <div style="background:${t.footerBg};padding:4px 10px;font-size:${f(7.5)};line-height:1.3;color:#6B5F4B;text-align:center;">${escapeHtml(settings.footerNote)}</div>` : ""}
-    </div>
-  `;
-  return wrap;
-}
-/* Card ko host me lagata hai aur check karta hai ki andar ka content card se
-   bahar to nahi ja raha; jaa raha ho to font 5% ghata kar dobara banata hai. */
-function mountIdCardFitted(host, entry, settings) {
-  let scale = settings.fontScale != null ? settings.fontScale : 100;
-  for (;;) {
-    const node = buildIdCardNode(entry, { ...settings, fontScale: scale });
-    host.appendChild(node);
-    const body = node.querySelector("[data-idc-body]");
-    const overflow = body && (body.scrollHeight > body.clientHeight + 1);
-    if (!overflow || scale <= 40) return node;
-    host.removeChild(node);
-    scale -= 5;
-  }
-}
-async function renderIdCardCanvas(entry, settings) {
-  const iframe = createIsolatedCaptureFrame();
-  const node = mountIdCardFitted(iframe.contentDocument.body, entry, settings);
-  try {
-    return await html2canvas(node, { backgroundColor: "#FBF7EC", scale: 2.5, useCORS: true, imageTimeout: 3000 });
-  } catch (err) {
-    // Photo likely blocked the canvas from being read out (cross-origin taint).
-    // Retry once without the photo so the rest of the card still generates.
-    console.error("ID card render failed, retrying without photo:", err);
-    document.body.removeChild(iframe);
-    const fallbackFrame = createIsolatedCaptureFrame();
-    const fallbackNode = mountIdCardFitted(fallbackFrame.contentDocument.body, { ...entry, photoUrl: "" }, settings);
-    try {
-      return await html2canvas(fallbackNode, { backgroundColor: "#FBF7EC", scale: 2.5, imageTimeout: 3000 });
-    } finally {
-      document.body.removeChild(fallbackFrame);
-    }
-  } finally {
-    if (iframe.parentNode) document.body.removeChild(iframe);
-  }
-}
-/* Each card prints at the true physical size chosen in the settings (default: standard
-   voter-ID / PVC card, CR-80, 85.60mm x 53.98mm), landscape ya portrait. As many cards
-   as fit are auto-arranged and centred per A4 page (CR-80 landscape = 2 columns x 5 rows). */
-async function generateIdCardsPdf(selected, settings) {
-  const { jsPDF } = window.jspdf;
-  // compress:true + JPEG (PNG ki jagah) se PDF ka size bahut kam ho jaata hai.
-  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4", compress: true });
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
-  const MM_TO_PT = 72 / 25.4;
-  const dims = getIdCardDims(settings);
-  const cellW = dims.wMm * MM_TO_PT;
-  const cellH = dims.hMm * MM_TO_PT;
-  const margin = 18, gapX = 10, gapY = 10;
-  const availW = pageW - 2 * margin;
-  const availH = pageH - 2 * margin;
-  const COLS = Math.max(1, Math.floor((availW + gapX) / (cellW + gapX)));
-  const ROWS = Math.max(1, Math.floor((availH + gapY) / (cellH + gapY)));
-  const PER_PAGE = COLS * ROWS;
-  const gridW = COLS * cellW + (COLS - 1) * gapX;
-  const gridH = ROWS * cellH + (ROWS - 1) * gapY;
-  const originX = margin + (availW - gridW) / 2;
-  const originY = margin + (availH - gridH) / 2;
-  for (let i = 0; i < selected.length; i++) {
-    const posInPage = i % PER_PAGE;
-    if (i > 0 && posInPage === 0) doc.addPage();
-    const row = Math.floor(posInPage / COLS);
-    const col = posInPage % COLS;
-    const cellX = originX + col * (cellW + gapX);
-    const cellY = originY + row * (cellH + gapY);
-    const canvas = await renderIdCardCanvas(selected[i], settings);
-    const imgData = canvas.toDataURL("image/jpeg", 0.85);
-    // Fit the card into its cell preserving aspect ratio (contain), centered,
-    // so cards of slightly different content height never overflow the grid.
-    const scale = Math.min(cellW / canvas.width, cellH / canvas.height);
-    const imgW = canvas.width * scale;
-    const imgH = canvas.height * scale;
-    const x = cellX + (cellW - imgW) / 2;
-    const y = cellY + (cellH - imgH) / 2;
-    doc.addImage(imgData, "JPEG", x, y, imgW, imgH, undefined, "FAST");
-  }
-  doc.save(`id_cards_${Date.now()}.pdf`);
-}
+
 function getCalcCornerClassMap(className) {
   const cls = (className || "").trim();
   return state.calcCorner[cls] || {};
@@ -4442,7 +3916,7 @@ function buildFeeChartPaidReceiptNode(entry, receipt, scaleOverride) {
   return wrap;
 }
 /* Receipt node ko `host` me lagata hai. Agar fixed size (Auto ke alawa) me content bahar nikle to
-   text ko 5% ghata kar dobara banata hai, jab tak sab fit na ho jaye (ID card ke mountIdCardFitted jaisa). */
+   text ko 5% ghata kar dobara banata hai, jab tak sab fit na ho jaye. */
 function mountReceiptFitted(host, entry, receipt) {
   const dims = getReceiptDims(state.receiptSettings);
   let scale = state.receiptSettings.fontScale != null ? state.receiptSettings.fontScale : 100;
@@ -6781,23 +6255,10 @@ const state = {
   feeChartBillDrafts: {},
   multiBillDrafts: {},
   vivaranModalText: "", vivaranModalSave: null, vivaranModalEditable: false,
-  showAdmitCardPanel: false,
-  admitCard: { instituteName: "", examName: "", examDate: "", examTime: "", reportingTime: "", venue: "", instructions: "", logoUrl: "", fontScale: 100, sizePreset: "std", orientation: "landscape", customLong: "", customShort: "", perPage: "auto", perPageCustom: "", watermarkEnabled: false, watermarkOpacity: 0.12, watermarkSize: 150, watermarkOffsetX: 0, watermarkOffsetY: 0 },
-  admitCardClassSel: "all", admitCardSessionSel: "all", admitCardSectionSel: "all", admitCardStarFilter: "all",
-  admitCardFMonthFilter: "all", admitCardNotPaidTillFilter: "all", admitCardAddressFilter: "", admitCardNoteFilter: "",
-  admitCardSelectedIds: new Set(),
-  admitCardGenerating: false, admitCardStatus: "",
-  showIdCardPanel: false,
   showInvoiceSizePanel: false,
   showPassbookStatementPanel: false, passbookStatementEntryId: "", passbookStatementSearchQuery: "",
   passbookStatementFilterType: "all", passbookStatementFilterDate: "", passbookStatementFilterMonth: "",
   passbookStatementFilterFrom: "", passbookStatementFilterTo: "",
-  idCard: { instituteName: "", schoolAddress: "", validUpto: "", contactPhone: "", footerNote: "", signatureUrl: "", themeId: "maroon", fontScale: 100, sizePreset: "cr80", orientation: "landscape", customLong: "", customShort: "", logoUrl: "", watermarkEnabled: false, watermarkOpacity: 0.12, watermarkSize: 150, watermarkOffsetX: 0, watermarkOffsetY: 0 },
-  idCardClassSel: "all", idCardSessionSel: "all",
-  idCardSelectedIds: new Set(),
-  idCardGenerating: false, idCardStatus: "",
-  idCardSignatureProcessing: false,
-  admitCardLogoProcessing: false, idCardLogoProcessing: false,
   showReportPanel: false,
   reportPeriodType: "daily",
   reportDate: "",
@@ -7162,8 +6623,6 @@ async function loadEntries() {
   loadCalcCornerFromStorage();
   await migrateLocalMessageTemplateToDb();
   await loadMessageTemplateFromDb();
-  loadAdmitCardSettingsFromStorage();
-  loadIdCardSettingsFromStorage();
   loadColumnPrefsFromStorage();
   loadReceiptSettingsFromStorage();
   await loadCloudConfigs();
@@ -8507,6 +7966,45 @@ async function toggleStarMark(entryId, starNum) {
     updateErrorBanner();
   }
 }
+/* Selected students par ek saath star mark lagao ya hatao.
+   mode "add": chuna hua colour sabhi selected students par lag jata hai (pehle se ho to waisa hi rehta hai).
+   mode "remove": ek colour ya saare stars hat jate hain. */
+async function bulkSetStar(mode) {
+  if (!state.editUnlocked) return;
+  const adding = mode === "add";
+  const which = (document.getElementById(adding ? "bulkStarAddSel" : "bulkStarRemoveSel") || {}).value || (adding ? "4" : "all");
+  const selected = state.entries.filter(e => state.selectedIds.has(e.id));
+  const targets = selected.filter(e => adding
+    ? !(e.starMarks && e.starMarks[which])
+    : e.starMarks && (which === "all" ? [1, 2, 3, 4].some(n => e.starMarks[n]) : e.starMarks[which]));
+  if (!targets.length) {
+    alert(adding ? `Selected ${selected.length} students par ${STAR_NAMES[which]} star pehle se laga hai.` : "Selected students me ye star mark nahi mila.");
+    return;
+  }
+  const label = which === "all" ? "saare star" : `${STAR_NAMES[which]} star`;
+  const q = adding ? `${targets.length} students par ${label} laga de?` : `${targets.length} students se ${label} hata de?`;
+  if (!confirm(q)) return;
+  const btn = document.getElementById(adding ? "bulkStarAddBtn" : "bulkStarRemoveBtn");
+  if (btn) { btn.disabled = true; btn.textContent = adding ? "Marking…" : "Removing…"; }
+  let failed = 0;
+  const work = targets.slice();
+  const worker = async () => {
+    while (work.length) {
+      const entry = work.shift();
+      const prev = { ...(entry.starMarks || {}) };
+      const next = { ...prev };
+      if (adding) next[which] = true;
+      else if (which === "all") [1, 2, 3, 4].forEach(n => { next[n] = false; });
+      else next[which] = false;
+      entry.starMarks = next;
+      const { error } = await supabaseClient.from("admission_entries").update({ star_marks: next }).eq("id", entry.id);
+      if (error) { console.error("Could not save star:", error); entry.starMarks = prev; failed++; }
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  if (failed) alert(`${failed} students ka star save nahi ho paya. Dobara try karein.`);
+  renderEntries();
+}
 async function addEventToEntry(entryId) {
   if (!state.editUnlocked) return;
   const draft = state.eventDraft;
@@ -8705,17 +8203,7 @@ function renderHeader() {
   toggleCalcCornerBtn.style.color = state.showCalcCornerPanel ? "#F3ECDA" : "#1F2A44";
   toggleCalcCornerBtn.style.display = (state.editUnlocked && !state.isGuestMode) ? "" : "none";
 
-  document.getElementById("icon-admitCard").innerHTML = icon("admitCard", { size: 15 });
-  const toggleAdmitCardBtn = document.getElementById("toggleAdmitCardBtn");
-  toggleAdmitCardBtn.style.background = state.showAdmitCardPanel ? "#1F2A44" : "transparent";
-  toggleAdmitCardBtn.style.color = state.showAdmitCardPanel ? "#F3ECDA" : "#1F2A44";
-  toggleAdmitCardBtn.style.display = state.isGuestMode ? "none" : "";
-  document.getElementById("icon-idCard").innerHTML = icon("idCard", { size: 15 });
   document.getElementById("icon-passbookStatement").innerHTML = icon("passbookStatement", { size: 15 });
-  const toggleIdCardBtn = document.getElementById("toggleIdCardBtn");
-  toggleIdCardBtn.style.background = state.showIdCardPanel ? "#1F2A44" : "transparent";
-  toggleIdCardBtn.style.color = state.showIdCardPanel ? "#F3ECDA" : "#1F2A44";
-  toggleIdCardBtn.style.display = state.isGuestMode ? "none" : "";
   document.getElementById("icon-invoiceSize").innerHTML = icon("report", { size: 15 });
   const toggleInvoiceSizeBtn = document.getElementById("toggleInvoiceSizeBtn");
   toggleInvoiceSizeBtn.style.background = state.showInvoiceSizePanel ? "#1F2A44" : "transparent";
@@ -9979,9 +9467,6 @@ function renderCalcCornerPanel() {
   }
 }
 
-/* Panel har tick/filter par poora dobara banta hai, jisse list aur page scroll upar (pehle student par) laut jaata tha.
-   Ye wrapper dono scroll positions yaad rakhkar dobara set kar deta hai (list badli ho to list top se dikhegi). */
-function renderAdmitCardPanel() { renderPanelKeepingScroll("admitCardPanel", "acStudentList", renderAdmitCardPanelInner); }
 function renderPanelKeepingScroll(panelId, listId, inner) {
   const prevList = document.getElementById(listId);
   const prevTop = prevList ? prevList.scrollTop : 0;
@@ -9991,365 +9476,6 @@ function renderPanelKeepingScroll(panelId, listId, inner) {
   const newList = document.getElementById(listId);
   if (newList && prevSig !== null && newList.dataset.sig === prevSig) newList.scrollTop = prevTop;
   if (Math.abs(window.scrollY - pageY) > 1) window.scrollTo(0, pageY);
-}
-function renderAdmitCardPanelInner() {
-  const el = document.getElementById("admitCardPanel");
-  if (!state.showAdmitCardPanel) { el.innerHTML = ""; el.className = ""; return; }
-  el.className = "panel";
-  const classList = getClassList();
-  const sessionList = getSessionList();
-  const sectionList = getSectionList();
-  const eligible = getAdmitCardEligibleEntries();
-  const allSelected = eligible.length > 0 && eligible.every(e => state.admitCardSelectedIds.has(e.id));
-  const selectedCount = state.admitCardSelectedIds.size;
-  el.innerHTML = `
-    <span class="stamp" style="font-size:12px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;">Admit Card Maker</span>
-    <div class="field-grid" style="margin-bottom:14px;">
-      <div><label>Institute Name</label><input id="acInstituteName" class="rule-input" value="${escapeAttr(state.admitCard.instituteName)}" placeholder="e.g. Saraswati Vidya Mandir" /></div>
-      <div><label>Exam Name</label><input id="acExamName" class="rule-input" value="${escapeAttr(state.admitCard.examName)}" placeholder="e.g. Half-Yearly Examination" /></div>
-      <div><label>Exam Date</label><input id="acExamDate" class="rule-input" value="${escapeAttr(state.admitCard.examDate)}" placeholder="e.g. 12 Aug 2026" /></div>
-      <div><label>Exam Time</label><input id="acExamTime" class="rule-input" value="${escapeAttr(state.admitCard.examTime)}" placeholder="e.g. 9:00 AM - 12:00 PM" /></div>
-      <div><label>Reporting Time</label><input id="acReportingTime" class="rule-input" value="${escapeAttr(state.admitCard.reportingTime)}" placeholder="e.g. 8:30 AM" /></div>
-      <div><label>Venue / Center</label><input id="acVenue" class="rule-input" value="${escapeAttr(state.admitCard.venue)}" placeholder="e.g. Main Building" /></div>
-      <div style="grid-column:1 / -1;"><label>Instructions</label><textarea id="acInstructions" rows="3" class="rule-input" style="resize:vertical;">${escapeHtml(state.admitCard.instructions)}</textarea></div>
-    </div>
-    <div style="margin-bottom:14px;">
-      <label class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:6px;">School Logo</label>
-      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-        <div id="acLogoPreviewWrap" style="width:56px;height:56px;flex-shrink:0;border:1px solid #D9CBA3;border-radius:4px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-          ${state.admitCardLogoProcessing
-            ? `<span style="font-size:10px;color:#6B5F4B;">...</span>`
-            : state.admitCard.logoUrl
-            ? `<img src="${state.admitCard.logoUrl}" style="max-width:100%;max-height:100%;object-fit:contain;" />`
-            : `<span style="font-size:9px;color:#B7A97E;text-align:center;">No Logo</span>`}
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" id="acLogoGalleryBtn" style="display:flex;align-items:center;gap:5px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${icon("image", { size: 14 })} Gallery se Logo</button>
-          ${state.admitCard.logoUrl ? `<button type="button" id="acLogoRemoveBtn" style="display:flex;align-items:center;gap:5px;background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${icon("x", { size: 14 })} Remove</button>` : ""}
-        </div>
-        <input type="file" id="acLogoGalleryInput" accept="image/*" style="display:none;" />
-      </div>
-      <p style="font-size:11px;color:#6B5F4B;margin:6px 0 0;">A small logo will print in the header along with the Institute Name.</p>
-      <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #D9CBA3;">
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#1F2A44;cursor:${state.admitCard.logoUrl ? "pointer" : "not-allowed"};opacity:${state.admitCard.logoUrl ? 1 : 0.5};">
-          <input type="checkbox" id="acWatermarkChk" ${state.admitCard.watermarkEnabled ? "checked" : ""} ${state.admitCard.logoUrl ? "" : "disabled"} style="width:16px;height:16px;" />
-          Also show the logo as a background watermark
-        </label>
-        ${state.admitCard.logoUrl ? "" : `<p style="font-size:11px;color:#B7A97E;margin:4px 0 0;">Upload a logo first to use a watermark.</p>`}
-        ${state.admitCard.watermarkEnabled && state.admitCard.logoUrl ? `
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Fade</label>
-          <input type="range" id="acWatermarkOpacity" min="0.04" max="0.35" step="0.01" value="${state.admitCard.watermarkOpacity}" style="flex:1;" />
-          <span id="acWatermarkOpacityVal" style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${Math.round(state.admitCard.watermarkOpacity * 100)}%</span>
-        </div>
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Size</label>
-          <input type="range" id="acWatermarkSize" min="60" max="260" step="5" value="${state.admitCard.watermarkSize}" style="flex:1;" />
-          <span id="acWatermarkSizeVal" style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${state.admitCard.watermarkSize}px</span>
-        </div>
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Left-Right</label>
-          <input type="range" id="acWatermarkOffsetX" min="-120" max="120" step="1" value="${state.admitCard.watermarkOffsetX}" style="flex:1;" />
-          <span id="acWatermarkOffsetXVal" style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${state.admitCard.watermarkOffsetX}</span>
-        </div>
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Up-Down</label>
-          <input type="range" id="acWatermarkOffsetY" min="-120" max="120" step="1" value="${state.admitCard.watermarkOffsetY}" style="flex:1;" />
-          <span id="acWatermarkOffsetYVal" style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${state.admitCard.watermarkOffsetY}</span>
-        </div>
-        <button type="button" id="acWatermarkResetBtn" style="margin-top:8px;background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;border-radius:3px;padding:5px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Reset Watermark Position</button>` : ""}
-      </div>
-    </div>
-    <div style="margin-bottom:14px;">
-      <label class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:6px;">Card Size &amp; Shape</label>
-      <div style="margin-bottom:8px;">
-        <label style="font-size:11px;color:#6B5F4B;display:block;margin-bottom:4px;">Ek A4 page par kitne card nikalne hain?</label>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <select id="acPerPage" class="rule-input" style="flex:1;min-width:200px;box-sizing:border-box;">
-            <option value="auto" ${(state.admitCard.perPage || "auto") === "auto" ? "selected" : ""}>Auto (card size ke hisaab se)</option>
-            ${[1, 2, 3, 4, 6, 8, 9, 10, 12, 15, 16].map(n => `<option value="${n}" ${state.admitCard.perPage === String(n) ? "selected" : ""}>${n} card per page</option>`).join("")}
-            <option value="custom" ${state.admitCard.perPage === "custom" ? "selected" : ""}>Apna number likhein…</option>
-          </select>
-          ${state.admitCard.perPage === "custom" ? `<input id="acPerPageCustom" type="number" inputmode="numeric" min="1" max="30" step="1" class="rule-input" placeholder="1–30" value="${escapeAttr(state.admitCard.perPageCustom)}" style="width:90px;box-sizing:border-box;" />` : ""}
-        </div>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <select id="acOrientation" class="rule-input" style="flex:1;min-width:150px;box-sizing:border-box;">
-          <option value="landscape" ${state.admitCard.orientation !== "portrait" ? "selected" : ""}>Aada (Landscape) ▭</option>
-          <option value="portrait" ${state.admitCard.orientation === "portrait" ? "selected" : ""}>Khada (Portrait) ▯</option>
-        </select>
-        ${admitPerPageCount(state.admitCard) ? "" : `
-        <select id="acSizePreset" class="rule-input" style="flex:2;min-width:200px;box-sizing:border-box;">
-          ${Object.keys(ADMIT_CARD_PRESETS).map(k => `<option value="${k}" ${state.admitCard.sizePreset === k ? "selected" : ""}>${escapeHtml(ADMIT_CARD_PRESETS[k].label)}</option>`).join("")}
-          <option value="custom" ${state.admitCard.sizePreset === "custom" ? "selected" : ""}>Custom size (mm)</option>
-        </select>`}
-      </div>
-      ${!admitPerPageCount(state.admitCard) && state.admitCard.sizePreset === "custom" ? `
-      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
-        <input id="acCustomLong" type="number" inputmode="decimal" min="60" max="170" step="0.5" class="rule-input" placeholder="Lambai (mm)" value="${escapeAttr(state.admitCard.customLong)}" style="width:120px;box-sizing:border-box;" />
-        <span style="color:#6B5F4B;">×</span>
-        <input id="acCustomShort" type="number" inputmode="decimal" min="40" max="120" step="0.5" class="rule-input" placeholder="Chaudai (mm)" value="${escapeAttr(state.admitCard.customShort)}" style="width:120px;box-sizing:border-box;" />
-        <span style="font-size:11px;color:#6B5F4B;">mm (lambai 60–170, chaudai 40–120)</span>
-      </div>` : ""}
-      <p style="font-size:11px;color:#6B5F4B;margin:4px 0 0;">${(() => { const d = getAdmitCardDims(state.admitCard); const l = d.layout; return `Ek A4 page par <b>${l.perPage}</b> card (${l.cols} × ${l.rows}${l.pageLandscape ? ", A4 landscape" : ""}) · Card size: ${d.wMm.toFixed(1)} × ${d.hMm.toFixed(1)} mm${admitPerPageCount(state.admitCard) ? " (page ke hisaab se apne aap)" : ""}`; })()}</p>
-      <label class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin:12px 0 6px;">Text Size (Font)</label>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:11px;color:#6B5F4B;">A</span>
-        <input type="range" id="acFontScale" min="50" max="150" step="5" value="${state.admitCard.fontScale != null ? state.admitCard.fontScale : 100}" style="flex:1;" />
-        <span style="font-size:15px;color:#6B5F4B;">A</span>
-        <span id="acFontScaleVal" style="font-size:12px;color:#1F2A44;width:42px;text-align:right;">${state.admitCard.fontScale != null ? state.admitCard.fontScale : 100}%</span>
-        <button type="button" id="acFontScaleReset" class="stamp" style="background:transparent;border:1px solid #B7A97E;border-radius:3px;padding:4px 8px;font-size:11px;color:#6B5F4B;cursor:pointer;">100%</button>
-      </div>
-      <p style="font-size:11px;color:#6B5F4B;margin:4px 0 0;">Agar kuch card se bahar jaaye to font apne aap thoda chhota ho jaata hai, taaki kuch hide na ho.</p>
-      <p style="font-size:11px;color:#6B5F4B;margin:8px 0 0;">Preview:</p>
-      <div id="acCardPreviewWrap" style="margin-top:8px;display:flex;justify-content:center;padding:12px;background:#EFE7CE;border-radius:6px;overflow-x:auto;"></div>
-    </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
-      <select id="acClassSel" class="stamp">
-        <option value="all" ${state.admitCardClassSel === "all" ? "selected" : ""}>All Classes</option>
-        ${classList.map(c => `<option value="${escapeAttr(c)}" ${state.admitCardClassSel === c ? "selected" : ""}>Class ${escapeHtml(c)}</option>`).join("")}
-      </select>
-      <select id="acSessionSel" class="stamp">
-        <option value="all" ${state.admitCardSessionSel === "all" ? "selected" : ""}>All Sessions</option>
-        ${sessionList.map(s => `<option value="${escapeAttr(s)}" ${state.admitCardSessionSel === s ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
-      </select>
-      <select id="acSectionSel" class="stamp">
-        <option value="all" ${state.admitCardSectionSel === "all" ? "selected" : ""}>All Sections</option>
-        ${sectionList.map(s => `<option value="${escapeAttr(s)}" ${state.admitCardSectionSel === s ? "selected" : ""}>Section ${escapeHtml(s)}</option>`).join("")}
-      </select>
-      <select id="acStarFilterSel" class="stamp">
-        <option value="all" ${state.admitCardStarFilter === "all" ? "selected" : ""}>All Stars</option>
-        <option value="none" ${state.admitCardStarFilter === "none" ? "selected" : ""}>No Star</option>
-        ${[1, 2, 3, 4].map(n => `<option value="${n}" ${state.admitCardStarFilter === String(n) ? "selected" : ""}>${STAR_NAMES[n]} Star</option>`).join("")}
-      </select>
-      <select id="acFMonthFilterSel" class="stamp">
-        <option value="all" ${state.admitCardFMonthFilter === "all" ? "selected" : ""}>Fee Till: Any</option>
-        ${MONTHS.map(m => `<option value="${escapeAttr(m)}" ${state.admitCardFMonthFilter === m ? "selected" : ""}>Fee Till: ${escapeHtml(m)}+</option>`).join("")}
-      </select>
-      <select id="acNotPaidTillFilterSel" class="stamp">
-        <option value="all" ${state.admitCardNotPaidTillFilter === "all" ? "selected" : ""}>Fee Not Paid Till: Any</option>
-        ${MONTHS.map(m => `<option value="${escapeAttr(m)}" ${state.admitCardNotPaidTillFilter === m ? "selected" : ""}>Not Paid Till: ${escapeHtml(m)}</option>`).join("")}
-      </select>
-    </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
-      <div style="flex:1;min-width:160px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #B7A97E;padding-bottom:4px;">
-        <input id="acAddressFilterInput" placeholder="Filter by address…" class="rule-input" style="border-bottom:none;padding:0;" value="${escapeAttr(state.admitCardAddressFilter)}" />
-      </div>
-      <div style="flex:1;min-width:160px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #B7A97E;padding-bottom:4px;">
-        <input id="acNoteFilterInput" placeholder="Filter by note…" class="rule-input" style="border-bottom:none;padding:0;" value="${escapeAttr(state.admitCardNoteFilter)}" />
-      </div>
-    </div>
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#1F2A44;cursor:pointer;">
-        <input type="checkbox" id="acSelectAllChk" ${allSelected ? "checked" : ""} style="width:16px;height:16px;" ${eligible.length === 0 ? "disabled" : ""} />
-        Select all (${eligible.length})
-      </label>
-      <span class="stamp" style="font-size:12.5px;color:#6B5F4B;">${selectedCount} selected</span>
-    </div>
-    <div id="acStudentList" data-sig="${eligible.length}:${eligible.length ? eligible[0].id : ''}:${eligible.length ? eligible[eligible.length - 1].id : ''}" style="max-height:260px;overflow-y:auto;border:1px solid #D9CBA3;border-radius:3px;margin-bottom:14px;">
-      ${eligible.length === 0
-        ? `<p style="font-size:12.5px;color:#6B5F4B;padding:12px;margin:0;">No student found for this filter.</p>`
-        : eligible.map(e => `
-          <label style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #EFE7CE;font-size:13px;cursor:pointer;">
-            <input type="checkbox" class="acStudentChk" data-id="${e.id}" ${state.admitCardSelectedIds.has(e.id) ? "checked" : ""} style="width:15px;height:15px;flex-shrink:0;" />
-            <span style="flex:1;">${escapeHtml(TN(e.name)) || "—"} <span style="color:#6B5F4B;">· Class ${escapeHtml(e.className) || "—"} · Roll ${escapeHtml(e.rollNo) || "—"}</span></span>
-          </label>`).join("")}
-    </div>
-    <button id="acGenerateBtn" ${selectedCount === 0 || state.admitCardGenerating ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#9B3437;color:#F3ECDA;border:none;border-radius:3px;padding:9px 16px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:${selectedCount === 0 || state.admitCardGenerating ? "not-allowed" : "pointer"};opacity:${selectedCount === 0 || state.admitCardGenerating ? 0.5 : 1};">${icon("filetext", { size: 14 })} ${state.admitCardGenerating ? "Generating…" : `Generate ${selectedCount || ""} Admit Card${selectedCount === 1 ? "" : "s"} (PDF)`}</button>
-    ${state.admitCardStatus ? `<p style="font-size:12px;margin:10px 0 0;color:${state.admitCardStatus.startsWith("Error") ? "#9B3437" : "#1E7A3E"};">${escapeHtml(state.admitCardStatus)}</p>` : ""}
-  `;
-  const saveField = (id, key) => {
-    const input = document.getElementById(id);
-    if (input) input.addEventListener("input", () => { state.admitCard[key] = input.value; saveAdmitCardSettingsToStorage(); });
-  };
-  saveField("acInstituteName", "instituteName");
-  saveField("acExamName", "examName");
-  saveField("acExamDate", "examDate");
-  saveField("acExamTime", "examTime");
-  saveField("acReportingTime", "reportingTime");
-  saveField("acVenue", "venue");
-  saveField("acInstructions", "instructions");
-  const acPreviewWrap = document.getElementById("acCardPreviewWrap");
-  const mountAdmitCardPreview = () => {
-    if (!acPreviewWrap) return;
-    acPreviewWrap.innerHTML = "";
-    const previewEntry = eligible.find(e => state.admitCardSelectedIds.has(e.id)) || eligible[0] || ID_CARD_SAMPLE_ENTRY;
-    const dims = getAdmitCardDims(state.admitCard);
-    const avail = Math.max(200, acPreviewWrap.clientWidth - 24);
-    const k = Math.min(1, avail / dims.w);
-    const outer = document.createElement("div");
-    outer.style.cssText = `width:${Math.round(dims.w * k)}px;height:${Math.round(dims.h * k)}px;flex-shrink:0;`;
-    const inner = document.createElement("div");
-    inner.style.cssText = `width:${dims.w}px;height:${dims.h}px;transform:scale(${k});transform-origin:top left;`;
-    outer.appendChild(inner);
-    acPreviewWrap.appendChild(outer);
-    mountAdmitCardFitted(inner, previewEntry, state.admitCard);
-  };
-  mountAdmitCardPreview();
-  const setAdmitCardOpt = (key, val) => { state.admitCard[key] = val; saveAdmitCardSettingsToStorage(); renderAdmitCardPanel(); };
-  const acOrientation = document.getElementById("acOrientation");
-  if (acOrientation) acOrientation.addEventListener("change", (e) => setAdmitCardOpt("orientation", e.target.value));
-  const acSizePreset = document.getElementById("acSizePreset");
-  if (acSizePreset) acSizePreset.addEventListener("change", (e) => {
-    if (e.target.value === "custom" && !state.admitCard.customLong) { state.admitCard.customLong = "96"; state.admitCard.customShort = "68"; }
-    setAdmitCardOpt("sizePreset", e.target.value);
-  });
-  ["acCustomLong:customLong", "acCustomShort:customShort"].forEach(pair => {
-    const [id, key] = pair.split(":");
-    const inp = document.getElementById(id);
-    if (inp) inp.addEventListener("change", (e) => setAdmitCardOpt(key, e.target.value));
-  });
-  const acPerPage = document.getElementById("acPerPage");
-  if (acPerPage) acPerPage.addEventListener("change", (e) => {
-    if (e.target.value === "custom" && !state.admitCard.perPageCustom) state.admitCard.perPageCustom = "8";
-    setAdmitCardOpt("perPage", e.target.value);
-  });
-  const acPerPageCustom = document.getElementById("acPerPageCustom");
-  if (acPerPageCustom) acPerPageCustom.addEventListener("change", (e) => setAdmitCardOpt("perPageCustom", e.target.value));
-  const acFontScale = document.getElementById("acFontScale");
-  if (acFontScale) acFontScale.addEventListener("input", (e) => {
-    state.admitCard.fontScale = parseInt(e.target.value, 10);
-    document.getElementById("acFontScaleVal").textContent = state.admitCard.fontScale + "%";
-    saveAdmitCardSettingsToStorage();
-    mountAdmitCardPreview();
-  });
-  const acFontScaleReset = document.getElementById("acFontScaleReset");
-  if (acFontScaleReset) acFontScaleReset.addEventListener("click", () => setAdmitCardOpt("fontScale", 100));
-  const acWatermarkChk = document.getElementById("acWatermarkChk");
-  if (acWatermarkChk) acWatermarkChk.addEventListener("change", (e) => setAdmitCardOpt("watermarkEnabled", e.target.checked));
-  [["acWatermarkOpacity", "watermarkOpacity", true, v => Math.round(v * 100) + "%"],
-   ["acWatermarkSize", "watermarkSize", false, v => v + "px"],
-   ["acWatermarkOffsetX", "watermarkOffsetX", false, v => String(v)],
-   ["acWatermarkOffsetY", "watermarkOffsetY", false, v => String(v)]].forEach(([id, key, isFloat, fmt]) => {
-    const inp = document.getElementById(id);
-    if (!inp) return;
-    inp.addEventListener("input", (e) => {
-      const v = isFloat ? parseFloat(e.target.value) : parseInt(e.target.value, 10);
-      state.admitCard[key] = v;
-      const lbl = document.getElementById(id + "Val");
-      if (lbl) lbl.textContent = fmt(v);
-      saveAdmitCardSettingsToStorage();
-      mountAdmitCardPreview();
-    });
-  });
-  const acWatermarkResetBtn = document.getElementById("acWatermarkResetBtn");
-  if (acWatermarkResetBtn) acWatermarkResetBtn.addEventListener("click", () => {
-    state.admitCard.watermarkSize = 150;
-    state.admitCard.watermarkOffsetX = 0;
-    state.admitCard.watermarkOffsetY = 0;
-    saveAdmitCardSettingsToStorage();
-    renderAdmitCardPanel();
-  });
-  const acLogoGalBtn = document.getElementById("acLogoGalleryBtn");
-  const acLogoGalInput = document.getElementById("acLogoGalleryInput");
-  if (acLogoGalBtn && acLogoGalInput) {
-    acLogoGalBtn.addEventListener("click", () => acLogoGalInput.click());
-    acLogoGalInput.addEventListener("change", async () => {
-      const file = acLogoGalInput.files && acLogoGalInput.files[0];
-      acLogoGalInput.value = "";
-      if (!file) return;
-      state.admitCardLogoProcessing = true;
-      renderAdmitCardPanel();
-      try {
-        // PNG (not JPEG) so a transparent-background logo stays transparent.
-        const compressed = await compressImageFile(file, 240, 0.9, "image/png");
-        const dataUrl = await blobToDataUrl(compressed);
-        state.admitCard.logoUrl = dataUrl;
-        saveAdmitCardSettingsToStorage();
-      } catch (err) {
-        console.error("Logo processing failed:", err);
-        state.admitCardStatus = "Error: Couldn't process the logo image, please try again.";
-      } finally {
-        state.admitCardLogoProcessing = false;
-        renderAdmitCardPanel();
-      }
-    });
-  }
-  const acLogoRemoveBtn = document.getElementById("acLogoRemoveBtn");
-  if (acLogoRemoveBtn) {
-    acLogoRemoveBtn.addEventListener("click", () => {
-      state.admitCard.logoUrl = "";
-      saveAdmitCardSettingsToStorage();
-      renderAdmitCardPanel();
-    });
-  }
-  document.getElementById("acClassSel").addEventListener("change", (e) => {
-    state.admitCardClassSel = e.target.value;
-    renderAdmitCardPanel();
-  });
-  document.getElementById("acSessionSel").addEventListener("change", (e) => {
-    state.admitCardSessionSel = e.target.value;
-    renderAdmitCardPanel();
-  });
-  document.getElementById("acSectionSel").addEventListener("change", (e) => {
-    state.admitCardSectionSel = e.target.value;
-    renderAdmitCardPanel();
-  });
-  document.getElementById("acStarFilterSel").addEventListener("change", (e) => {
-    state.admitCardStarFilter = e.target.value;
-    renderAdmitCardPanel();
-  });
-  document.getElementById("acFMonthFilterSel").addEventListener("change", (e) => {
-    state.admitCardFMonthFilter = e.target.value;
-    renderAdmitCardPanel();
-  });
-  document.getElementById("acNotPaidTillFilterSel").addEventListener("change", (e) => {
-    state.admitCardNotPaidTillFilter = e.target.value;
-    renderAdmitCardPanel();
-  });
-  const acAddressInput = document.getElementById("acAddressFilterInput");
-  acAddressInput.addEventListener("input", () => {
-    state.admitCardAddressFilter = acAddressInput.value;
-    const cursorPos = acAddressInput.selectionStart;
-    renderAdmitCardPanel();
-    const refocused = document.getElementById("acAddressFilterInput");
-    if (refocused) { refocused.focus(); refocused.setSelectionRange(cursorPos, cursorPos); }
-  });
-  const acNoteInput = document.getElementById("acNoteFilterInput");
-  acNoteInput.addEventListener("input", () => {
-    state.admitCardNoteFilter = acNoteInput.value;
-    const cursorPos = acNoteInput.selectionStart;
-    renderAdmitCardPanel();
-    const refocused = document.getElementById("acNoteFilterInput");
-    if (refocused) { refocused.focus(); refocused.setSelectionRange(cursorPos, cursorPos); }
-  });
-  const selectAllChk = document.getElementById("acSelectAllChk");
-  if (selectAllChk) {
-    selectAllChk.addEventListener("change", (e) => {
-      if (e.target.checked) eligible.forEach(en => state.admitCardSelectedIds.add(en.id));
-      else eligible.forEach(en => state.admitCardSelectedIds.delete(en.id));
-      renderAdmitCardPanel();
-    });
-  }
-  el.querySelectorAll(".acStudentChk").forEach(chk => {
-    chk.addEventListener("change", (e) => {
-      if (e.target.checked) state.admitCardSelectedIds.add(chk.dataset.id);
-      else state.admitCardSelectedIds.delete(chk.dataset.id);
-      renderAdmitCardPanel();
-    });
-  });
-  const genBtn = document.getElementById("acGenerateBtn");
-  if (genBtn) {
-    genBtn.addEventListener("click", async () => {
-      // Filter se bahar (jaise pichhle Class filter me) chuni gayi entries bhi shaamil rahen — sirf
-      // abhi dikh rahi `eligible` list tak simit nahi, poori state.entries me se dhoondte hain.
-      const selected = state.entries.filter(e => state.admitCardSelectedIds.has(e.id));
-      if (!selected.length) return;
-      state.admitCardGenerating = true;
-      state.admitCardStatus = "";
-      renderAdmitCardPanel();
-      try {
-        await generateAdmitCardsPdf(selected, state.admitCard);
-        state.admitCardStatus = `${selected.length} admit card${selected.length === 1 ? "" : "s"} PDF is ready.`;
-      } catch (err) {
-        console.error("Admit card generation failed:", err);
-        state.admitCardStatus = "Error: There was a problem creating the PDF, please try again.";
-      } finally {
-        state.admitCardGenerating = false;
-        renderAdmitCardPanel();
-      }
-    });
-  }
 }
 
 /* ---------- Menu panel: Invoice Size & Shape ---------- */
@@ -10596,394 +9722,6 @@ function wireInvoiceSizePanel(el) {
   }
   const fontScaleReset = el.querySelector("#receiptFontScaleReset");
   if (fontScaleReset) fontScaleReset.addEventListener("click", () => setOpt("fontScale", 100));
-}
-function renderIdCardPanel() { renderPanelKeepingScroll("idCardPanel", "icStudentList", renderIdCardPanelInner); }
-function renderIdCardPanelInner() {
-  const el = document.getElementById("idCardPanel");
-  if (!state.showIdCardPanel) { el.innerHTML = ""; el.className = ""; return; }
-  el.className = "panel";
-  const classList = getClassList();
-  const sessionList = getSessionList();
-  const eligible = getIdCardEligibleEntries();
-  const allSelected = eligible.length > 0 && eligible.every(e => state.idCardSelectedIds.has(e.id));
-  const selectedCount = state.idCardSelectedIds.size;
-  el.innerHTML = `
-    <span class="stamp" style="font-size:12px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;">ID Card Maker</span>
-    <div class="field-grid" style="margin-bottom:14px;">
-      <div><label>Institute Name</label><input id="icInstituteName" class="rule-input" value="${escapeAttr(state.idCard.instituteName)}" placeholder="e.g. Saraswati Vidya Mandir" /></div>
-      <div><label>School Address</label><input id="icSchoolAddress" class="rule-input" value="${escapeAttr(state.idCard.schoolAddress)}" placeholder="e.g. Station Road, Kanpur" /></div>
-      <div><label>Valid Upto</label><input id="icValidUpto" class="rule-input" value="${escapeAttr(state.idCard.validUpto)}" placeholder="e.g. March 2027" /></div>
-      <div><label>Contact Phone</label><input id="icContactPhone" class="rule-input" value="${escapeAttr(state.idCard.contactPhone)}" placeholder="e.g. 98765-43210" /></div>
-      <div style="grid-column:1 / -1;"><label>Footer Note</label><input id="icFooterNote" class="rule-input" value="${escapeAttr(state.idCard.footerNote)}" placeholder="e.g. If found, please return to school office" /></div>
-    </div>
-    <div style="margin-bottom:14px;">
-      <label class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:6px;">School Logo</label>
-      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-        <div id="icLogoPreviewWrap" style="width:56px;height:56px;flex-shrink:0;border:1px solid #D9CBA3;border-radius:4px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-          ${state.idCardLogoProcessing
-            ? `<span style="font-size:10px;color:#6B5F4B;">...</span>`
-            : state.idCard.logoUrl
-            ? `<img src="${state.idCard.logoUrl}" style="max-width:100%;max-height:100%;object-fit:contain;" />`
-            : `<span style="font-size:9px;color:#B7A97E;text-align:center;">No Logo</span>`}
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" id="icLogoGalleryBtn" style="display:flex;align-items:center;gap:5px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${icon("image", { size: 14 })} Gallery se Logo</button>
-          ${state.idCard.logoUrl ? `<button type="button" id="icLogoRemoveBtn" style="display:flex;align-items:center;gap:5px;background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${icon("x", { size: 14 })} Remove</button>` : ""}
-        </div>
-        <input type="file" id="icLogoGalleryInput" accept="image/*" style="display:none;" />
-      </div>
-      <p style="font-size:11px;color:#6B5F4B;margin:6px 0 0;">A small logo will print in the header along with the Institute Name.</p>
-      <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #D9CBA3;">
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#1F2A44;cursor:${state.idCard.logoUrl ? "pointer" : "not-allowed"};opacity:${state.idCard.logoUrl ? 1 : 0.5};">
-          <input type="checkbox" id="icWatermarkChk" ${state.idCard.watermarkEnabled ? "checked" : ""} ${state.idCard.logoUrl ? "" : "disabled"} style="width:16px;height:16px;" />
-          Also show the logo as a background watermark
-        </label>
-        ${state.idCard.logoUrl ? "" : `<p style="font-size:11px;color:#B7A97E;margin:4px 0 0;">Upload a logo first to use a watermark.</p>`}
-        ${state.idCard.watermarkEnabled && state.idCard.logoUrl ? `
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Fade</label>
-          <input type="range" id="icWatermarkOpacity" min="0.04" max="0.35" step="0.01" value="${state.idCard.watermarkOpacity}" style="flex:1;" />
-          <span style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${Math.round(state.idCard.watermarkOpacity * 100)}%</span>
-        </div>
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Size</label>
-          <input type="range" id="icWatermarkSize" min="60" max="220" step="5" value="${state.idCard.watermarkSize}" style="flex:1;" />
-          <span style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${state.idCard.watermarkSize}px</span>
-        </div>
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Left-Right</label>
-          <input type="range" id="icWatermarkOffsetX" min="-60" max="60" step="1" value="${state.idCard.watermarkOffsetX}" style="flex:1;" />
-          <span style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${state.idCard.watermarkOffsetX}</span>
-        </div>
-        <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
-          <label style="font-size:11px;color:#6B5F4B;flex-shrink:0;width:70px;">Up-Down</label>
-          <input type="range" id="icWatermarkOffsetY" min="-60" max="60" step="1" value="${state.idCard.watermarkOffsetY}" style="flex:1;" />
-          <span style="font-size:11px;color:#6B5F4B;width:32px;text-align:right;">${state.idCard.watermarkOffsetY}</span>
-        </div>
-        <button type="button" id="icWatermarkResetBtn" style="margin-top:8px;background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;border-radius:3px;padding:5px 10px;font-size:11px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Reset Watermark Position</button>` : ""}
-      </div>
-    </div>
-    <div style="margin-bottom:14px;">
-      <label class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:6px;">Principal / Authority Signature</label>
-      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-        <div id="icSignaturePreviewWrap" style="width:110px;height:44px;flex-shrink:0;border:1px solid #D9CBA3;border-radius:4px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-          ${state.idCardSignatureProcessing
-            ? `<span style="font-size:10px;color:#6B5F4B;">...</span>`
-            : state.idCard.signatureUrl
-            ? `<img src="${state.idCard.signatureUrl}" style="max-width:100%;max-height:100%;object-fit:contain;" />`
-            : `<span style="font-size:9.5px;color:#B7A97E;">No Signature</span>`}
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button type="button" id="icSignatureGalleryBtn" style="display:flex;align-items:center;gap:5px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${icon("image", { size: 14 })} Gallery se Sign</button>
-          ${state.idCard.signatureUrl ? `<button type="button" id="icSignatureRemoveBtn" style="display:flex;align-items:center;gap:5px;background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${icon("x", { size: 14 })} Remove</button>` : ""}
-        </div>
-        <input type="file" id="icSignatureGalleryInput" accept="image/*" style="display:none;" />
-      </div>
-      <p style="font-size:11px;color:#6B5F4B;margin:6px 0 0;">This signature will print above the "Principal Sign." line on all ID cards.</p>
-    </div>
-    <div style="margin-bottom:14px;">
-      <label class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:6px;">Design / Colour Theme</label>
-      <select id="icThemeSel" class="rule-input" style="width:100%;box-sizing:border-box;">
-        ${ID_CARD_THEMES.map(t => `<option value="${t.id}" ${state.idCard.themeId === t.id ? "selected" : ""}>${escapeHtml(t.label)}</option>`).join("")}
-      </select>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
-        ${ID_CARD_THEMES.map(t => `<button type="button" class="icThemeSwatch" data-theme="${t.id}" title="${escapeAttr(t.label)}" style="width:22px;height:22px;border-radius:50%;flex-shrink:0;cursor:pointer;background:${t.headerBg};border:2px solid ${state.idCard.themeId === t.id ? t.accentColor : "transparent"};box-shadow:0 0 0 1px #D9CBA3;padding:0;"></button>`).join("")}
-      </div>
-      <div style="margin-top:12px;">
-        <label class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:6px;">Card Size &amp; Shape</label>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <select id="icOrientation" class="rule-input" style="flex:1;min-width:150px;box-sizing:border-box;">
-            <option value="landscape" ${state.idCard.orientation !== "portrait" ? "selected" : ""}>Aada (Landscape) ▭</option>
-            <option value="portrait" ${state.idCard.orientation === "portrait" ? "selected" : ""}>Khada (Portrait) ▯</option>
-          </select>
-          <select id="icSizePreset" class="rule-input" style="flex:2;min-width:200px;box-sizing:border-box;">
-            ${Object.keys(ID_CARD_PRESETS).map(k => `<option value="${k}" ${state.idCard.sizePreset === k ? "selected" : ""}>${escapeHtml(ID_CARD_PRESETS[k].label)}</option>`).join("")}
-            <option value="custom" ${state.idCard.sizePreset === "custom" ? "selected" : ""}>Custom size (mm)</option>
-          </select>
-        </div>
-        ${state.idCard.sizePreset === "custom" ? `
-        <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
-          <input id="icCustomLong" type="number" inputmode="decimal" min="50" max="170" step="0.5" class="rule-input" placeholder="Lambai (mm)" value="${escapeAttr(state.idCard.customLong)}" style="width:120px;box-sizing:border-box;" />
-          <span style="color:#6B5F4B;">×</span>
-          <input id="icCustomShort" type="number" inputmode="decimal" min="35" max="120" step="0.5" class="rule-input" placeholder="Chaudai (mm)" value="${escapeAttr(state.idCard.customShort)}" style="width:120px;box-sizing:border-box;" />
-          <span style="font-size:11px;color:#6B5F4B;">mm (lambai 50–170, chaudai 35–120)</span>
-        </div>` : ""}
-        <p style="font-size:11px;color:#6B5F4B;margin:4px 0 0;">Size: ${(() => { const d = getIdCardDims(state.idCard); return d.wMm.toFixed(1) + " × " + d.hMm.toFixed(1) + " mm"; })()} — PDF isi asli size me print hoti hai.</p>
-      </div>
-      <div style="margin-top:12px;">
-        <label class="stamp" style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:6px;">Text Size (Font)</label>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-size:11px;color:#6B5F4B;">A</span>
-          <input type="range" id="icFontScale" min="50" max="150" step="5" value="${state.idCard.fontScale != null ? state.idCard.fontScale : 100}" style="flex:1;" />
-          <span style="font-size:15px;color:#6B5F4B;">A</span>
-          <span id="icFontScaleVal" style="font-size:12px;color:#1F2A44;width:42px;text-align:right;">${state.idCard.fontScale != null ? state.idCard.fontScale : 100}%</span>
-          <button type="button" id="icFontScaleReset" class="stamp" style="background:transparent;border:1px solid #B7A97E;border-radius:3px;padding:4px 8px;font-size:11px;color:#6B5F4B;cursor:pointer;">100%</button>
-        </div>
-        <p style="font-size:11px;color:#6B5F4B;margin:4px 0 0;">Letters chhote karne ke liye slider left le jao. Agar kuch card se bahar jaaye to font apne aap thoda chhota ho jaata hai, taaki kuch hide na ho.</p>
-      </div>
-      <p style="font-size:11px;color:#6B5F4B;margin:8px 0 0;">Preview:</p>
-      <div id="icCardPreviewWrap" style="margin-top:8px;display:flex;justify-content:center;padding:12px;background:#EFE7CE;border-radius:6px;overflow-x:auto;"></div>
-    </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
-      <select id="icClassSel" class="stamp">
-        <option value="all" ${state.idCardClassSel === "all" ? "selected" : ""}>All Classes</option>
-        ${classList.map(c => `<option value="${escapeAttr(c)}" ${state.idCardClassSel === c ? "selected" : ""}>Class ${escapeHtml(c)}</option>`).join("")}
-      </select>
-      <select id="icSessionSel" class="stamp">
-        <option value="all" ${state.idCardSessionSel === "all" ? "selected" : ""}>All Sessions</option>
-        ${sessionList.map(s => `<option value="${escapeAttr(s)}" ${state.idCardSessionSel === s ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
-      </select>
-    </div>
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#1F2A44;cursor:pointer;">
-        <input type="checkbox" id="icSelectAllChk" ${allSelected ? "checked" : ""} style="width:16px;height:16px;" ${eligible.length === 0 ? "disabled" : ""} />
-        Select all (${eligible.length})
-      </label>
-      <span class="stamp" style="font-size:12.5px;color:#6B5F4B;">${selectedCount} selected</span>
-    </div>
-    <div id="icStudentList" data-sig="${eligible.length}:${eligible.length ? eligible[0].id : ''}:${eligible.length ? eligible[eligible.length - 1].id : ''}" style="max-height:260px;overflow-y:auto;border:1px solid #D9CBA3;border-radius:3px;margin-bottom:14px;">
-      ${eligible.length === 0
-        ? `<p style="font-size:12.5px;color:#6B5F4B;padding:12px;margin:0;">No student found for this filter.</p>`
-        : eligible.map(e => `
-          <label style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #EFE7CE;font-size:13px;cursor:pointer;">
-            <input type="checkbox" class="icStudentChk" data-id="${e.id}" ${state.idCardSelectedIds.has(e.id) ? "checked" : ""} style="width:15px;height:15px;flex-shrink:0;" />
-            <span style="flex:1;">${escapeHtml(TN(e.name)) || "—"} <span style="color:#6B5F4B;">· Class ${escapeHtml(e.className) || "—"} · Roll ${escapeHtml(e.rollNo) || "—"}</span></span>
-          </label>`).join("")}
-    </div>
-    <button id="icGenerateBtn" ${selectedCount === 0 || state.idCardGenerating ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#9B3437;color:#F3ECDA;border:none;border-radius:3px;padding:9px 16px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:${selectedCount === 0 || state.idCardGenerating ? "not-allowed" : "pointer"};opacity:${selectedCount === 0 || state.idCardGenerating ? 0.5 : 1};">${icon("idCard", { size: 14 })} ${state.idCardGenerating ? "Generating…" : `Generate ${selectedCount || ""} ID Card${selectedCount === 1 ? "" : "s"} (PDF)`}</button>
-    ${state.idCardStatus ? `<p style="font-size:12px;margin:10px 0 0;color:${state.idCardStatus.startsWith("Error") ? "#9B3437" : "#1E7A3E"};">${escapeHtml(state.idCardStatus)}</p>` : ""}
-  `;
-  const saveField = (id, key) => {
-    const input = document.getElementById(id);
-    if (input) input.addEventListener("input", () => { state.idCard[key] = input.value; saveIdCardSettingsToStorage(); });
-  };
-  saveField("icInstituteName", "instituteName");
-  saveField("icSchoolAddress", "schoolAddress");
-  saveField("icValidUpto", "validUpto");
-  saveField("icContactPhone", "contactPhone");
-  saveField("icFooterNote", "footerNote");
-  const icLogoGalBtn = document.getElementById("icLogoGalleryBtn");
-  const icLogoGalInput = document.getElementById("icLogoGalleryInput");
-  if (icLogoGalBtn && icLogoGalInput) {
-    icLogoGalBtn.addEventListener("click", () => icLogoGalInput.click());
-    icLogoGalInput.addEventListener("change", async () => {
-      const file = icLogoGalInput.files && icLogoGalInput.files[0];
-      icLogoGalInput.value = "";
-      if (!file) return;
-      state.idCardLogoProcessing = true;
-      renderIdCardPanel();
-      try {
-        // PNG (not JPEG) so a transparent-background logo stays transparent.
-        const compressed = await compressImageFile(file, 240, 0.9, "image/png");
-        const dataUrl = await blobToDataUrl(compressed);
-        state.idCard.logoUrl = dataUrl;
-        saveIdCardSettingsToStorage();
-      } catch (err) {
-        console.error("Logo processing failed:", err);
-        state.idCardStatus = "Error: Couldn't process the logo image, please try again.";
-      } finally {
-        state.idCardLogoProcessing = false;
-        renderIdCardPanel();
-      }
-    });
-  }
-  const icLogoRemoveBtn = document.getElementById("icLogoRemoveBtn");
-  if (icLogoRemoveBtn) {
-    icLogoRemoveBtn.addEventListener("click", () => {
-      state.idCard.logoUrl = "";
-      state.idCard.watermarkEnabled = false;
-      saveIdCardSettingsToStorage();
-      renderIdCardPanel();
-    });
-  }
-  const icWatermarkChk = document.getElementById("icWatermarkChk");
-  if (icWatermarkChk) {
-    icWatermarkChk.addEventListener("change", (e) => {
-      state.idCard.watermarkEnabled = e.target.checked;
-      saveIdCardSettingsToStorage();
-      renderIdCardPanel();
-    });
-  }
-  const icWatermarkOpacity = document.getElementById("icWatermarkOpacity");
-  if (icWatermarkOpacity) {
-    icWatermarkOpacity.addEventListener("input", (e) => {
-      state.idCard.watermarkOpacity = parseFloat(e.target.value);
-      saveIdCardSettingsToStorage();
-      renderIdCardPanel();
-    });
-  }
-  const icWatermarkSize = document.getElementById("icWatermarkSize");
-  if (icWatermarkSize) {
-    icWatermarkSize.addEventListener("input", (e) => {
-      state.idCard.watermarkSize = parseInt(e.target.value, 10);
-      saveIdCardSettingsToStorage();
-      renderIdCardPanel();
-    });
-  }
-  const icWatermarkOffsetX = document.getElementById("icWatermarkOffsetX");
-  if (icWatermarkOffsetX) {
-    icWatermarkOffsetX.addEventListener("input", (e) => {
-      state.idCard.watermarkOffsetX = parseInt(e.target.value, 10);
-      saveIdCardSettingsToStorage();
-      renderIdCardPanel();
-    });
-  }
-  const icWatermarkOffsetY = document.getElementById("icWatermarkOffsetY");
-  if (icWatermarkOffsetY) {
-    icWatermarkOffsetY.addEventListener("input", (e) => {
-      state.idCard.watermarkOffsetY = parseInt(e.target.value, 10);
-      saveIdCardSettingsToStorage();
-      renderIdCardPanel();
-    });
-  }
-  const icWatermarkResetBtn = document.getElementById("icWatermarkResetBtn");
-  if (icWatermarkResetBtn) {
-    icWatermarkResetBtn.addEventListener("click", () => {
-      state.idCard.watermarkSize = 150;
-      state.idCard.watermarkOffsetX = 0;
-      state.idCard.watermarkOffsetY = 0;
-      saveIdCardSettingsToStorage();
-      renderIdCardPanel();
-    });
-  }
-  const icSigGalBtn = document.getElementById("icSignatureGalleryBtn");
-  const icSigGalInput = document.getElementById("icSignatureGalleryInput");
-  if (icSigGalBtn && icSigGalInput) {
-    icSigGalBtn.addEventListener("click", () => icSigGalInput.click());
-    icSigGalInput.addEventListener("change", async () => {
-      const file = icSigGalInput.files && icSigGalInput.files[0];
-      icSigGalInput.value = "";
-      if (!file) return;
-      state.idCardSignatureProcessing = true;
-      renderIdCardPanel();
-      try {
-        // Small maxDim/high quality — signatures are thin line art, not
-        // photos, so keep it crisp while still staying tiny for localStorage.
-        const compressed = await compressImageFile(file, 300, 0.9, "image/png");
-        const dataUrl = await blobToDataUrl(compressed);
-        state.idCard.signatureUrl = dataUrl;
-        saveIdCardSettingsToStorage();
-      } catch (err) {
-        console.error("Signature processing failed:", err);
-        state.idCardStatus = "Error: Couldn't process the signature image, please try again.";
-      } finally {
-        state.idCardSignatureProcessing = false;
-        renderIdCardPanel();
-      }
-    });
-  }
-  const icSigRemoveBtn = document.getElementById("icSignatureRemoveBtn");
-  if (icSigRemoveBtn) {
-    icSigRemoveBtn.addEventListener("click", () => {
-      state.idCard.signatureUrl = "";
-      saveIdCardSettingsToStorage();
-      renderIdCardPanel();
-    });
-  }
-  const applyTheme = (themeId) => {
-    state.idCard.themeId = themeId;
-    saveIdCardSettingsToStorage();
-    renderIdCardPanel();
-  };
-  const icThemeSel = document.getElementById("icThemeSel");
-  if (icThemeSel) icThemeSel.addEventListener("change", (e) => applyTheme(e.target.value));
-  el.querySelectorAll(".icThemeSwatch").forEach(btn => {
-    btn.addEventListener("click", () => applyTheme(btn.dataset.theme));
-  });
-  const previewWrap = document.getElementById("icCardPreviewWrap");
-  const mountIdCardPreview = () => {
-    if (!previewWrap) return;
-    previewWrap.innerHTML = "";
-    const previewEntry = eligible.find(e => state.idCardSelectedIds.has(e.id)) || eligible[0] || ID_CARD_SAMPLE_ENTRY;
-    // Chhote phone screen par card ko fit karne ke liye scale kar do (sirf preview ke liye).
-    const dims = getIdCardDims(state.idCard);
-    const avail = Math.max(200, previewWrap.clientWidth - 24);
-    const k = Math.min(1, avail / dims.w);
-    const outer = document.createElement("div");
-    outer.style.cssText = `width:${Math.round(dims.w * k)}px;height:${Math.round(dims.h * k)}px;flex-shrink:0;`;
-    const inner = document.createElement("div");
-    inner.style.cssText = `width:${dims.w}px;height:${dims.h}px;transform:scale(${k});transform-origin:top left;`;
-    outer.appendChild(inner);
-    previewWrap.appendChild(outer);
-    mountIdCardFitted(inner, previewEntry, state.idCard);
-  };
-  mountIdCardPreview();
-  const setIdCardSize = (key, val) => { state.idCard[key] = val; saveIdCardSettingsToStorage(); renderIdCardPanel(); };
-  const icOrientation = document.getElementById("icOrientation");
-  if (icOrientation) icOrientation.addEventListener("change", (e) => setIdCardSize("orientation", e.target.value));
-  const icSizePreset = document.getElementById("icSizePreset");
-  if (icSizePreset) icSizePreset.addEventListener("change", (e) => {
-    if (e.target.value === "custom" && !state.idCard.customLong) { state.idCard.customLong = "85.6"; state.idCard.customShort = "54"; }
-    setIdCardSize("sizePreset", e.target.value);
-  });
-  ["icCustomLong:customLong", "icCustomShort:customShort"].forEach(pair => {
-    const [id, key] = pair.split(":");
-    const inp = document.getElementById(id);
-    // "change" (na ki har akshar par) — taaki type karte waqt panel dobara na bane
-    if (inp) inp.addEventListener("change", (e) => setIdCardSize(key, e.target.value));
-  });
-  const icFontScale = document.getElementById("icFontScale");
-  if (icFontScale) {
-    icFontScale.addEventListener("input", (e) => {
-      state.idCard.fontScale = parseInt(e.target.value, 10);
-      document.getElementById("icFontScaleVal").textContent = state.idCard.fontScale + "%";
-      saveIdCardSettingsToStorage();
-      mountIdCardPreview();
-    });
-  }
-  const icFontScaleReset = document.getElementById("icFontScaleReset");
-  if (icFontScaleReset) {
-    icFontScaleReset.addEventListener("click", () => {
-      state.idCard.fontScale = 100;
-      saveIdCardSettingsToStorage();
-      renderIdCardPanel();
-    });
-  }
-  document.getElementById("icClassSel").addEventListener("change", (e) => {
-    state.idCardClassSel = e.target.value;
-    renderIdCardPanel();
-  });
-  document.getElementById("icSessionSel").addEventListener("change", (e) => {
-    state.idCardSessionSel = e.target.value;
-    renderIdCardPanel();
-  });
-  const selectAllChk = document.getElementById("icSelectAllChk");
-  if (selectAllChk) {
-    selectAllChk.addEventListener("change", (e) => {
-      if (e.target.checked) eligible.forEach(en => state.idCardSelectedIds.add(en.id));
-      else eligible.forEach(en => state.idCardSelectedIds.delete(en.id));
-      renderIdCardPanel();
-    });
-  }
-  el.querySelectorAll(".icStudentChk").forEach(chk => {
-    chk.addEventListener("change", (e) => {
-      if (e.target.checked) state.idCardSelectedIds.add(chk.dataset.id);
-      else state.idCardSelectedIds.delete(chk.dataset.id);
-      renderIdCardPanel();
-    });
-  });
-  const genBtn = document.getElementById("icGenerateBtn");
-  if (genBtn) {
-    genBtn.addEventListener("click", async () => {
-      // Filter se bahar (jaise pichhle Class filter me) chuni gayi entries bhi shaamil rahen — sirf
-      // abhi dikh rahi `eligible` list tak simit nahi, poori state.entries me se dhoondte hain.
-      const selected = state.entries.filter(e => state.idCardSelectedIds.has(e.id));
-      if (!selected.length) return;
-      state.idCardGenerating = true;
-      state.idCardStatus = "";
-      renderIdCardPanel();
-      try {
-        await generateIdCardsPdf(selected, state.idCard);
-        state.idCardStatus = `${selected.length} ID card${selected.length === 1 ? "" : "s"} PDF is ready.`;
-      } catch (err) {
-        console.error("ID card generation failed:", err);
-        state.idCardStatus = "Error: There was a problem creating the PDF, please try again.";
-      } finally {
-        state.idCardGenerating = false;
-        renderIdCardPanel();
-      }
-    });
-  }
 }
 
 /* ---------- Receipt / Invoice Report panel ---------- */
@@ -11528,6 +10266,30 @@ function renderSelectionPanel() {
         ${state.isGuestMode ? "" : `<button id="externalExportBtn" ${count === 0 ? "disabled" : ""} title="Selected students ka data ek doosre app ke Supabase project mein bhejo" style="display:flex;align-items:center;gap:6px;background:#6B5F4B;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("share", { size: 14 })} Export to App</button>`}
       </div>
     </div>
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid #D9CBA3;">
+      <div class="stamp" style="font-size:11.5px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:8px;">Star filter (colour wise)</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+        ${[["all", "All", "#1F2A44"], ["1", "", STAR_COLORS[1]], ["2", "", STAR_COLORS[2]], ["3", "", STAR_COLORS[3]], ["4", "", STAR_COLORS[4]], ["none", "No Star", "#6B5F4B"]].map(([val, lbl, col]) => {
+          const on = String(state.starFilter) === val;
+          const text = val === "all" || val === "none" ? lbl : `<span style="font-size:15px;line-height:1;">★</span> ${STAR_NAMES[val]}`;
+          return `<button type="button" class="starFilterChip" data-val="${val}" style="border:1px solid ${col};background:${on ? col : "transparent"};color:${on ? "#F3ECDA" : col};border-radius:14px;padding:5px 12px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${text}</button>`;
+        }).join("")}
+      </div>
+      ${state.editUnlocked ? `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;">
+        <select id="bulkStarAddSel" class="stamp">
+          ${[4, 1, 2, 3].map(n => `<option value="${n}">Mark: ${STAR_NAMES[n]} star</option>`).join("")}
+        </select>
+        <button type="button" id="bulkStarAddBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#1E7A3E;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">★ Mark Star (${count})</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+        <select id="bulkStarRemoveSel" class="stamp">
+          <option value="all">Remove: All stars</option>
+          ${[1, 2, 3, 4].map(n => `<option value="${n}">Remove: ${STAR_NAMES[n]} star</option>`).join("")}
+        </select>
+        <button type="button" id="bulkStarRemoveBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#9B3437;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">✕ Remove Star (${count})</button>
+      </div>` : ""}
+    </div>
     ${state.showExportColumns ? `
       <div style="margin-top:14px;padding-top:14px;border-top:1px solid #D9CBA3;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
@@ -11565,6 +10327,16 @@ function renderSelectionPanel() {
     });
     renderSelectionPanel();
   });
+  el.querySelectorAll(".starFilterChip").forEach(b => b.addEventListener("click", () => {
+    state.starFilter = b.dataset.val;
+    const sel = document.getElementById("starFilterSel");
+    if (sel) sel.value = state.starFilter;
+    renderEntries();
+  }));
+  const bulkStarAddBtn = document.getElementById("bulkStarAddBtn");
+  if (bulkStarAddBtn) bulkStarAddBtn.addEventListener("click", () => bulkSetStar("add"));
+  const bulkStarRemoveBtn = document.getElementById("bulkStarRemoveBtn");
+  if (bulkStarRemoveBtn) bulkStarRemoveBtn.addEventListener("click", () => bulkSetStar("remove"));
   const exportBtn = document.getElementById("exportPdfBtn");
   if (exportBtn) exportBtn.addEventListener("click", exportSelectedToPdf);
   const exportXlsxBtn = document.getElementById("exportXlsxBtn");
@@ -12031,7 +10803,6 @@ function buildSelectedPdfDoc() {
 
   return { doc, filename: `admission-register-selected-${new Date().toISOString().slice(0, 10)}.pdf` };
 }
-
 
 /* =====================================================================
    STAFF WHATSAPP CONTACTS  +  "Send to staff" from Share Image / Save PDF
@@ -13545,8 +12316,6 @@ function renderAll() {
   renderTemplatePanel();
   renderFeeChartTemplatePanel();
   renderCalcCornerPanel();
-  renderAdmitCardPanel();
-  renderIdCardPanel();
   renderInvoiceSizePanel();
   renderPassbookStatementPanel();
   renderReportPanel();
@@ -13904,8 +12673,6 @@ function closeOtherPanels(except) {
   if (except !== "template") state.showTemplatePanel = false;
   if (except !== "feeChartTemplate") state.showFeeChartTemplatePanel = false;
   if (except !== "calcCorner") state.showCalcCornerPanel = false;
-  if (except !== "admitCard") state.showAdmitCardPanel = false;
-  if (except !== "idCard") state.showIdCardPanel = false;
   if (except !== "invoiceSize") state.showInvoiceSizePanel = false;
   if (except !== "passbookStatement") state.showPassbookStatementPanel = false;
   if (except !== "report") state.showReportPanel = false;
@@ -13926,8 +12693,6 @@ const PANEL_FLAG_RENDER = [
   ["showTemplatePanel", renderTemplatePanel],
   ["showFeeChartTemplatePanel", renderFeeChartTemplatePanel],
   ["showCalcCornerPanel", renderCalcCornerPanel],
-  ["showAdmitCardPanel", renderAdmitCardPanel],
-  ["showIdCardPanel", renderIdCardPanel],
   ["showInvoiceSizePanel", renderInvoiceSizePanel],
   ["showPassbookStatementPanel", renderPassbookStatementPanel],
   ["showReportPanel", renderReportPanel],
@@ -13947,7 +12712,7 @@ function renderChangedPanels(before) {
 }
 /* Every item in the settings menu (and the 3-dot button itself) opens a
    small panel that lives completely separately from the student list —
-   Backups, Templates, Fee Chart, Calc Corner, Admit/ID Card, Passbook
+   Backups, Templates, Fee Chart, Calc Corner, Passbook
    Statement, Report, Message Report, Notifications. All of them used to
    call the full renderAll(), which also rebuilds the (potentially huge)
    entriesList every time — that's why the 3-dot menu and everything
@@ -14047,16 +12812,6 @@ document.getElementById("toggleFeeChartTemplateBtn").addEventListener("click", (
 });
 document.getElementById("toggleCalcCornerBtn").addEventListener("click", () => {
   togglePanelLite("showCalcCornerPanel", "calcCorner");
-});
-document.getElementById("toggleAdmitCardBtn").addEventListener("click", () => {
-  togglePanelLite("showAdmitCardPanel", "admitCard", () => {
-    state.admitCardSelectedIds = new Set(getAdmitCardEligibleEntries().map(e => e.id));
-  });
-});
-document.getElementById("toggleIdCardBtn").addEventListener("click", () => {
-  togglePanelLite("showIdCardPanel", "idCard", () => {
-    state.idCardSelectedIds = new Set(getIdCardEligibleEntries().map(e => e.id));
-  });
 });
 document.getElementById("toggleInvoiceSizeBtn").addEventListener("click", () => {
   togglePanelLite("showInvoiceSizePanel", "invoiceSize", () => {
