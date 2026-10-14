@@ -11522,7 +11522,7 @@ function renderSelectionPanel() {
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button id="toggleExportColumnsBtn" style="display:flex;align-items:center;gap:6px;background:transparent;color:#1F2A44;border:1px solid #B7A97E;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${icon("filetext", { size: 14 })} Columns (${colCount})</button>
         <button id="exportPdfBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#9B3437;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("filetext", { size: 14 })} Save as PDF</button>
-        <button id="exportPptBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#C4572B;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("filetext", { size: 14 })} Save as PPT</button>
+        <button id="exportXlsxBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#1D6F42;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("filetext", { size: 14 })} Save as Excel</button>
         <button id="shareImageBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("image", { size: 14 })} Share as Image</button>
         <button id="bulkMsgBtn" ${count === 0 ? "disabled" : ""} title="Opens each selected student's WhatsApp/SMS one by one — you just tap Send in each" style="display:flex;align-items:center;gap:6px;background:#25D366;color:#fff;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("messageCircle", { size: 14 })} Send Messages</button>
         ${state.isGuestMode ? "" : `<button id="externalExportBtn" ${count === 0 ? "disabled" : ""} title="Selected students ka data ek doosre app ke Supabase project mein bhejo" style="display:flex;align-items:center;gap:6px;background:#6B5F4B;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("share", { size: 14 })} Export to App</button>`}
@@ -11567,8 +11567,8 @@ function renderSelectionPanel() {
   });
   const exportBtn = document.getElementById("exportPdfBtn");
   if (exportBtn) exportBtn.addEventListener("click", exportSelectedToPdf);
-  const exportPptBtn = document.getElementById("exportPptBtn");
-  if (exportPptBtn) exportPptBtn.addEventListener("click", exportSelectedToPpt);
+  const exportXlsxBtn = document.getElementById("exportXlsxBtn");
+  if (exportXlsxBtn) exportXlsxBtn.addEventListener("click", exportSelectedToExcel);
   const shareBtn = document.getElementById("shareImageBtn");
   if (shareBtn) shareBtn.addEventListener("click", shareSelectedAsImages);
   const bulkMsgBtn = document.getElementById("bulkMsgBtn");
@@ -11827,54 +11827,23 @@ function exportSelectedToPdfDirect(mode) {
   }
   built.doc.save(built.filename);
 }
-/* ---------- "Save as PPT": har selected student ki ek slide (photo + Columns me tick ki hui details) ---------- */
-/* PPT chhoti rakhne ke liye: photo ko max 420px me resize + JPEG 0.7 me compress karke daalte hain (~20-40 KB per photo). */
-async function pptPhotoDataUrl(url) {
-  if (!url) return null;
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 8000);
-    const res = await fetch(url, { mode: "cors", signal: ctrl.signal });
-    clearTimeout(t);
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    const objUrl = URL.createObjectURL(blob);
-    try {
-      const img = await new Promise((resolve, reject) => {
-        const im = new Image();
-        im.onload = () => resolve(im);
-        im.onerror = reject;
-        im.src = objUrl;
-      });
-      const MAX = 420;
-      const k = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
-      const w = Math.max(1, Math.round(img.naturalWidth * k)), h = Math.max(1, Math.round(img.naturalHeight * k));
-      const cv = document.createElement("canvas");
-      cv.width = w; cv.height = h;
-      const ctx = cv.getContext("2d");
-      ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, w, h);
-      ctx.drawImage(img, 0, 0, w, h);
-      return cv.toDataURL("image/jpeg", 0.7);
-    } finally { URL.revokeObjectURL(objUrl); }
-  } catch (err) { console.error("PPT photo fetch failed:", err); return null; }
-}
-/* PPT library tab hi load hoti hai jab "Save as PPT" dabaya jaye; ek source fail ho to doosra try hota hai. */
-let _pptxLoading = null;
-function loadPptxLib() {
-  if (typeof PptxGenJS !== "undefined") return Promise.resolve(true);
-  if (_pptxLoading) return _pptxLoading;
+/* ---------- "Save as Excel": selected students ki Excel (.xlsx) file, Columns me tick ki hui details ke saath ---------- */
+let _xlsxLoading = null;
+function loadXlsxLib() {
+  if (typeof XLSX !== "undefined") return Promise.resolve(true);
+  if (_xlsxLoading) return _xlsxLoading;
   const urls = [
-    "https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js",
-    "https://cdnjs.cloudflare.com/ajax/libs/pptxgenjs/3.12.0/pptxgen.bundle.js",
-    "https://unpkg.com/pptxgenjs@3.12.0/dist/pptxgen.bundle.js",
+    "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
+    "https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js",
   ];
-  _pptxLoading = (async () => {
+  _xlsxLoading = (async () => {
     for (const u of urls) {
       const ok = await new Promise((resolve) => {
         const sc = document.createElement("script");
         sc.src = u;
         const to = setTimeout(() => { sc.remove(); resolve(false); }, 15000);
-        sc.onload = () => { clearTimeout(to); resolve(typeof PptxGenJS !== "undefined"); };
+        sc.onload = () => { clearTimeout(to); resolve(typeof XLSX !== "undefined"); };
         sc.onerror = () => { clearTimeout(to); sc.remove(); resolve(false); };
         document.head.appendChild(sc);
       });
@@ -11882,71 +11851,146 @@ function loadPptxLib() {
     }
     return false;
   })();
-  _pptxLoading.then(ok => { if (!ok) _pptxLoading = null; });
-  return _pptxLoading;
+  _xlsxLoading.then(ok => { if (!ok) _xlsxLoading = null; });
+  return _xlsxLoading;
 }
-async function exportSelectedToPpt() {
+function downloadBlobFile(blob, fileName) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+let _jszipLoading = null;
+function loadJsZipLib() {
+  if (typeof JSZip !== "undefined") return Promise.resolve(true);
+  if (_jszipLoading) return _jszipLoading;
+  const urls = [
+    "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js",
+    "https://unpkg.com/jszip@3.10.1/dist/jszip.min.js",
+  ];
+  _jszipLoading = (async () => {
+    for (const u of urls) {
+      const ok = await new Promise((resolve) => {
+        const sc = document.createElement("script");
+        sc.src = u;
+        const to = setTimeout(() => { sc.remove(); resolve(false); }, 15000);
+        sc.onload = () => { clearTimeout(to); resolve(typeof JSZip !== "undefined"); };
+        sc.onerror = () => { clearTimeout(to); sc.remove(); resolve(false); };
+        document.head.appendChild(sc);
+      });
+      if (ok) return true;
+    }
+    return false;
+  })();
+  _jszipLoading.then(ok => { if (!ok) _jszipLoading = null; });
+  return _jszipLoading;
+}
+async function fetchPhotoBlob(url) {
+  if (!url) return null;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 12000);
+    const res = await fetch(url, { mode: "cors", signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    return await res.blob();
+  } catch (err) { console.error("Photo fetch failed:", err); return null; }
+}
+async function exportSelectedToExcel() {
   const selected = getSelectedEntriesSorted();
   if (!selected.length) return;
   const cols = selectedPdfColumns();
-  if (!cols.length) { alert("Please tick at least one column to include in the PPT."); return; }
-  const btn = document.getElementById("exportPptBtn");
+  if (!cols.length) { alert("Please tick at least one column to include in the Excel file."); return; }
+  const withPhotos = cols.some(c => c.key === "photo");
+  const btn = document.getElementById("exportXlsxBtn");
   const origHtml = btn ? btn.innerHTML : "";
   const setBusy = (txt) => { if (btn) { btn.disabled = true; btn.textContent = txt; } };
+  setBusy("Loading…");
   try {
-    setBusy("Loading…");
-    if (!(await loadPptxLib())) { alert("PPT library load nahi hui. Internet check karke dobara try karein."); return; }
-    const pres = new PptxGenJS();
-    pres.layout = "LAYOUT_WIDE"; // 13.33 x 7.5 in
-    pres.title = "Fee Register";
-    const FONT = "Calibri";
-    const showPhoto = cols.some(c => c.key === "photo");
-    const infoCols = cols.filter(c => c.key !== "serial" && c.key !== "photo");
-    for (let i = 0; i < selected.length; i++) {
-      const e = selected[i];
-      setBusy(`PPT ${i + 1}/${selected.length}…`);
-      const slide = pres.addSlide();
-      slide.background = { color: "FBF7EC" };
-      // Header bar
-      slide.addShape(pres.ShapeType.rect, { x: 0, y: 0, w: 13.33, h: 1.0, fill: { color: "9B3437" }, line: { color: "9B3437" } });
-      slide.addText(TN(e.name) || "Student", { x: 0.5, y: 0.1, w: 10.3, h: 0.8, fontFace: FONT, fontSize: 28, bold: true, color: "F3ECDA", valign: "middle", fit: "shrink" });
-      slide.addText(`${i + 1} / ${selected.length}`, { x: 10.9, y: 0.1, w: 1.95, h: 0.8, fontFace: FONT, fontSize: 14, color: "F3ECDA", align: "right", valign: "middle" });
-      // Photo (agar ho) warna placeholder
-      const photo = showPhoto ? await pptPhotoDataUrl(e.photoUrl) : null;
-      const px = 0.5, py = 1.4, pw = 3.2, ph = 4.0;
-      if (showPhoto) {
-      if (photo) {
-        slide.addImage({ data: photo, x: px, y: py, w: pw, h: ph, sizing: { type: "cover", w: pw, h: ph } });
-        slide.addShape(pres.ShapeType.rect, { x: px, y: py, w: pw, h: ph, fill: { type: "none" }, line: { color: "B7A97E", width: 1.5 } });
-      } else {
-        slide.addShape(pres.ShapeType.rect, { x: px, y: py, w: pw, h: ph, fill: { color: "F3ECDA" }, line: { color: "B7A97E", width: 1.5 } });
-        slide.addText("No Photo", { x: px, y: py, w: pw, h: ph, fontFace: FONT, fontSize: 16, color: "B7A97E", align: "center", valign: "middle" });
-      }
-      if (e.rollNo) slide.addText(`Enroll No. ${e.rollNo}`, { x: px, y: py + ph + 0.1, w: pw, h: 0.4, fontFace: FONT, fontSize: 14, bold: true, color: "9B3437", align: "center" });
-      }
-      // Details: 2 columns of label/value rows
-      const rows = infoCols.map((c, idx) => [
-        { text: c.label, options: { bold: true, color: "6B5F4B", fontFace: FONT, fontSize: 13 } },
-        { text: String(c.get(e, i) ?? "") || "—", options: { bold: true, color: "1F2A44", fontFace: FONT, fontSize: 13 } },
-      ]);
-      const perCol = rows.length > 9 ? Math.ceil(rows.length / 2) : rows.length;
-      const chunks = [rows.slice(0, perCol), rows.slice(perCol)].filter(r => r.length);
-      const areaX = showPhoto ? 4.1 : 0.5, areaW = showPhoto ? 8.75 : 12.33;
-      const colW = chunks.length === 2 ? areaW / 2 - 0.1 : areaW;
-      chunks.forEach((chunk, ci) => {
-        slide.addTable(chunk, {
-          x: areaX + ci * (colW + 0.2), y: 1.4, w: colW, colW: [colW * 0.4, colW * 0.6],
-          border: { type: "solid", pt: 0.5, color: "D9CBA3" },
-          fill: { color: "FFFFFF" }, valign: "middle", margin: [0.04, 0.08, 0.04, 0.08],
-          autoPage: false,
-        });
-      });
+    const stamp = new Date().toISOString().slice(0, 10);
+
+    // 1) Photos (agar "Photo" column tick hai): har photo ka naam = Enroll No.
+    const photoFiles = [];            // {name, blob}
+    const photoNameByIndex = new Map();
+    let missing = 0;
+    if (withPhotos) {
+      const used = new Set();
+      const jobs = selected.map((e, i) => ({ e, i }));
+      let done = 0;
+      const worker = async () => {
+        while (jobs.length) {
+          const { e, i } = jobs.shift();
+          if (e.photoUrl) {
+            const blob = await fetchPhotoBlob(e.photoUrl);
+            if (blob) {
+              const t = (blob.type || "").toLowerCase();
+              const ext = t.includes("png") ? "png" : t.includes("webp") ? "webp" : "jpg";
+              let base = String(e.rollNo || ("student" + (i + 1))).replace(/[^\w\-]+/g, "_");
+              let name = `${base}.${ext}`, n = 2;
+              while (used.has(name.toLowerCase())) name = `${base}_${n++}.${ext}`;
+              used.add(name.toLowerCase());
+              photoFiles.push({ name, blob });
+              photoNameByIndex.set(i, name);
+            } else missing++;
+          }
+          done++;
+          setBusy(`Photos ${done}/${selected.length}`);
+        }
+      };
+      await Promise.all([worker(), worker(), worker(), worker()]);
     }
-    setBusy("Saving…");
-    await pres.writeFile({ compression: true, fileName: `fee-register-selected-${new Date().toISOString().slice(0, 10)}.pptx` });
+
+    // 2) Data rows
+    const header = cols.map(c => c.label);
+    const rows = selected.map((e, i) => cols.map(c => {
+      if (c.key === "photo") return photoNameByIndex.get(i) || "";
+      const v = c.get(e, i);
+      return v == null ? "" : String(v);
+    }));
+
+    // 3) Excel (library na mile to CSV)
+    setBusy("Excel…");
+    let dataBlob, dataName, usedCsv = false;
+    if (await loadXlsxLib()) {
+      const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+      ws["!cols"] = header.map((h, ci) => ({ wch: Math.min(40, Math.max(h.length, ...rows.map(r => r[ci].length)) + 2) }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Students");
+      const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      dataBlob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      dataName = "students.xlsx";
+    } else {
+      const q = v => `"${String(v).replace(/"/g, '""')}"`;
+      const csv = "\uFEFF" + [header, ...rows].map(r => r.map(q).join(",")).join("\r\n");
+      dataBlob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      dataName = "students.csv";
+      usedCsv = true;
+    }
+
+    // 4) Download: photo ho to ZIP (Excel + photos folder), warna sirf Excel
+    if (withPhotos && photoFiles.length && await loadJsZipLib()) {
+      setBusy("ZIP…");
+      const zip = new JSZip();
+      zip.file(dataName, dataBlob);
+      const folder = zip.folder("photos");
+      photoFiles.forEach(p => folder.file(p.name, p.blob));
+      const zipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" }); // photos pehle se compressed hoti hain
+      downloadBlobFile(zipBlob, `id-card-data-${stamp}.zip`);
+    } else {
+      if (withPhotos && photoFiles.length) alert("ZIP library load nahi hui, isliye sirf Excel save hui hai (photos nahi).");
+      downloadBlobFile(dataBlob, `fee-register-selected-${stamp}.${usedCsv ? "csv" : "xlsx"}`);
+    }
+    const notes = [];
+    if (withPhotos && missing) notes.push(`${missing} students ki photo download nahi ho payi.`);
+    if (withPhotos) { const none = selected.filter(e => !e.photoUrl).length; if (none) notes.push(`${none} students ki photo upload hi nahi hai.`); }
+    if (usedCsv) notes.push("Excel library load nahi hui, isliye data CSV me hai (Excel me khul jayegi).");
+    if (notes.length) alert(notes.join("\n"));
   } catch (err) {
-    console.error("PPT export failed:", err);
-    alert("PPT banane me dikkat aayi: " + (err && err.message ? err.message : err));
+    console.error("Excel export failed:", err);
+    alert("Excel banane me dikkat aayi: " + (err && err.message ? err.message : err));
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
   }
