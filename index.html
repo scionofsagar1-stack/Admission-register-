@@ -6259,7 +6259,7 @@ const state = {
   showPassbookStatementPanel: false, passbookStatementEntryId: "", passbookStatementSearchQuery: "",
   passbookStatementFilterType: "all", passbookStatementFilterDate: "", passbookStatementFilterMonth: "",
   passbookStatementFilterFrom: "", passbookStatementFilterTo: "",
-  showReportPanel: false,
+  showReportPanel: false, showStarFold: false,
   reportPeriodType: "daily",
   reportDate: "",
   reportMonth: "",
@@ -10267,7 +10267,11 @@ function renderSelectionPanel() {
       </div>
     </div>
     <div style="margin-top:12px;padding-top:12px;border-top:1px solid #D9CBA3;">
-      <div class="stamp" style="font-size:11.5px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:8px;">Star filter (colour wise)</div>
+      <button type="button" id="starFoldBtn" style="width:100%;display:flex;align-items:center;justify-content:space-between;background:transparent;border:none;padding:0;cursor:pointer;color:#6B5F4B;">
+        <span class="stamp" style="font-size:11.5px;text-transform:uppercase;letter-spacing:0.6px;">★ Star filter (colour wise)${state.starFilter !== "all" ? ` · <span style="color:#9B3437;">${state.starFilter === "none" ? "No Star" : STAR_NAMES[state.starFilter]}</span>` : ""}</span>
+        <span style="font-size:14px;">${state.showStarFold ? "▲" : "▼"}</span>
+      </button>
+      <div style="display:${state.showStarFold ? "block" : "none"};margin-top:8px;">
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
         ${[["all", "All", "#1F2A44"], ["1", "", STAR_COLORS[1]], ["2", "", STAR_COLORS[2]], ["3", "", STAR_COLORS[3]], ["4", "", STAR_COLORS[4]], ["none", "No Star", "#6B5F4B"]].map(([val, lbl, col]) => {
           const on = String(state.starFilter) === val;
@@ -10289,6 +10293,7 @@ function renderSelectionPanel() {
         </select>
         <button type="button" id="bulkStarRemoveBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#9B3437;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">✕ Remove Star (${count})</button>
       </div>` : ""}
+      </div>
     </div>
     ${state.showExportColumns ? `
       <div style="margin-top:14px;padding-top:14px;border-top:1px solid #D9CBA3;">
@@ -10327,6 +10332,8 @@ function renderSelectionPanel() {
     });
     renderSelectionPanel();
   });
+  const starFoldBtn = document.getElementById("starFoldBtn");
+  if (starFoldBtn) starFoldBtn.addEventListener("click", () => { state.showStarFold = !state.showStarFold; renderSelectionPanel(); });
   el.querySelectorAll(".starFilterChip").forEach(b => b.addEventListener("click", () => {
     state.starFilter = b.dataset.val;
     const sel = document.getElementById("starFilterSel");
