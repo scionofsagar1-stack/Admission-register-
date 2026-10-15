@@ -206,19 +206,6 @@
     <button id="openCandidatePortalFromAppBtn" type="button" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;">
       🎓
     </button>
-    <div id="moreFiltersWrap" style="display:none;gap:10px;align-items:center;flex-wrap:wrap;">
-    <select id="starFilterSel" class="stamp"></select>
-    <select id="whatsappFilterSel" class="stamp"></select>
-    <select id="admTypeFilterSel" class="stamp"></select>
-    <select id="transportFilterSel" class="stamp"></select>
-    <select id="siblingFilterSel" class="stamp"></select>
-    <button id="toggleNotificationsBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;position:relative;">
-      <span id="icon-bell"></span>Notifications<span id="notifBadge" style="display:none;background:#9B3437;color:#F3ECDA;border-radius:9px;font-size:10.5px;padding:1px 6px;margin-left:2px;"></span>
-    </button>
-    <button id="toggleChatBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;position:relative;">
-      <span id="icon-chatToggle"></span>Messages<span id="chatBadge" style="display:none;background:#9B3437;color:#F3ECDA;border-radius:9px;font-size:10.5px;padding:1px 6px;margin-left:2px;"></span>
-    </button>
-
     <!-- Settings dashboard: everything except filters / New Entry / Notifications lives here -->
     <div style="position:relative;">
       <button id="toggleSettingsMenuBtn" class="btn" title="Settings" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;padding:8px 12px;">
@@ -280,6 +267,20 @@
         </button>
       </div>
     </div>
+    <div id="moreFiltersWrap" style="display:none;gap:10px;align-items:center;flex-wrap:wrap;">
+    <select id="starFilterSel" class="stamp"></select>
+    <select id="whatsappFilterSel" class="stamp"></select>
+    <select id="admTypeFilterSel" class="stamp"></select>
+    <select id="transportFilterSel" class="stamp"></select>
+    <select id="siblingFilterSel" class="stamp"></select>
+    <button id="toggleNotificationsBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;position:relative;">
+      <span id="icon-bell"></span>Notifications<span id="notifBadge" style="display:none;background:#9B3437;color:#F3ECDA;border-radius:9px;font-size:10.5px;padding:1px 6px;margin-left:2px;"></span>
+    </button>
+    <button id="toggleChatBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;position:relative;">
+      <span id="icon-chatToggle"></span>Messages<span id="chatBadge" style="display:none;background:#9B3437;color:#F3ECDA;border-radius:9px;font-size:10.5px;padding:1px 6px;margin-left:2px;"></span>
+    </button>
+
+
     </div>
   </div>
 
@@ -10842,6 +10843,7 @@ Object.assign(HI_DICT, {
   "Preparing…": "तैयार हो रहा है…",
   "Try again": "फिर कोशिश करें",
   "Only download the PDF": "सिर्फ PDF डाउनलोड करें",
+  "Send to Class Staff": "कक्षा स्टाफ को भेजें",
   "Staff name": "स्टाफ का नाम",
   "WhatsApp number (with or without +91)": "व्हाट्सऐप नंबर (+91 के साथ या बिना)",
   "Add contact": "नंबर जोड़ें",
@@ -10963,9 +10965,9 @@ function sendTextToStaff(staff) {
   renderStaffModal();
 }
 
-/* ---------- Student card se seedha class/section ke staff ko WhatsApp ----------
-   Staff ka Class (aur chahe to Section) "Staff WhatsApp Contacts" me set hota hai. Section khali = us class ke saare sections.
-   Message me wahi details jaati hain jo "Columns" me chuni hon. */
+/* ---------- WhatsApp the class/section staff directly from a student card ----------
+   Staff Class (and optionally Section) is set in "Staff WhatsApp Contacts". Blank section = all sections of that class.
+   The message contains the details ticked in "Columns". */
 function staffForEntry(e) {
   const cls = (e.className || "").trim().toLowerCase();
   const sec = (e.section || "").trim().toLowerCase();
@@ -10983,10 +10985,10 @@ function sendEntryToStaff(entry, staff) {
 function sendCardToClassStaff(entryId) {
   const entry = state.entries.find(x => x.id === entryId);
   if (!entry) return;
-  if (!selectedPdfColumns().length) { alert("Pehle \"Columns\" me kam se kam ek detail chuniye jo message me jaani hai."); return; }
+  if (!selectedPdfColumns().length) { alert("Please select at least one detail in \"Columns\" to include in the message."); return; }
   const matches = staffForEntry(entry);
   if (!matches.length) {
-    alert(`Class ${entry.className || "—"}${entry.section ? " / Section " + entry.section : ""} ke liye koi staff set nahi hai.\n\nMenu → Staff WhatsApp Contacts me staff ka Class aur Section jodein.`);
+    alert(`No staff is set for Class ${entry.className || "—"}${entry.section ? " / Section " + entry.section : ""}.\n\nOpen Menu → Staff WhatsApp Contacts and add the staff member's Class and Section.`);
     return;
   }
   if (matches.length === 1) { sendEntryToStaff(entry, matches[0]); return; }
@@ -11670,7 +11672,7 @@ function renderOneEntryRow(e) {
             </button>
             ${state.openFeeChartId === e.id ? renderFeeChartBoxInline(e) : ""}
           </div>
-          ${staffContacts.length ? `<div style="margin-top:8px;"><button class="staffMsgBtn" data-id="${e.id}" style="display:flex;align-items:center;gap:5px;background:none;border:none;padding:0;cursor:pointer;color:#1E7A3E;font-size:12px;font-family:'IBM Plex Mono',monospace;">💬 Class Staff ko bhejo</button></div>` : ""}
+          ${staffContacts.length ? `<div style="margin-top:8px;"><button class="staffMsgBtn" data-id="${e.id}" style="display:flex;align-items:center;gap:5px;background:none;border:none;padding:0;cursor:pointer;color:#1E7A3E;font-size:12px;font-family:'IBM Plex Mono',monospace;">💬 ${T("Send to Class Staff")}</button></div>` : ""}
           ${renderBillReceiptButtonsInline(e)}
           ${e.updatedAt ? `<div style="font-size:11px;color:#A69B82;margin-top:8px;">${APP_LANG === "hi" ? "अंतिम अपडेट" : "Last updated"}: ${cardUpdatedAtText(e.updatedAt)}${e.lastUpdateSummary ? ` — <span title="What changed in the last save">${escapeHtml(cardUpdateSummaryText(e.lastUpdateSummary))}</span> ${APP_LANG === "hi" ? "अपडेट किया" : "updated"}` : ""}</div>` : ""}
           <div style="font-size:11px;color:#9B3437;margin-top:8px;font-style:italic;">This is provided only to show a provisional summary.</div>
