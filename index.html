@@ -10868,7 +10868,7 @@ function sanitizeStaffList(arr) {
   if (!Array.isArray(arr)) return [];
   return arr
     .filter(c => c && typeof c.name === "string" && c.name.trim() && normalizeStaffNumber(c.number))
-    .map(c => ({ id: String(c.id || ("s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6))), name: c.name.trim(), number: normalizeStaffNumber(c.number) }));
+    .map(c => ({ id: String(c.id || ("s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6))), name: c.name.trim(), number: normalizeStaffNumber(c.number), className: String(c.className || "").trim(), section: String(c.section || "").trim() }));
 }
 async function loadStaffContacts() {
   try { staffContacts = sanitizeStaffList(JSON.parse(localStorage.getItem(STAFF_CONTACTS_LS_KEY) || "[]")); } catch (e) { staffContacts = []; }
@@ -10903,7 +10903,7 @@ function openShareTargetPicker(kind) {
   renderStaffModal();
 }
 function openStaffContactsManager() {
-  staffModal = { mode: "manage", editId: null, draftName: "", draftNumber: "", msg: "", msgOk: true, busy: false };
+  staffModal = { mode: "manage", editId: null, draftName: "", draftNumber: "", draftClass: "", draftSection: "", msg: "", msgOk: true, busy: false };
   renderStaffModal();
 }
 function closeStaffModal() {
@@ -10916,8 +10916,8 @@ function closeStaffModal() {
    har student ka detail, wa.me/<staff number>?text=... se us staff ki chat me pehle se likha aata hai — bas Send dabao.
    Bahut zyada students hon to message kai hisson me baant diya jata hai (WhatsApp link ki lambai ki seema). */
 const STAFF_TEXT_URL_LIMIT = 4500;   // URL-encoded characters per WhatsApp message
-function buildStaffTextParts(staff) {
-  const selected = getSelectedEntriesSorted();
+function buildStaffTextParts(staff, entriesOpt) {
+  const selected = entriesOpt || getSelectedEntriesSorted();
   const cols = selectedPdfColumns();
   const blocks = selected.map((e, i) => {
     let title = `${i + 1}.`;
@@ -10963,6 +10963,37 @@ function sendTextToStaff(staff) {
   renderStaffModal();
 }
 
+/* ---------- Student card se seedha class/section ke staff ko WhatsApp ----------
+   Staff ka Class (aur chahe to Section) "Staff WhatsApp Contacts" me set hota hai. Section khali = us class ke saare sections.
+   Message me wahi details jaati hain jo "Columns" me chuni hon. */
+function staffForEntry(e) {
+  const cls = (e.className || "").trim().toLowerCase();
+  const sec = (e.section || "").trim().toLowerCase();
+  if (!cls) return [];
+  const sameClass = staffContacts.filter(c => (c.className || "").trim().toLowerCase() === cls);
+  const exact = sameClass.filter(c => (c.section || "").trim().toLowerCase() === sec && sec);
+  if (exact.length) return exact;
+  return sameClass.filter(c => !(c.section || "").trim());
+}
+function sendEntryToStaff(entry, staff) {
+  const urls = buildStaffTextParts(staff, [entry]).map(t => buildWhatsAppLink(staff.number, t));
+  if (!urls.length) return;
+  openWaUrl(urls[0]);
+}
+function sendCardToClassStaff(entryId) {
+  const entry = state.entries.find(x => x.id === entryId);
+  if (!entry) return;
+  if (!selectedPdfColumns().length) { alert("Pehle \"Columns\" me kam se kam ek detail chuniye jo message me jaani hai."); return; }
+  const matches = staffForEntry(entry);
+  if (!matches.length) {
+    alert(`Class ${entry.className || "—"}${entry.section ? " / Section " + entry.section : ""} ke liye koi staff set nahi hai.\n\nMenu → Staff WhatsApp Contacts me staff ka Class aur Section jodein.`);
+    return;
+  }
+  if (matches.length === 1) { sendEntryToStaff(entry, matches[0]); return; }
+  staffModal = { mode: "pick", phase: "cardChoose", entryId, matches, count: 1 };
+  renderStaffModal();
+}
+
 function renderStaffModal() {
   const el = document.getElementById("staffModalOverlay");
   if (!el) return;
@@ -10983,6 +11014,7 @@ function renderStaffModal() {
             <div style="flex:1;min-width:0;">
               <div style="font-weight:600;font-size:14px;color:#1F2A44;">${escapeHtml(c.name)}</div>
               <div class="stamp" style="font-size:12px;color:#6B5F4B;">${escapeHtml(formatStaffNumber(c.number))}</div>
+              <div class="stamp" style="font-size:11.5px;color:#9B3437;">${c.className ? `Class ${escapeHtml(c.className)}${c.section ? " · Sec " + escapeHtml(c.section) : " · All sections"}` : "Class not set"}</div>
             </div>
             ${isAdmin ? `
             <button class="staffEditBtn" data-id="${escapeAttr(c.id)}" aria-label="Edit" style="background:none;border:none;cursor:pointer;color:#6B5F4B;padding:6px;">${icon("pencil", { size: 16 })}</button>
@@ -10998,6 +11030,18 @@ function renderStaffModal() {
         <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:4px;">${T("WhatsApp number (with or without +91)")}</label>
         <input id="staffNumberInput" class="rule-input" type="tel" inputmode="tel" value="${escapeAttr(m.draftNumber)}" placeholder="98XXXXXXXX" />
       </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <div style="flex:1;">
+          <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:4px;">Class</label>
+          <input id="staffClassInput" class="rule-input" list="staffClassList" value="${escapeAttr(m.draftClass)}" placeholder="e.g. Play" />
+          <datalist id="staffClassList">${[...new Set(state.entries.map(x => (x.className || "").trim()).filter(Boolean))].map(c => `<option value="${escapeAttr(c)}"></option>`).join("")}</datalist>
+        </div>
+        <div style="flex:1;">
+          <label style="font-size:11px;color:#6B5F4B;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:4px;">Section (blank = all)</label>
+          <input id="staffSectionInput" class="rule-input" list="staffSectionList" value="${escapeAttr(m.draftSection)}" placeholder="e.g. A" />
+          <datalist id="staffSectionList">${[...new Set(state.entries.map(x => (x.section || "").trim()).filter(Boolean))].map(c => `<option value="${escapeAttr(c)}"></option>`).join("")}</datalist>
+        </div>
+      </div>
       ${m.msg ? `<p style="font-size:12.5px;color:${m.msgOk ? "#1E7A3E" : "#9B3437"};margin:0 0 10px;">${escapeHtml(m.msg)}</p>` : ""}
       <button id="staffSaveBtn" ${m.busy ? "disabled" : ""} style="${btnBase}background:#1F2A44;color:#F3ECDA;border:none;margin-bottom:8px;">${m.editId ? T("Update contact") : T("Add contact")}</button>` : ""}
       <button id="staffCloseBtn" style="${ghost}">${T("Close")}</button>`);
@@ -11005,18 +11049,22 @@ function renderStaffModal() {
     const numIn = document.getElementById("staffNumberInput");
     if (nameIn) nameIn.addEventListener("input", (ev) => { m.draftName = ev.target.value; });
     if (numIn) numIn.addEventListener("input", (ev) => { m.draftNumber = ev.target.value; });
+    const clsIn = document.getElementById("staffClassInput");
+    const secIn = document.getElementById("staffSectionInput");
+    if (clsIn) clsIn.addEventListener("input", (ev) => { m.draftClass = ev.target.value; });
+    if (secIn) secIn.addEventListener("input", (ev) => { m.draftSection = ev.target.value; });
     document.getElementById("staffCloseBtn").addEventListener("click", closeStaffModal);
     el.querySelectorAll(".staffEditBtn").forEach(b => b.addEventListener("click", () => {
       const c = staffContacts.find(x => x.id === b.dataset.id);
       if (!c) return;
-      m.editId = c.id; m.draftName = c.name; m.draftNumber = c.number; m.msg = "";
+      m.editId = c.id; m.draftName = c.name; m.draftNumber = c.number; m.draftClass = c.className || ""; m.draftSection = c.section || ""; m.msg = "";
       renderStaffModal();
     }));
     el.querySelectorAll(".staffDelBtn").forEach(b => b.addEventListener("click", async () => {
       const c = staffContacts.find(x => x.id === b.dataset.id);
       if (!c || !confirm(`Delete ${c.name}?`)) return;
       staffContacts = staffContacts.filter(x => x.id !== c.id);
-      if (m.editId === c.id) { m.editId = null; m.draftName = ""; m.draftNumber = ""; }
+      if (m.editId === c.id) { m.editId = null; m.draftName = ""; m.draftNumber = ""; m.draftClass = ""; m.draftSection = ""; }
       const ok = await saveStaffContacts();
       m.msg = ok ? "✅ Deleted." : "Deleted on this phone only (shared table not set up)."; m.msgOk = ok;
       renderStaffModal();
@@ -11030,13 +11078,13 @@ function renderStaffModal() {
       const dup = staffContacts.find(c => c.number === number && c.id !== m.editId);
       if (dup) { m.msg = `This number is already saved as "${dup.name}".`; m.msgOk = false; renderStaffModal(); return; }
       if (m.editId) {
-        staffContacts = staffContacts.map(c => c.id === m.editId ? { ...c, name, number } : c);
+        staffContacts = staffContacts.map(c => c.id === m.editId ? { ...c, name, number, className: (m.draftClass || "").trim(), section: (m.draftSection || "").trim() } : c);
       } else {
-        staffContacts = staffContacts.concat([{ id: "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, number }]);
+        staffContacts = staffContacts.concat([{ id: "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, number, className: (m.draftClass || "").trim(), section: (m.draftSection || "").trim() }]);
       }
       m.busy = true; renderStaffModal();
       const ok = await saveStaffContacts();
-      m.busy = false; m.editId = null; m.draftName = ""; m.draftNumber = "";
+      m.busy = false; m.editId = null; m.draftName = ""; m.draftNumber = ""; m.draftClass = ""; m.draftSection = "";
       m.msg = ok ? "✅ Saved." : "Saved on this phone only (shared table not set up yet)."; m.msgOk = ok;
       renderStaffModal();
     });
@@ -11045,6 +11093,25 @@ function renderStaffModal() {
 
   // ---- picker ----
   const what = m.kind === "pdf" ? "PDF" : "Image";
+  if (m.phase === "cardChoose") {
+    el.innerHTML = wrap(`
+      <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;">📤 ${T("Send to whom?")}</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin:12px 0 10px;">
+        ${m.matches.map(c => `
+          <button class="staffCardPickBtn" data-id="${escapeAttr(c.id)}" style="${btnBase}justify-content:flex-start;background:#FFFFFF;color:#1F2A44;border:1px solid #B7A97E;flex-direction:column;align-items:flex-start;gap:2px;">
+            <span style="font-weight:700;">💬 ${escapeHtml(c.name)}</span>
+            <span style="font-size:11.5px;color:#6B5F4B;">${escapeHtml(formatStaffNumber(c.number))}</span>
+          </button>`).join("")}
+      </div>
+      <button id="staffCancelBtn" style="${ghost}">${T("Cancel")}</button>`);
+    el.querySelectorAll(".staffCardPickBtn").forEach(b => b.addEventListener("click", () => {
+      const c = m.matches.find(x => x.id === b.dataset.id);
+      const entry = state.entries.find(x => x.id === m.entryId);
+      if (c && entry) { sendEntryToStaff(entry, c); setTimeout(closeStaffModal, 300); }
+    }));
+    document.getElementById("staffCancelBtn").addEventListener("click", closeStaffModal);
+    return;
+  }
   if (m.phase === "choose") {
     el.innerHTML = wrap(`
       <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;">📤 ${T("Send to whom?")}</div>
@@ -11603,6 +11670,7 @@ function renderOneEntryRow(e) {
             </button>
             ${state.openFeeChartId === e.id ? renderFeeChartBoxInline(e) : ""}
           </div>
+          ${staffContacts.length ? `<div style="margin-top:8px;"><button class="staffMsgBtn" data-id="${e.id}" style="display:flex;align-items:center;gap:5px;background:none;border:none;padding:0;cursor:pointer;color:#1E7A3E;font-size:12px;font-family:'IBM Plex Mono',monospace;">💬 Class Staff ko bhejo</button></div>` : ""}
           ${renderBillReceiptButtonsInline(e)}
           ${e.updatedAt ? `<div style="font-size:11px;color:#A69B82;margin-top:8px;">${APP_LANG === "hi" ? "अंतिम अपडेट" : "Last updated"}: ${cardUpdatedAtText(e.updatedAt)}${e.lastUpdateSummary ? ` — <span title="What changed in the last save">${escapeHtml(cardUpdateSummaryText(e.lastUpdateSummary))}</span> ${APP_LANG === "hi" ? "अपडेट किया" : "updated"}` : ""}</div>` : ""}
           <div style="font-size:11px;color:#9B3437;margin-top:8px;font-style:italic;">This is provided only to show a provisional summary.</div>
@@ -11630,6 +11698,7 @@ function wireUpEntryRowEvents(el) {
       if (entry) startEdit(entry);
     });
   });
+  el.querySelectorAll(".staffMsgBtn").forEach(btn => btn.addEventListener("click", () => sendCardToClassStaff(btn.dataset.id)));
   el.querySelectorAll(".externalExportOneBtn").forEach(btn => {
     btn.addEventListener("click", () => openExternalExportModal([btn.dataset.id]));
   });
