@@ -11248,12 +11248,14 @@ Object.assign(HI_DICT, {
 let archiveUi = null;   // { query, limit } while the window is open
 function archiveFiltered() {
   const q = (archiveUi && archiveUi.query || "").trim().toLowerCase();
-  const list = deletedArchive.slice().sort((a, b) => b.deletedAt - a.deletedAt);
+  let list = deletedArchive.slice().sort((a, b) => b.deletedAt - a.deletedAt);
+  const ses = archiveUi && archiveUi.session || "all";
+  if (ses !== "all") list = list.filter(r => (r.session || "") === ses);
   if (!q) return list;
   return list.filter(r => [r.name, r.fatherName, r.className, r.section, r.rollNo, r.session, r.mobile, r.address].join(" ").toLowerCase().includes(q));
 }
 function archiveDate(ts) { return ts ? new Date(ts).toLocaleDateString("en-GB") : "—"; }
-function openArchiveModal() { archiveUi = { query: "", limit: 50 }; renderArchiveModal(); }
+function openArchiveModal() { archiveUi = { query: "", session: "all", limit: 50 }; renderArchiveModal(); }
 function closeArchiveModal() { archiveUi = null; renderArchiveModal(); }
 function renderArchiveModal() {
   const el = document.getElementById("archiveModalOverlay");
@@ -11266,6 +11268,10 @@ function renderArchiveModal() {
   el.style.display = "flex";
   el.innerHTML = `<div style="width:100%;max-width:520px;max-height:90vh;display:flex;flex-direction:column;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:6px;border-top:3px solid #9B3437;padding:16px;box-sizing:border-box;">
     <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;margin-bottom:10px;">🗄️ ${T("Deleted Students Archive")} <span style="font-weight:400;font-size:12px;color:#6B5F4B;">(${deletedArchive.length})</span></div>
+    <select id="archiveSessionSel" class="stamp" style="width:100%;margin-bottom:8px;">
+      <option value="all" ${archiveUi.session === "all" ? "selected" : ""}>${T("All sessions")}</option>
+      ${[...new Set(deletedArchive.map(r => r.session || "").filter(Boolean))].sort().reverse().map(x => `<option value="${escapeAttr(x)}" ${archiveUi.session === x ? "selected" : ""}>${escapeHtml(x)} (${deletedArchive.filter(r => r.session === x).length})</option>`).join("")}
+    </select>
     <input id="archiveSearch" class="rule-input" placeholder="${escapeAttr(T("Search by name, father, class, enroll no…"))}" value="${escapeAttr(archiveUi.query)}" style="margin-bottom:10px;" />
     <div id="archiveList" style="flex:1;min-height:80px;overflow-y:auto;border-top:1px solid #D9CBA3;">
       ${shown.length ? shown.map(r => `
@@ -11286,6 +11292,7 @@ function renderArchiveModal() {
       <button id="archiveCloseBtn" style="${btn}background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;">${T("Close")}</button>
     </div>
   </div>`;
+  document.getElementById("archiveSessionSel").addEventListener("change", (ev) => { archiveUi.session = ev.target.value; archiveUi.limit = 50; renderArchiveModal(); });
   const inp = document.getElementById("archiveSearch");
   inp.addEventListener("input", (ev) => {
     archiveUi.query = ev.target.value; archiveUi.limit = 50;
@@ -11314,7 +11321,7 @@ function downloadArchivePdf() {
   doc.text("Deleted Students Archive", 30, 34);
   doc.setFont("helvetica", "normal"); doc.setFontSize(9);
   const q = (archiveUi && archiveUi.query || "").trim();
-  doc.text(`Generated ${new Date().toLocaleString()} · ${list.length} ${list.length === 1 ? "student" : "students"}${q ? ` · Search: "${q}"` : ""}`, 30, 50);
+  doc.text(`Generated ${new Date().toLocaleString()} · ${list.length} ${list.length === 1 ? "student" : "students"}${archiveUi && archiveUi.session !== "all" ? ` · Session: ${archiveUi.session}` : ""}${q ? ` · Search: "${q}"` : ""}`, 30, 50);
   const cfg = {
     head: [["#", "Name", "Father Name", "Class", "Sec", "Enroll No.", "Session", "Address", "Deleted On"]],
     body: list.map((r, i) => [i + 1, TN(r.name) || "", TN(r.fatherName) || "", r.className, r.section, r.rollNo, r.session, TN(r.address) || "", archiveDate(r.deletedAt)]),
