@@ -242,6 +242,9 @@
         <button id="toggleStaffContactsBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-staffContacts"></span>Staff WhatsApp Contacts
         </button>
+        <button id="toggleArchiveBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
+          🗄️ Deleted Students Archive
+        </button>
         <button id="toggleRotateBtn" class="btn" style="background:transparent;color:#1F2A44;border:1px solid #B7A97E;width:100%;margin-bottom:6px;">
           <span id="icon-rotate"></span><span id="rotateToggleLabel">Rotate</span>
         </button>
@@ -323,6 +326,7 @@
 <div id="vivaranModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;"></div>
 <div id="multiBillChartModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;overflow-y:auto;"></div>
 <div id="bulkMessageModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;"></div>
+<div id="archiveModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2100;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;"></div>
 <div id="staffModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2100;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;"></div>
 <div id="externalExportModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;"></div>
 
@@ -2408,7 +2412,39 @@ function saveReceiptSettingsToStorage() {
      for update using (
        exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
 */
+/* ---------- Deleted Students Archive ----------
+   Jab bhi koi student delete hota hai, uska naam, father ka naam, class, section, enroll no. aur session yahan save ho jata hai.
+   Saved: is device me (localStorage) aur Supabase `app_config` (key "deleted_archive") me, taaki sab phones me dikhe. */
+const DELETED_ARCHIVE_KEY = "adm_reg_deleted_archive_v1";
+let deletedArchive = [];
+function sanitizeArchive(v) {
+  return (Array.isArray(v) ? v : []).filter(r => r && typeof r === "object" && r.id).map(r => ({
+    id: String(r.id), name: String(r.name || ""), fatherName: String(r.fatherName || ""), className: String(r.className || ""),
+    section: String(r.section || ""), rollNo: String(r.rollNo || ""), session: String(r.session || ""), mobile: String(r.mobile || ""), address: String(r.address || ""),
+    deletedAt: Number(r.deletedAt) || 0,
+  }));
+}
+function loadDeletedArchiveFromStorage() {
+  try { deletedArchive = sanitizeArchive(JSON.parse(localStorage.getItem(DELETED_ARCHIVE_KEY) || "[]")); } catch (e) { deletedArchive = []; }
+}
+function saveDeletedArchive() {
+  try { localStorage.setItem(DELETED_ARCHIVE_KEY, JSON.stringify(deletedArchive)); } catch (e) {}
+  queueCloudSave("deleted_archive");
+}
+function archiveDeletedEntry(e) {
+  deletedArchive = [{
+    id: `${e.id}_${Date.now()}`, name: e.name || "", fatherName: e.fatherName || "", className: e.className || "",
+    section: e.section || "", rollNo: e.rollNo || "", session: e.session || "", mobile: e.mobile || "", address: e.address || "", deletedAt: Date.now(),
+  }, ...deletedArchive];
+  saveDeletedArchive();
+}
+
 const CLOUD_CONFIGS = {
+  deleted_archive: {
+    lsKey: DELETED_ARCHIVE_KEY,
+    get: () => deletedArchive,
+    set: (v) => { if (Array.isArray(v)) deletedArchive = sanitizeArchive(v); },
+  },
   receipt_settings: {
     lsKey: RECEIPT_SETTINGS_KEY,
     get: () => state.receiptSettings,
@@ -6628,6 +6664,7 @@ async function loadEntries() {
   loadReceiptSettingsFromStorage();
   await loadCloudConfigs();
   loadMessageLocksFromStorage();
+  loadDeletedArchiveFromStorage();
   loadMessageCombineFromStorage();
   loadMessageCombineExcludeFromStorage();
   await loadDeletedInvoiceHistory();
@@ -7901,6 +7938,7 @@ async function removeEntry(id) {
     state.error = "Could not delete. Try again.";
   } else {
     state.error = "";
+    if (entry) archiveDeletedEntry(entry);
     await refreshEntries();
     await createBackup();
   }
@@ -8224,6 +8262,8 @@ function renderHeader() {
   toggleMessageReportBtn.style.background = state.showMessageReportPanel ? "#1F2A44" : "transparent";
   toggleMessageReportBtn.style.color = state.showMessageReportPanel ? "#F3ECDA" : "#1F2A44";
   toggleMessageReportBtn.style.display = (state.editUnlocked && !state.isGuestMode) ? "" : "none";
+  const archiveMenuBtn = document.getElementById("toggleArchiveBtn");
+  if (archiveMenuBtn) archiveMenuBtn.style.display = (state.editUnlocked && !state.isGuestMode) ? "" : "none";
   const staffContactsMenuBtn = document.getElementById("toggleStaffContactsBtn");
   if (staffContactsMenuBtn) {
     staffContactsMenuBtn.style.display = (state.editUnlocked && !state.isGuestMode) ? "" : "none";
@@ -11195,6 +11235,108 @@ function renderStaffModal() {
     state.showSettingsMenu = false;
     renderHeader();
     openStaffContactsManager();
+  });
+})();
+
+/* ---------- Deleted Students Archive: window + search + PDF ---------- */
+Object.assign(HI_DICT, {
+  "Deleted Students Archive": "हटाए गए छात्रों का आर्काइव",
+  "Search by name, father, class, enroll no…": "नाम, पिता, कक्षा, एनरोल नं., पते से खोजें…",
+  "Download PDF": "PDF डाउनलोड करें",
+  "Close": "बंद करें",
+});
+let archiveUi = null;   // { query, limit } while the window is open
+function archiveFiltered() {
+  const q = (archiveUi && archiveUi.query || "").trim().toLowerCase();
+  const list = deletedArchive.slice().sort((a, b) => b.deletedAt - a.deletedAt);
+  if (!q) return list;
+  return list.filter(r => [r.name, r.fatherName, r.className, r.section, r.rollNo, r.session, r.mobile, r.address].join(" ").toLowerCase().includes(q));
+}
+function archiveDate(ts) { return ts ? new Date(ts).toLocaleDateString("en-GB") : "—"; }
+function openArchiveModal() { archiveUi = { query: "", limit: 50 }; renderArchiveModal(); }
+function closeArchiveModal() { archiveUi = null; renderArchiveModal(); }
+function renderArchiveModal() {
+  const el = document.getElementById("archiveModalOverlay");
+  if (!el) return;
+  if (!archiveUi) { el.style.display = "none"; el.innerHTML = ""; return; }
+  const list = archiveFiltered();
+  const shown = list.slice(0, archiveUi.limit);
+  const isAdmin = state.editUnlocked && !state.isGuestMode;
+  const btn = "display:flex;align-items:center;justify-content:center;gap:6px;border-radius:4px;padding:9px 14px;font-size:13px;font-family:'IBM Plex Mono',monospace;cursor:pointer;";
+  el.style.display = "flex";
+  el.innerHTML = `<div style="width:100%;max-width:520px;max-height:90vh;display:flex;flex-direction:column;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:6px;border-top:3px solid #9B3437;padding:16px;box-sizing:border-box;">
+    <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;margin-bottom:10px;">🗄️ ${T("Deleted Students Archive")} <span style="font-weight:400;font-size:12px;color:#6B5F4B;">(${deletedArchive.length})</span></div>
+    <input id="archiveSearch" class="rule-input" placeholder="${escapeAttr(T("Search by name, father, class, enroll no…"))}" value="${escapeAttr(archiveUi.query)}" style="margin-bottom:10px;" />
+    <div id="archiveList" style="flex:1;min-height:80px;overflow-y:auto;border-top:1px solid #D9CBA3;">
+      ${shown.length ? shown.map(r => `
+        <div style="display:flex;gap:8px;padding:9px 0;border-bottom:1px solid #D9CBA3;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:700;color:#1F2A44;font-size:14px;">${escapeHtml(TN(r.name) || "—")}</div>
+            <div style="font-size:12.5px;color:#6B5F4B;">${escapeHtml(TN(r.fatherName) || "—")}</div>
+            <div class="stamp" style="font-size:12px;color:#1F2A44;margin-top:2px;">Class ${escapeHtml(r.className || "—")}${r.section ? " · Sec " + escapeHtml(r.section) : ""} · Enroll ${escapeHtml(r.rollNo || "—")}</div>
+            ${r.address ? `<div style="font-size:12.5px;color:#1F2A44;margin-top:2px;">📍 ${escapeHtml(TN(r.address))}</div>` : ""}
+            <div class="stamp" style="font-size:11.5px;color:#9B3437;">Session ${escapeHtml(r.session || "—")} · Deleted ${archiveDate(r.deletedAt)}</div>
+          </div>
+          ${isAdmin ? `<button class="archiveDelBtn" data-id="${escapeAttr(r.id)}" title="Remove from archive" style="background:none;border:none;color:#9B3437;font-size:16px;cursor:pointer;align-self:flex-start;">✕</button>` : ""}
+        </div>`).join("") : `<p style="color:#6B5F4B;font-size:13px;text-align:center;padding:18px 0;">${deletedArchive.length ? "No match found." : "No deleted students yet."}</p>`}
+      ${list.length > shown.length ? `<button id="archiveMoreBtn" style="${btn}width:100%;margin-top:8px;background:transparent;color:#1F2A44;border:1px solid #B7A97E;">${T("Load more")} (${list.length - shown.length})</button>` : ""}
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button id="archivePdfBtn" ${list.length ? "" : "disabled"} style="${btn}flex:1;background:#9B3437;color:#F3ECDA;border:none;opacity:${list.length ? 1 : 0.5};">${T("Download PDF")} (${list.length})</button>
+      <button id="archiveCloseBtn" style="${btn}background:transparent;color:#6B5F4B;border:1px solid #D9CBA3;">${T("Close")}</button>
+    </div>
+  </div>`;
+  const inp = document.getElementById("archiveSearch");
+  inp.addEventListener("input", (ev) => {
+    archiveUi.query = ev.target.value; archiveUi.limit = 50;
+    const pos = ev.target.selectionStart;
+    renderArchiveModal();
+    const n = document.getElementById("archiveSearch"); n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) {}
+  });
+  const more = document.getElementById("archiveMoreBtn");
+  if (more) more.addEventListener("click", () => { archiveUi.limit += 50; renderArchiveModal(); });
+  document.getElementById("archivePdfBtn").addEventListener("click", downloadArchivePdf);
+  document.getElementById("archiveCloseBtn").addEventListener("click", closeArchiveModal);
+  el.querySelectorAll(".archiveDelBtn").forEach(b => b.addEventListener("click", () => {
+    if (!confirm("Remove this record from the archive permanently?")) return;
+    deletedArchive = deletedArchive.filter(r => r.id !== b.dataset.id);
+    saveDeletedArchive();
+    renderArchiveModal();
+  }));
+}
+function downloadArchivePdf() {
+  const list = archiveFiltered();
+  if (!list.length) return;
+  if (!window.jspdf) { alert("PDF library is not loaded. Please check your internet and try again."); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  doc.setFont("helvetica", "bold"); doc.setFontSize(15);
+  doc.text("Deleted Students Archive", 30, 34);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+  const q = (archiveUi && archiveUi.query || "").trim();
+  doc.text(`Generated ${new Date().toLocaleString()} · ${list.length} ${list.length === 1 ? "student" : "students"}${q ? ` · Search: "${q}"` : ""}`, 30, 50);
+  const cfg = {
+    head: [["#", "Name", "Father Name", "Class", "Sec", "Enroll No.", "Session", "Address", "Deleted On"]],
+    body: list.map((r, i) => [i + 1, TN(r.name) || "", TN(r.fatherName) || "", r.className, r.section, r.rollNo, r.session, TN(r.address) || "", archiveDate(r.deletedAt)]),
+    startY: 62,
+    styles: { font: "helvetica", fontSize: 7.5, cellPadding: 2.5, overflow: "linebreak", valign: "top" },
+    headStyles: { fillColor: [155, 52, 55], textColor: 255, fontStyle: "bold" },
+    bodyStyles: { fontStyle: "bold", textColor: [31, 42, 68] },
+    alternateRowStyles: { fillColor: [251, 247, 236] },
+    columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 80 }, 2: { cellWidth: 80 }, 3: { cellWidth: 40 }, 4: { cellWidth: 28 }, 5: { cellWidth: 46 }, 6: { cellWidth: 50 }, 7: { cellWidth: 118 }, 8: { cellWidth: 55 } },
+    margin: { left: 30, right: 30 },
+  };
+  doc.autoTable({ ...cfg, ...pdfAutoTableHindiHooks(cfg) });
+  doc.save(`deleted-students-archive-${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+(function initArchiveUi() {
+  const ov = document.getElementById("archiveModalOverlay");
+  if (ov) ov.addEventListener("click", (ev) => { if (ev.target === ov) closeArchiveModal(); });
+  const btn = document.getElementById("toggleArchiveBtn");
+  if (btn) btn.addEventListener("click", () => {
+    state.showSettingsMenu = false;
+    renderHeader();
+    openArchiveModal();
   });
 })();
 
