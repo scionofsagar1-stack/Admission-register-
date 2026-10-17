@@ -1476,6 +1476,7 @@ function fromDbRow(r) {
       id: a.id || `arc_${Math.random().toString(36).slice(2, 9)}`,
       session: a.session || "",
       className: a.className || "",
+      rollNo: a.rollNo || "",
       archivedAt: a.archivedAt || null,
       chart: normalizeFeeSheet(a.chart),
     })),
@@ -3407,11 +3408,17 @@ function computeFeeChartPaidReceipts(sheet, archiveMeta, extraSheets) {
    MOST RECENT invoice), this looks up whichever invoice the user clicked on
    in the "Paid On" column, even if it's since been superseded by a newer
    payment. Used to let an old invoice be reprinted on demand. */
-function buildReceiptForInvoiceNo(sheet, invoiceNo, archiveMeta) {
+/* Same invoice no. current chart aur archived (last session) chart dono me aaye (ek saath pay karne par), to
+   dono ki rows ek hi receipt me judti hain aur Total dono ka milakar ek aata hai. `extraSheets` = entry ki baaki charts
+   ([{ sheet, sessionLabel }]); inme se wahi rows li jaati hain jinka invoiceNo aur category (fee/transport) wahi ho
+   aur jo lagbhag usi samay (30 min ke andar) pay hui hon. rowIndices (Cancel Receipt ke liye) sirf primary sheet ki rehti hain. */
+function buildReceiptForInvoiceNo(sheet, invoiceNo, archiveMeta, extraSheets) {
   const amountColIdx = getFeeChartAmountColIndex(sheet);
   const monthColIdx = getFeeChartMonthColIndex(sheet);
   const rawItems = [];
   let category = null;
+  let maxPaidAt = 0;
+  const primaryWeight = (archiveMeta && archiveMeta.isArchived) ? 0 : 1;
   sheet.rows.forEach((row, ri) => {
     if ((sheet.statuses[ri] || "") !== "paid") return;
     const rowInvoiceNo = (sheet.invoiceNo && sheet.invoiceNo[ri]) || null;
@@ -3421,12 +3428,34 @@ function buildReceiptForInvoiceNo(sheet, invoiceNo, archiveMeta) {
     const detail = feeChartRowDetail(sheet, ri, amountColIdx);
     const head = feeChartRowHead(sheet, ri, amountColIdx, monthColIdx);
     const month = feeChartRowMonth(sheet, ri, monthColIdx);
-    rawItems.push({ ri, detail, amount, status: "paid", head, month });
+    maxPaidAt = Math.max(maxPaidAt, (sheet.paidAt && sheet.paidAt[ri]) || 0);
+    rawItems.push({ ri, detail, amount, status: "paid", head, month, source: "primary", sheetTag: "__primary__", sessionLabel: null, orderWeight: primaryWeight });
   });
   if (!rawItems.length) return null;
-  const items = groupFeeChartBillItems(rawItems);
+  const primaryCount = rawItems.length;
+  (extraSheets || []).forEach((extra, exIdx) => {
+    const ex = extra && extra.sheet;
+    if (!ex || !ex.rows) return;
+    const sessionLabel = (extra && extra.sessionLabel) || null;
+    const sheetTag = sessionLabel || `__extra_${exIdx}__`;
+    const exAmt = getFeeChartAmountColIndex(ex), exMonth = getFeeChartMonthColIndex(ex);
+    ex.rows.forEach((row, ri) => {
+      if ((ex.statuses[ri] || "") !== "paid") return;
+      if (String((ex.invoiceNo && ex.invoiceNo[ri]) || "") !== String(invoiceNo)) return;
+      if (feeChartRowCategory(ex, ri, exAmt, exMonth) !== category) return;
+      const paidAt = (ex.paidAt && ex.paidAt[ri]) || 0;
+      if (paidAt && maxPaidAt && Math.abs(paidAt - maxPaidAt) > 30 * 60 * 1000) return;   // alag samay ki, sirf number takrane wali row
+      rawItems.push({
+        ri, detail: feeChartRowDetail(ex, ri, exAmt), amount: feeChartRowAmount(ex, ri, exAmt), status: "paid",
+        head: feeChartRowHead(ex, ri, exAmt, exMonth), month: feeChartRowMonth(ex, ri, exMonth),
+        source: "extra", sheetTag, sessionLabel, orderWeight: sessionLabel ? 0 : 1,
+      });
+    });
+  });
+  const ordered = rawItems.slice().sort((x, y) => x.orderWeight - y.orderWeight);
+  const items = groupFeeChartBillItems(ordered);
   const total = items.reduce((s, it) => s + it.total, 0);
-  const rowIndices = rawItems.map(it => it.ri);
+  const rowIndices = rawItems.slice(0, primaryCount).map(it => it.ri);
   const label = category === "transport" ? "Transport Fee Receipt" : "Fee Receipt";
   return {
     items, total, invoiceNo, category,
@@ -3456,9 +3485,14 @@ function resolveEntryAndSheetForReprint(entryId, archiveId) {
       entry,
       sheet: normalizeFeeSheet(archiveEntry.chart),
       archiveMeta: { isArchived: true, session: archiveEntry.session, className: archiveEntry.className, archiveId: archiveEntry.id },
+      extraSheets: [{ sheet: normalizeFeeSheet(entry.feeChart), sessionLabel: null }]
+        .concat((entry.feeChartArchive || []).filter(a => a.id !== archiveId).map(a => ({ sheet: normalizeFeeSheet(a.chart), sessionLabel: a.session }))),
     };
   }
-  return { entry, sheet: normalizeFeeSheet(entry.feeChart), archiveMeta: null };
+  return {
+    entry, sheet: normalizeFeeSheet(entry.feeChart), archiveMeta: null,
+    extraSheets: (entry.feeChartArchive || []).map(a => ({ sheet: normalizeFeeSheet(a.chart), sessionLabel: a.session })),
+  };
 }
 /* Wires up every .reprintInvoiceBtn found inside `container` — call this
    after ANY innerHTML render that might contain the "Paid On" invoice
@@ -3470,7 +3504,7 @@ function bindReprintInvoiceButtons(container) {
       try {
         const ctx = resolveEntryAndSheetForReprint(btn.dataset.entryId, btn.dataset.archiveId || null);
         if (!ctx) { alert("This student record wasn't found — please refresh the page and try again."); return; }
-        const receipt = buildReceiptForInvoiceNo(ctx.sheet, btn.dataset.invoiceNo, ctx.archiveMeta);
+        const receipt = buildReceiptForInvoiceNo(ctx.sheet, btn.dataset.invoiceNo, ctx.archiveMeta, ctx.extraSheets);
         if (!receipt) { alert("No rows found for this invoice (#" + btn.dataset.invoiceNo + ") — this may be a very old record."); return; }
         downloadFeeChartPaidReceiptPdf(ctx.entry, receipt);
       } catch (err) {
@@ -3577,7 +3611,41 @@ function computeEntryPaidInvoices(entry) {
   // live chart left to revert, so these are always tagged "paidHistory"
   // (older saved snapshots won't have a `source` yet, hence the fallback).
   (entry.paidInvoiceHistory || []).forEach(inv => invoices.push({ ...inv, source: inv.source || "paidHistory" }));
-  return invoices;
+  return mergeSharedInvoices(invoices);
+}
+/* Ek hi invoice no. agar current chart aur archived chart dono me hai (ek saath pay kiya), to Report me alag-alag
+   amount ki do lines ke bajaye ek hi line aati hai jisme Total dono ka milakar hota hai. Delete dabane par dono
+   hisse (parts) report se hat jaate hain. Sirf live (current/archive) charts merge hote hain, aur sirf tab jab
+   category wahi ho aur payment lagbhag ek hi samay (30 min) ki ho. */
+function mergeSharedInvoices(list) {
+  const out = [];
+  const groups = new Map();
+  list.forEach(inv => {
+    if (inv.source !== "current" && inv.source !== "archive") { out.push(inv); return; }
+    const k = `${inv.invoiceNo}|${inv.category}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(inv);
+  });
+  groups.forEach(parts => {
+    if (parts.length < 2) { out.push(...parts); return; }
+    const cur = parts.find(p => p.source === "current");
+    const base = cur || parts[0];
+    const near = parts.filter(p => p === base || !p.paidAt || !base.paidAt || Math.abs(p.paidAt - base.paidAt) <= 30 * 60 * 1000);
+    const rest = parts.filter(p => !near.includes(p));
+    out.push(...rest);
+    if (near.length < 2) { out.push(...near); return; }
+    const items = [];
+    near.forEach(p => (p.items || []).forEach(it => items.push({ ...it, sessionLabel: p.source === "archive" ? p.session : null })));
+    out.push({
+      ...base,
+      total: near.reduce((s, p) => s + (p.total || 0), 0),
+      paidAt: Math.max(...near.map(p => p.paidAt || 0)),
+      items,
+      feeTill: invoiceFeeTillMonth(items) || base.feeTill,
+      parts: near,
+    });
+  });
+  return out;
 }
 function computeAllPaidInvoices() {
   const invoices = [];
@@ -4309,54 +4377,63 @@ async function cancelArchiveFeeChartPaidReceipt(entryId, archiveId, category) {
 async function deleteReportInvoice(inv) {
   if (!state.editUnlocked) return;
   if (!confirm(`Remove invoice ${inv.invoiceNo} from the Report? The student's fee chart and Paid status will NOT change — this only removes it from this Report.`)) return;
-  state.saving = true; renderHeader();
-  try {
-    if (inv.source === "current") {
-      const entry = state.entries.find(x => x.id === inv.entryId);
-      if (!entry) { state.error = "Couldn't find that student's record."; return; }
-      const sheet = normalizeFeeSheet(entry.feeChart);
+  const parts = (inv.parts && inv.parts.length) ? inv.parts : [inv];   // current + archive ka combined invoice: dono hisse hatao
+  // Tez: pehle list turant badal deti hai (local), save peeche chalta hai. Poori list dobara download (refreshEntries) nahi hoti.
+  const undo = [];
+  const jobs = [];
+  const localEntry = (id) => state.entries.find(x => x.id === id);
+  const sameInAll = (id) => Array.isArray(state.allEntries) ? state.allEntries.find(x => x.id === id) : null;
+  for (const p of parts) {
+    if (p.source === "current") {
+      const entry = localEntry(p.entryId);
+      if (!entry) { state.error = "Couldn't find that student's record."; continue; }
+      const prev = entry.feeChart;
+      const sheet = cloneFeeSheet(normalizeFeeSheet(entry.feeChart));
       if (!sheet.hiddenInvoiceNos) sheet.hiddenInvoiceNos = [];
-      if (!sheet.hiddenInvoiceNos.includes(inv.invoiceNo)) sheet.hiddenInvoiceNos.push(inv.invoiceNo);
-      const { error } = await supabaseClient.from("admission_entries").update({ fee_chart: sheet }).eq("id", entry.id);
-      if (error) { state.error = "Couldn't remove the invoice. Please try again."; return; }
-      state.error = "";
-      await refreshEntries();
-      await createBackup();
-    } else if (inv.source === "archive") {
-      const entry = state.entries.find(x => x.id === inv.entryId);
-      if (!entry) { state.error = "Couldn't find that student's record."; return; }
+      if (!sheet.hiddenInvoiceNos.includes(p.invoiceNo)) sheet.hiddenInvoiceNos.push(p.invoiceNo);
+      entry.feeChart = sheet; const other = sameInAll(p.entryId); if (other && other !== entry) other.feeChart = sheet;
+      undo.push(() => { entry.feeChart = prev; if (other && other !== entry) other.feeChart = prev; });
+      jobs.push(() => supabaseClient.from("admission_entries").update({ fee_chart: sheet }).eq("id", entry.id));
+    } else if (p.source === "archive") {
+      const entry = localEntry(p.entryId);
+      if (!entry) { state.error = "Couldn't find that student's record."; continue; }
+      const prevList = entry.feeChartArchive;
       const archiveList = (entry.feeChartArchive || []).map(a => ({ ...a, chart: cloneFeeSheet(a.chart) }));
-      const idx = archiveList.findIndex(a => a.id === inv.archiveId);
-      if (idx === -1) { state.error = "Couldn't find that old session's chart."; return; }
+      const idx = archiveList.findIndex(a => a.id === p.archiveId);
+      if (idx === -1) { state.error = "Couldn't find that old session's chart."; continue; }
       const sheet = archiveList[idx].chart;
       if (!sheet.hiddenInvoiceNos) sheet.hiddenInvoiceNos = [];
-      if (!sheet.hiddenInvoiceNos.includes(inv.invoiceNo)) sheet.hiddenInvoiceNos.push(inv.invoiceNo);
-      const { error } = await supabaseClient.from("admission_entries").update({ fee_chart_archive: archiveList }).eq("id", entry.id);
-      if (error) { state.error = "Couldn't remove the invoice. Please try again."; return; }
-      state.error = "";
-      await refreshEntries();
-      await createBackup();
-    } else if (inv.source === "paidHistory") {
-      const entry = state.entries.find(x => x.id === inv.entryId);
-      if (!entry) { state.error = "Couldn't find that student's record."; return; }
-      const remaining = (entry.paidInvoiceHistory || []).filter(x => x.invoiceNo !== inv.invoiceNo);
-      const { error } = await supabaseClient.from("admission_entries").update({ paid_invoice_history: remaining }).eq("id", entry.id);
-      if (error) { state.error = "Couldn't delete the invoice record. Please try again."; return; }
-      state.error = "";
-      await refreshEntries();
-      await createBackup();
-    } else if (inv.source === "deletedHistory") {
-      if (!inv._delId) { state.error = "This older record needs a page refresh before it can be deleted."; return; }
-      const { error } = await supabaseClient.from("deleted_invoice_history").delete().eq("id", inv._delId);
-      if (error) { state.error = "Couldn't delete the invoice record. Please try again."; return; }
-      state.error = "";
-      state.deletedInvoiceHistory = state.deletedInvoiceHistory.filter(x => x._delId !== inv._delId);
+      if (!sheet.hiddenInvoiceNos.includes(p.invoiceNo)) sheet.hiddenInvoiceNos.push(p.invoiceNo);
+      entry.feeChartArchive = archiveList; const other = sameInAll(p.entryId); if (other && other !== entry) other.feeChartArchive = archiveList;
+      undo.push(() => { entry.feeChartArchive = prevList; if (other && other !== entry) other.feeChartArchive = prevList; });
+      jobs.push(() => supabaseClient.from("admission_entries").update({ fee_chart_archive: archiveList }).eq("id", entry.id));
+    } else if (p.source === "paidHistory") {
+      const entry = localEntry(p.entryId);
+      if (!entry) { state.error = "Couldn't find that student's record."; continue; }
+      const prev = entry.paidInvoiceHistory || [];
+      const remaining = prev.filter(x => x.invoiceNo !== p.invoiceNo);
+      entry.paidInvoiceHistory = remaining; const other = sameInAll(p.entryId); if (other && other !== entry) other.paidInvoiceHistory = remaining;
+      undo.push(() => { entry.paidInvoiceHistory = prev; if (other && other !== entry) other.paidInvoiceHistory = prev; });
+      jobs.push(() => supabaseClient.from("admission_entries").update({ paid_invoice_history: remaining }).eq("id", entry.id));
+    } else if (p.source === "deletedHistory") {
+      if (!p._delId) { state.error = "This older record needs a page refresh before it can be deleted."; continue; }
+      const prevList = state.deletedInvoiceHistory;
+      state.deletedInvoiceHistory = prevList.filter(x => x._delId !== p._delId);
+      undo.push(() => { state.deletedInvoiceHistory = prevList; });
+      jobs.push(() => supabaseClient.from("deleted_invoice_history").delete().eq("id", p._delId));
     }
+  }
+  if (!jobs.length) { renderAll(); return; }
+  state.error = "";
+  renderReportPanel(); renderHeader();          // report me line turant hat jaati hai
+  try {
+    const results = await Promise.all(jobs.map(j => j()));
+    if (results.some(r => r && r.error)) throw new Error("save failed");
+    createBackup();
   } catch (err) {
     console.error("deleteReportInvoice error:", err);
-    state.error = "Something went wrong. Please try again.";
-  } finally {
-    state.saving = false;
+    undo.forEach(u => u());
+    state.error = "Couldn't remove the invoice. Please try again.";
     renderAll();
   }
 }
@@ -7701,6 +7778,7 @@ function archiveCurrentChartForPromotion() {
     id: `arc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     session: state.editOriginal.session || state.editForm.session || "",
     className: state.editOriginal.className || state.editForm.className || "",
+    rollNo: state.editOriginal.rollNo || state.editForm.rollNo || "",   // us (purane) session ka enrollment no.
     archivedAt: Date.now(),
     active: true,
     chart: cloneFeeSheet(current),
@@ -7724,6 +7802,9 @@ function renderEditChartArchivePreview() {
       <div class="archiveChartBox" data-archive-idx="${idx}" style="margin-top:12px;padding:10px;background:#FBF3D9;border:1px solid #D9CBA3;border-radius:4px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap;">
           <span class="stamp" style="font-size:10.5px;color:#9B3437;text-transform:uppercase;letter-spacing:0.5px;">📦 Last Session: ${escapeHtml(a.session || "—")} (Class ${escapeHtml(a.className || "—")})</span>
+          <label class="stamp" style="font-size:10.5px;color:#1F2A44;display:flex;align-items:center;gap:4px;">Enroll No.
+            <input type="text" class="archiveRollInput" data-archive-idx="${idx}" value="${escapeAttr(a.rollNo || "")}" placeholder="—" style="width:70px;padding:3px 5px;border:1px solid #B7A97E;border-radius:3px;background:#FFFFFF;font-family:'IBM Plex Mono',monospace;font-size:12px;color:#1F2A44;" />
+          </label>
           <div style="display:flex;gap:8px;flex-shrink:0;">
             <button type="button" class="toggleArchiveActiveDraftBtn" data-archive-idx="${idx}" style="display:flex;align-items:center;gap:5px;background:${active ? "#1E7A3E" : "transparent"};color:${active ? "#F3ECDA" : "#6B5F4B"};border:1px solid ${active ? "#1E7A3E" : "#B7A97E"};border-radius:3px;padding:3px 10px;font-size:10.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${active ? "🟢 Active" : "⚪ Inactive"}</button>
             <button type="button" class="removeArchiveChartBtn" data-archive-idx="${idx}" style="flex-shrink:0;background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:3px 8px;font-size:10.5px;cursor:pointer;">Remove</button>
@@ -7733,6 +7814,10 @@ function renderEditChartArchivePreview() {
       </div>`;
   }).join("");
   bindReprintInvoiceButtons(wrap);
+  wrap.querySelectorAll(".archiveRollInput").forEach(inp => inp.addEventListener("input", () => {
+    const a = state.editForm.feeChartArchive[parseInt(inp.dataset.archiveIdx, 10)];
+    if (a) a.rollNo = inp.value.trim();
+  }));
   wrap.querySelectorAll(".toggleArchiveActiveDraftBtn").forEach(btn => {
     btn.addEventListener("click", () => {
       const idx = parseInt(btn.dataset.archiveIdx, 10);
@@ -7773,7 +7858,7 @@ function renderEditChartArchivePreview() {
         autoMarkAllSameMadRowsPending(sheet, ri);
       }
       archiveEntry.chart = sheet;
-      renderEntries();
+      renderEditRowOnly();
     });
   });
   wrap.querySelectorAll(".feeChartCloseNoteInput").forEach(inp => {
@@ -7836,6 +7921,7 @@ async function saveEdit() {
   }
   state.saving = true;
   const editedId = state.editingId;
+  let needFullRender = false;   // class/session badalne par list ki jagah/ginti badal sakti hai — tab poora render
   try {
     renderHeader(); renderRowInPlace(editedId);
     // Defense in depth for a guest (Class Teacher) save: even if the form
@@ -7858,6 +7944,7 @@ async function saveEdit() {
     const classChanged = (state.editForm.className || "").trim() !== (state.editOriginal.className || "").trim();
     const sessionChanged = (state.editForm.session || "").trim() !== (state.editOriginal.session || "").trim();
     if (classChanged || sessionChanged) {
+      needFullRender = true;
       const newRoll = nextRollForClass(state.entries, state.editForm.className, state.editForm.session, editedId);
       state.editForm.rollNo = newRoll;
       state.editForm.serial = parseInt(newRoll, 10);
@@ -7897,9 +7984,12 @@ async function saveEdit() {
     state.saving = false;
   }
   try {
-    renderAll();
+    const banner = document.getElementById("globalErrorBanner");
+    const bannerShown = !!banner && banner.style.display === "flex";
+    if (needFullRender || state.error || bannerShown) renderAll();
+    else { renderHeader(); renderRowInPlace(editedId); }   // sirf ye ek card + header — poori list nahi
   } catch (err) {
-    console.error("renderAll after saveEdit failed:", err);
+    console.error("render after saveEdit failed:", err);
   }
 }
 function cancelEdit() {
@@ -7923,7 +8013,7 @@ async function removeEntry(id) {
     const invoices = computeEntryPaidInvoices(entry);
     if (invoices.length) {
       const rows = invoices.map(inv => ({
-        invoice: { ...inv, name: inv.name || entry.name || "", fatherName: inv.fatherName || entry.fatherName || "", deletedStudentAt: Date.now(), source: "deletedHistory" },
+        invoice: { ...inv, parts: undefined, name: inv.name || entry.name || "", fatherName: inv.fatherName || entry.fatherName || "", deletedStudentAt: Date.now(), source: "deletedHistory" },
       }));
       const { data: insData, error: snapErr } = await supabaseClient.from("deleted_invoice_history").insert(rows).select("id");
       if (snapErr) console.error("Could not snapshot invoices before delete:", snapErr);
@@ -8023,27 +8113,43 @@ async function bulkSetStar(mode) {
   const label = which === "all" ? "saare star" : `${STAR_NAMES[which]} star`;
   const q = adding ? `${targets.length} students par ${label} laga de?` : `${targets.length} students se ${label} hata de?`;
   if (!confirm(q)) return;
-  const btn = document.getElementById(adding ? "bulkStarAddBtn" : "bulkStarRemoveBtn");
-  if (btn) { btn.disabled = true; btn.textContent = adding ? "Marking…" : "Removing…"; }
-  let failed = 0;
-  const work = targets.slice();
-  const worker = async () => {
-    while (work.length) {
-      const entry = work.shift();
-      const prev = { ...(entry.starMarks || {}) };
-      const next = { ...prev };
-      if (adding) next[which] = true;
-      else if (which === "all") [1, 2, 3, 4].forEach(n => { next[n] = false; });
-      else next[which] = false;
-      entry.starMarks = next;
-      const { error } = await supabaseClient.from("admission_entries").update({ star_marks: next }).eq("id", entry.id);
-      if (error) { console.error("Could not save star:", error); entry.starMarks = prev; failed++; }
-    }
-  };
-  await Promise.all([worker(), worker(), worker(), worker()]);
-  if (failed) alert(`${failed} students ka star save nahi ho paya. Dobara try karein.`);
+  // Tez save: jin students ka naya star-set ek jaisa ho unhe ek hi request me update karte hain (70 students = 1-3 requests,
+  // pehle 70 alag requests thi). List turant badal jaati hai, aur save peeche chalta hai; fail hone par purana wapas aa jata hai.
+  const prevById = new Map();
+  const groups = new Map();   // JSON(next marks) -> { next, ids: [] }
+  targets.forEach(entry => {
+    const prev = { ...(entry.starMarks || {}) };
+    const next = { ...prev };
+    if (adding) next[which] = true;
+    else if (which === "all") [1, 2, 3, 4].forEach(n => { next[n] = false; });
+    else next[which] = false;
+    prevById.set(entry.id, prev);
+    const k = JSON.stringify(next);
+    if (!groups.has(k)) groups.set(k, { next, ids: [] });
+    groups.get(k).ids.push(entry.id);
+  });
+  const setMarks = (id, marks) => [state.entries, state.allEntries].forEach(list => {
+    if (!Array.isArray(list)) return;
+    const e = list.find(x => x.id === id);
+    if (e) e.starMarks = { ...marks };
+  });
+  groups.forEach(g => g.ids.forEach(id => setMarks(id, g.next)));
   renderEntries();
+  let failed = 0;
+  const jobs = [];
+  groups.forEach(g => {
+    for (let i = 0; i < g.ids.length; i += 100) {
+      const chunk = g.ids.slice(i, i + 100);
+      jobs.push((async () => {
+        const { error } = await supabaseClient.from("admission_entries").update({ star_marks: g.next }).in("id", chunk);
+        if (error) { console.error("Could not save stars:", error); failed += chunk.length; chunk.forEach(id => setMarks(id, prevById.get(id))); }
+      })());
+    }
+  });
+  await Promise.all(jobs);
+  if (failed) { alert(`${failed} students ka star save nahi ho paya. Dobara try karein.`); renderEntries(); }
 }
+
 async function addEventToEntry(entryId) {
   if (!state.editUnlocked) return;
   const draft = state.eventDraft;
@@ -11651,7 +11757,7 @@ function renderArchivedChartsInline(e) {
     return `
       <div class="archiveInlineBox" data-entry-id="${e.id}" data-archive-id="${escapeAttr(a.id)}" style="margin-top:14px;padding:10px;background:#FBF3D9;border:1px dashed #B7A97E;border-radius:4px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-          <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#9B3437;text-transform:uppercase;letter-spacing:0.5px;">📦 Last Session Due — ${escapeHtml(a.session || "—")} (Class ${escapeHtml(a.className || "—")})</div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#9B3437;text-transform:uppercase;letter-spacing:0.5px;">📦 Last Session Due — ${escapeHtml(a.session || "—")} (Class ${escapeHtml(a.className || "—")})${a.rollNo ? ` · Enroll ${escapeHtml(a.rollNo)}` : ""}</div>
           ${state.editUnlocked
             ? `<button class="toggleArchiveActiveBtn" data-entry-id="${e.id}" data-archive-id="${escapeAttr(a.id)}" style="flex-shrink:0;display:flex;align-items:center;gap:5px;background:${active ? "#1E7A3E" : "transparent"};color:${active ? "#F3ECDA" : "#6B5F4B"};border:1px solid ${active ? "#1E7A3E" : "#B7A97E"};border-radius:3px;padding:4px 10px;font-size:10.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${active ? "🟢 Active" : "⚪ Inactive"}</button>`
             : `<span style="flex-shrink:0;font-size:10.5px;font-family:'IBM Plex Mono',monospace;color:${active ? "#1E7A3E" : "#6B5F4B"};">${active ? "🟢 Active" : "⚪ Inactive"}</span>`}
@@ -11838,6 +11944,10 @@ function renderRowsInPlace(ids) {
   saveViewState();
 }
 function renderRowInPlace(id) { renderRowsInPlace([id]); }
+/* Edit form me fee status badalne par poori list dobara banane ki jagah sirf wahi ek card dobara banta hai (tez). */
+function renderEditRowOnly() {
+  if (state.editingId) renderRowInPlace(state.editingId); else renderEntries();
+}
 /* Snapshot of every entry id that currently has some per-row panel open
    (Fee Chart / Bill / Paid Receipt / Message / Archived Receipt / Events /
    Receipt Settings). Used by the toggle*() functions below to figure out
@@ -12272,7 +12382,7 @@ function wireUpEntryRowEvents(el) {
         state.editForm.feeChart = sheet;
         applyAutoTillFromChart(sheet);
         refreshFeeChartTotalCell(preview, sheet);
-        renderEntries();
+        renderEditRowOnly();
       });
     });
     preview.querySelectorAll(".feeChartCloseNoteInput").forEach(inp => {
