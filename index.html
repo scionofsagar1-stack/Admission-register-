@@ -10946,57 +10946,79 @@ function exportSelectedFeeChartsPdf() {
     else if (gi > 0) y += 8;
     drawBandAndHead(g, false);
     g.list.forEach((e, si) => {
-      if (y + rh * 2 > pageH - bottom) { closeSeg(); doc.addPage(); y = top; drawBandAndHead(g, true); }
+      // Student ke demographic lines: naam, father, mobile, address, note (note poora, kata hua nahi). Zyada lines ho to student ka block ooncha ho jata hai.
+      const sx = mx + numW + 5, sw = stuW - 10;
+      const wrap = (str, size, bold) => {
+        const words = String(str || "").split(/\s+/).filter(Boolean);
+        const out = []; let cur = "";
+        words.forEach(w => {
+          const t = cur ? cur + " " + w : w;
+          if (pdfMixedWidth(doc, t, size, bold) > sw && cur) { out.push(cur); cur = w; } else cur = t;
+        });
+        if (cur) out.push(cur);
+        return out;
+      };
+      const addr = String(TN(e.address) || "").replace(/\s+/g, " ").trim();
+      const note = String(e.notes || "").replace(/\s+/g, " ").trim();
+      const DS = 8.5, DG = 10.5;   // demographic: sabhi lines ek hi (medium) font size me
+      const addrLines = addr ? wrap("Addr: " + addr, DS, true) : [];
+      const noteLines = note ? wrap("Note: " + note, DS, true) : [];
+      let ty = 11.5 + DG * 2;                         // mobile line baseline
+      const addrY = addrLines.map((_, i) => (ty += DG, ty));
+      const noteY = noteLines.map((_, i) => (ty += DG, ty));
+      const blockH = Math.max(rh * 2, ty + 5);
+      const rowH = blockH / 2;
+      if (y + blockH > pageH - bottom) { closeSeg(); doc.addPage(); y = top; drawBandAndHead(g, true); }
       const grid = feeChartMonthGrid(e);
       const tFee = fcModeAmount(grid.transport.filter(Boolean).map(c => c.amount));
-      const fFee = classFeeFor(e);
-      if (si % 2 === 1) { doc.setFillColor(ALT[0], ALT[1], ALT[2]); doc.rect(mx, y, W, rh * 2, "F"); }
-      // # and student cell (spans both rows)
-      txt(String(si + 1), mx + numW / 2, y + rh + 3, { size: 8.5, bold: true, align: "center" });
-      const sx = mx + numW + 5, sw = stuW - 10;
-      txt(fit(TN(e.name) || "", sw, 9.5, true), sx, y + 11.5, { size: 9.5, bold: true });
-      txt(fit(TN(e.fatherName) || "", sw, 8, false), sx, y + 22.5, { size: 8, color: MUTED });
-      const note = String(e.notes || "").replace(/\s+/g, " ").trim();
-      txt(fit(`${e.mobile || ""}${note ? "  ·  " + note : ""}`, sw, 7.5, false), sx, y + 33, { size: 7.5, color: MUTED });
+      if (si % 2 === 1) { doc.setFillColor(ALT[0], ALT[1], ALT[2]); doc.rect(mx, y, W, blockH, "F"); }
+      txt(String(si + 1), mx + numW / 2, y + blockH / 2 + 3, { size: 8.5, bold: true, align: "center" });
+      txt(fit(TN(e.name) || "", sw, DS, true), sx, y + 11.5, { size: DS, bold: true });
+      // sabhi demographic lines naam ki tarah dark (bold + gehra rang)
+      txt(fit(TN(e.fatherName) || "", sw, DS, true), sx, y + 11.5 + DG, { size: DS, bold: true });
+      txt(fit(e.mobile || "", sw, DS, true), sx, y + 11.5 + DG * 2, { size: DS, bold: true });
+      addrLines.forEach((t, i) => txt(t, sx, y + addrY[i], { size: DS, bold: true }));
+      noteLines.forEach((t, i) => txt(t, sx, y + noteY[i], { size: DS, bold: true }));
       // type labels
       const tx = mx + numW + stuW + 4;
-      txt("Fees", tx, y + 12.5, { size: 8.5, bold: true });
-      txt("Transport", tx, y + rh + 9, { size: 7.5, bold: true });
-      if (tFee) txt(fcFmt(tFee).replace("Rs. ", "Rs."), tx, y + rh + 16, { size: 6.5, color: MUTED });
+      txt("Fees", tx, y + rowH / 2 + 3, { size: 8.5, bold: true });
+      txt("Transport", tx, y + rowH + rowH / 2 - 1.5, { size: 7.5, bold: true });
+      if (tFee) txt(fcFmt(tFee).replace("Rs. ", "Rs."), tx, y + rowH + rowH / 2 + 6, { size: 6.5, color: MUTED });
       // month cells: Paid = hara khana, Close = bhura khana, Pending = halke rang me amount (watermark jaisa)
       [[grid.fee, 0], [grid.transport, 1]].forEach(([cells, ri]) => {
-        const ry = y + ri * rh;
+        const ry = y + ri * rowH;
         cells.forEach((c, i) => {
           if (!c) return;
           const cellX = mx + numW + stuW + typeW + cw * i;
           if (c.status === "pending") {
-            // Pending: khali khane me baaki (due) amount halke rang me (watermark jaisa) dikhate hain
             if (c.amount > 0) {
               const amtStr = String(Math.round(c.amount * 100) / 100);
-              txt(amtStr, cellX + cw / 2, ry + rh / 2 + 3, { size: amtStr.length > 5 ? 6.5 : 8, bold: false, color: [200, 182, 176], align: "center" });
+              txt(amtStr, cellX + cw / 2, ry + rowH / 2 + 3, { size: amtStr.length > 5 ? 6.5 : 8, bold: false, color: [200, 182, 176], align: "center" });
             }
             return;
           }
           const paid = c.status === "paid";
           if (paid) doc.setFillColor(214, 238, 220); else doc.setFillColor(226, 222, 214);
-          doc.rect(cellX + 1, ry + 1.5, cw - 2, rh - 3, "F");
-          txt(paid ? "Paid" : "Close", cellX + cw / 2, ry + rh / 2 + 3, { size: 7.5, bold: true, color: paid ? GREEN : GREY, align: "center" });
+          doc.rect(cellX + 1, ry + 1.5, cw - 2, rowH - 3, "F");
+          txt(paid ? "Paid" : "Close", cellX + cw / 2, ry + rowH / 2 + 3, { size: 7.5, bold: true, color: paid ? GREEN : GREY, align: "center" });
         });
       });
-      // lines: andar ki halki line sirf Fees/Transport ke beech (naam wale cell ke upar se nahi guzarti)
-      line(mx + numW + stuW, y + rh, mx + W, y + rh, 0.25);
-      y += rh * 2;
+      line(mx + numW + stuW, y + rowH, mx + W, y + rowH, 0.25);
+      y += blockH;
       seps.push(y);   // do students ke beech moti line (closeSeg me draw hoti hai)
     });
     closeSeg();
   });
 
+  const _now = new Date();
+  const printedAt = `${_now.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}, ${_now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true })}`;
   const pages = doc.getNumberOfPages();
   doc.setFontSize(7);
   for (let p = 1; p <= pages; p++) {
     doc.setPage(p);
     doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
     doc.text(`Page ${p} of ${pages}`, pageW - mx, pageH - 10, { align: "right" });
+    doc.text(`Printed on: ${printedAt}`, mx, pageH - 10);
   }
   const classes = [...new Set(selected.map(e => (e.className || "").trim()).filter(Boolean))];
   const tag = classes.length === 1 ? "-class-" + classes[0].replace(/[^\w]+/g, "_") : "";
