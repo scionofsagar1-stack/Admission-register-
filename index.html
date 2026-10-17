@@ -10302,6 +10302,7 @@ function renderSelectionPanel() {
         <button id="toggleExportColumnsBtn" style="display:flex;align-items:center;gap:6px;background:transparent;color:#1F2A44;border:1px solid #B7A97E;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">${icon("filetext", { size: 14 })} Columns (${colCount})</button>
         <button id="exportPdfBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#9B3437;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("filetext", { size: 14 })} Save as PDF</button>
         <button id="exportXlsxBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#1D6F42;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("filetext", { size: 14 })} Save as Excel</button>
+        <button id="exportFeeChartPdfBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#7A4B1E;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("filetext", { size: 14 })} Fee Chart PDF</button>
         <button id="shareImageBtn" ${count === 0 ? "disabled" : ""} style="display:flex;align-items:center;gap:6px;background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("image", { size: 14 })} Share as Image</button>
         <button id="bulkMsgBtn" ${count === 0 ? "disabled" : ""} title="Opens each selected student's WhatsApp/SMS one by one — you just tap Send in each" style="display:flex;align-items:center;gap:6px;background:#25D366;color:#fff;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("messageCircle", { size: 14 })} Send Messages</button>
         ${state.isGuestMode ? "" : `<button id="externalExportBtn" ${count === 0 ? "disabled" : ""} title="Selected students ka data ek doosre app ke Supabase project mein bhejo" style="display:flex;align-items:center;gap:6px;background:#6B5F4B;color:#F3ECDA;border:none;border-radius:3px;padding:8px 14px;font-size:12.5px;font-family:'IBM Plex Mono',monospace;cursor:${count === 0 ? "not-allowed" : "pointer"};opacity:${count === 0 ? 0.5 : 1};">${icon("share", { size: 14 })} Export to App</button>`}
@@ -10387,6 +10388,8 @@ function renderSelectionPanel() {
   if (bulkStarRemoveBtn) bulkStarRemoveBtn.addEventListener("click", () => bulkSetStar("remove"));
   const exportBtn = document.getElementById("exportPdfBtn");
   if (exportBtn) exportBtn.addEventListener("click", exportSelectedToPdf);
+  const exportFeeChartPdfBtn = document.getElementById("exportFeeChartPdfBtn");
+  if (exportFeeChartPdfBtn) exportFeeChartPdfBtn.addEventListener("click", exportSelectedFeeChartsPdf);
   const exportXlsxBtn = document.getElementById("exportXlsxBtn");
   if (exportXlsxBtn) exportXlsxBtn.addEventListener("click", exportSelectedToExcel);
   const shareBtn = document.getElementById("shareImageBtn");
@@ -10814,6 +10817,190 @@ async function exportSelectedToExcel() {
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
   }
+}
+/* ---------- "Fee Chart PDF": selected students ka month-wise Fees / Transport chart (hand-written model jaisa) ----------
+   Har student ke Fee Chart ki rows se: month (April..March) + category (fee / transport) + status nikalte hain.
+   Paid / Close wale month me "Paid" / "Close" likha aata hai, Pending wale khali rehte hain.
+   Per month Fees = us class ka sabse common monthly fee; Transport fee har student ka apna alag. */
+const FC_MONTH_ABBR = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
+function feeChartMonthGrid(entry) {
+  const sheet = normalizeFeeSheet(entry.feeChart);
+  const amountIdx = getFeeChartAmountColIndex(sheet);
+  const monthIdx = getFeeChartMonthColIndex(sheet);
+  const cells = { fee: Array.from({ length: 12 }, () => []), transport: Array.from({ length: 12 }, () => []) };
+  const extras = [];
+  sheet.rows.forEach((row, ri) => {
+    if (!row.some(c => String(c || "").trim())) return;
+    const cat = feeChartRowCategory(sheet, ri, amountIdx, monthIdx);
+    const amount = feeChartRowAmount(sheet, ri, amountIdx);
+    const status = sheet.statuses[ri] || "pending";
+    const mi = getFeeChartRowMonthIndex(sheet, ri);
+    if (mi >= 0) cells[cat][mi].push({ amount, status });
+    else extras.push({ label: feeChartRowDetail(sheet, ri, amountIdx) || `Row ${ri + 1}`, amount, status, cat });
+  });
+  const merge = (list) => {
+    if (!list.length) return null;
+    const status = list.some(x => x.status === "pending") ? "pending" : (list.every(x => x.status === "close") ? "close" : "paid");
+    // Pending mahine me sirf pending rows ka baaki amount (jo rows Paid/Close ho chuki hain unka amount nahi jodte).
+    const amount = (status === "pending" ? list.filter(x => x.status === "pending") : list).reduce((a, x) => a + (x.amount || 0), 0);
+    return { status, amount };
+  };
+  return { fee: cells.fee.map(merge), transport: cells.transport.map(merge), extras };
+}
+function fcModeAmount(amounts) {
+  const cnt = new Map();
+  amounts.filter(a => a > 0).forEach(a => cnt.set(a, (cnt.get(a) || 0) + 1));
+  let best = null, bc = 0;
+  cnt.forEach((c, a) => { if (c > bc || (c === bc && a > best)) { best = a; bc = c; } });
+  return best;
+}
+function fcFmt(n) { return n == null ? "—" : "Rs. " + (Math.round(n * 100) / 100).toLocaleString("en-IN"); }
+/* A4 portrait par ek page me jyada se jyada students: ek hi Class + Section + Session ke students ek group me aate hain,
+   aur group ki detail (Class / Section / Per month Fees / Session) sirf ek baar upar band me likhi jaati hai.
+   Har student 2 chhoti rows leta hai: Fees aur Transport. */
+function exportSelectedFeeChartsPdf() {
+  const selected = getSelectedEntriesSorted();
+  if (!selected.length) return;
+  if (!window.jspdf) { alert("PDF library is not loaded. Please check your internet and try again."); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
+  const NAVY = [31, 42, 68], MUTED = [107, 95, 75], GREEN = [30, 122, 62], GREY = [107, 95, 75], CREAM = [243, 236, 218], ALT = [251, 247, 236];
+  const mx = 20, top = 22, bottom = 22, W = pageW - mx * 2;
+  const numW = 18, stuW = 150, typeW = 46, cw = (W - numW - stuW - typeW) / 12, rh = 19, headH = 16, bandH = 24;
+  const colorHex = (c) => "#" + c.map(v => v.toString(16).padStart(2, "0")).join("");
+  const txt = (str, x, y, o = {}) => {
+    const size = o.size || 8, c = o.color || NAVY;
+    doc.setFont("helvetica", o.bold ? "bold" : "normal"); doc.setFontSize(size); doc.setTextColor(c[0], c[1], c[2]);
+    pdfTextMixed(doc, str, x, y, { fontSize: size, bold: !!o.bold, color: colorHex(c), align: o.align });
+  };
+  const fit = (str, maxW, size, bold) => {
+    str = String(str || "");
+    if (pdfMixedWidth(doc, str, size, bold) <= maxW) return str;
+    while (str.length > 1 && pdfMixedWidth(doc, str + "…", size, bold) > maxW) str = str.slice(0, -1);
+    return str + "…";
+  };
+  const line = (x1, y1, x2, y2, wd = 0.4) => { doc.setDrawColor(NAVY[0], NAVY[1], NAVY[2]); doc.setLineWidth(wd); doc.line(x1, y1, x2, y2); };
+
+  // Class-wise per-month fee (us class + session ke saare students me sabse common fee amount)
+  const classFeeCache = new Map();
+  const classFeeFor = (e) => {
+    const key = `${(e.className || "").trim().toLowerCase()}|${(e.session || "").trim()}`;
+    if (classFeeCache.has(key)) return classFeeCache.get(key);
+    const amts = [];
+    state.entries.forEach(o => {
+      if ((o.className || "").trim().toLowerCase() !== (e.className || "").trim().toLowerCase()) return;
+      if ((o.session || "").trim() !== (e.session || "").trim()) return;
+      feeChartMonthGrid(o).fee.forEach(c => { if (c) amts.push(c.amount); });
+    });
+    const v = fcModeAmount(amts);
+    classFeeCache.set(key, v);
+    return v;
+  };
+
+  // Groups: Class + Section + Session
+  const groups = [];
+  const gIndex = new Map();
+  selected.forEach(e => {
+    const key = `${(e.className || "").trim()}|${(e.section || "").trim()}|${(e.session || "").trim()}`;
+    if (!gIndex.has(key)) { gIndex.set(key, groups.length); groups.push({ e0: e, list: [] }); }
+    groups[gIndex.get(key)].list.push(e);
+  });
+
+  let y = top;
+  let segStart = null;   // y where the current table segment (below the column header) starts
+  const seps = [];       // do students ke beech ki moti lines — sabse aakhir me draw hoti hain, taaki agle student ka rang unhe dhak na de
+  const closeSeg = () => {
+    seps.forEach(yy => line(mx, yy, mx + W, yy, 1.6));
+    seps.length = 0;
+    if (segStart == null || y <= segStart) { segStart = null; return; }
+    const xs = [mx + numW, mx + numW + stuW, mx + numW + stuW + typeW];
+    xs.forEach(x => line(x, segStart, x, y, 0.4));
+    for (let i = 1; i < 12; i++) line(mx + numW + stuW + typeW + cw * i, segStart, mx + numW + stuW + typeW + cw * i, y, 0.25);
+    doc.setDrawColor(NAVY[0], NAVY[1], NAVY[2]); doc.setLineWidth(0.6);
+    doc.rect(mx, segStart, W, y - segStart);
+    segStart = null;
+  };
+  const drawBandAndHead = (g, cont) => {
+    doc.setFillColor(155, 52, 55); doc.rect(mx, y, W, bandH, "F");
+    const e0 = g.e0, by = y + 16;
+    txt("Class -", mx + 8, by, { size: 9.5, color: [243, 236, 218] });
+    txt(TN(e0.className) || "—", mx + 44, by, { size: 12, bold: true, color: [255, 255, 255] });
+    txt("Section", mx + 120, by, { size: 9.5, color: [243, 236, 218] });
+    txt(e0.section || "—", mx + 160, by, { size: 12, bold: true, color: [255, 255, 255] });
+    txt("Per month Fees", mx + 205, by, { size: 9.5, color: [243, 236, 218] });
+    txt(fcFmt(classFeeFor(e0)), mx + 285, by, { size: 12, bold: true, color: [255, 255, 255] });
+    txt(`Session ${e0.session || "—"}${cont ? " (cont.)" : ""}`, mx + W - 8, by, { size: 9, color: [243, 236, 218], align: "right" });
+    y += bandH;
+    doc.setFillColor(CREAM[0], CREAM[1], CREAM[2]); doc.rect(mx, y, W, headH, "F");
+    txt("#", mx + numW / 2, y + 11, { size: 8.5, bold: true, align: "center" });
+    txt("Name / Father / Mobile", mx + numW + 5, y + 11, { size: 8.5, bold: true });
+    FC_MONTH_ABBR.forEach((m, i) => txt(m, mx + numW + stuW + typeW + cw * i + cw / 2, y + 11, { size: 8.5, bold: true, align: "center" }));
+    line(mx, y + headH, mx + W, y + headH, 0.8);
+    y += headH;
+    segStart = y;
+  };
+
+  groups.forEach((g, gi) => {
+    if (gi > 0 && y + bandH + headH + rh * 2 > pageH - bottom) { closeSeg(); doc.addPage(); y = top; }
+    else if (gi > 0) y += 8;
+    drawBandAndHead(g, false);
+    g.list.forEach((e, si) => {
+      if (y + rh * 2 > pageH - bottom) { closeSeg(); doc.addPage(); y = top; drawBandAndHead(g, true); }
+      const grid = feeChartMonthGrid(e);
+      const tFee = fcModeAmount(grid.transport.filter(Boolean).map(c => c.amount));
+      const fFee = classFeeFor(e);
+      if (si % 2 === 1) { doc.setFillColor(ALT[0], ALT[1], ALT[2]); doc.rect(mx, y, W, rh * 2, "F"); }
+      // # and student cell (spans both rows)
+      txt(String(si + 1), mx + numW / 2, y + rh + 3, { size: 8.5, bold: true, align: "center" });
+      const sx = mx + numW + 5, sw = stuW - 10;
+      txt(fit(TN(e.name) || "", sw, 9.5, true), sx, y + 11.5, { size: 9.5, bold: true });
+      txt(fit(TN(e.fatherName) || "", sw, 8, false), sx, y + 22.5, { size: 8, color: MUTED });
+      const note = String(e.notes || "").replace(/\s+/g, " ").trim();
+      txt(fit(`${e.mobile || ""}${note ? "  ·  " + note : ""}`, sw, 7.5, false), sx, y + 33, { size: 7.5, color: MUTED });
+      // type labels
+      const tx = mx + numW + stuW + 4;
+      txt("Fees", tx, y + 12.5, { size: 8.5, bold: true });
+      txt("Transport", tx, y + rh + 9, { size: 7.5, bold: true });
+      if (tFee) txt(fcFmt(tFee).replace("Rs. ", "Rs."), tx, y + rh + 16, { size: 6.5, color: MUTED });
+      // month cells: Paid = hara khana, Close = bhura khana, Pending = halke rang me amount (watermark jaisa)
+      [[grid.fee, 0], [grid.transport, 1]].forEach(([cells, ri]) => {
+        const ry = y + ri * rh;
+        cells.forEach((c, i) => {
+          if (!c) return;
+          const cellX = mx + numW + stuW + typeW + cw * i;
+          if (c.status === "pending") {
+            // Pending: khali khane me baaki (due) amount halke rang me (watermark jaisa) dikhate hain
+            if (c.amount > 0) {
+              const amtStr = String(Math.round(c.amount * 100) / 100);
+              txt(amtStr, cellX + cw / 2, ry + rh / 2 + 3, { size: amtStr.length > 5 ? 6.5 : 8, bold: false, color: [200, 182, 176], align: "center" });
+            }
+            return;
+          }
+          const paid = c.status === "paid";
+          if (paid) doc.setFillColor(214, 238, 220); else doc.setFillColor(226, 222, 214);
+          doc.rect(cellX + 1, ry + 1.5, cw - 2, rh - 3, "F");
+          txt(paid ? "Paid" : "Close", cellX + cw / 2, ry + rh / 2 + 3, { size: 7.5, bold: true, color: paid ? GREEN : GREY, align: "center" });
+        });
+      });
+      // lines: andar ki halki line sirf Fees/Transport ke beech (naam wale cell ke upar se nahi guzarti)
+      line(mx + numW + stuW, y + rh, mx + W, y + rh, 0.25);
+      y += rh * 2;
+      seps.push(y);   // do students ke beech moti line (closeSeg me draw hoti hai)
+    });
+    closeSeg();
+  });
+
+  const pages = doc.getNumberOfPages();
+  doc.setFontSize(7);
+  for (let p = 1; p <= pages; p++) {
+    doc.setPage(p);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+    doc.text(`Page ${p} of ${pages}`, pageW - mx, pageH - 10, { align: "right" });
+  }
+  const classes = [...new Set(selected.map(e => (e.className || "").trim()).filter(Boolean))];
+  const tag = classes.length === 1 ? "-class-" + classes[0].replace(/[^\w]+/g, "_") : "";
+  doc.save(`fee-chart${tag}-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 function buildSelectedPdfDoc() {
   const selected = getSelectedEntriesSorted();
