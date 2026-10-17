@@ -3009,20 +3009,34 @@ function getFeeChartBillDraft(entryId, sheet) {
    include/exclude it from what gets downloaded/shared. With more than one
    ticked range the Payable Total becomes a running sum shown as an
    expression (e.g. "₹5,500 + ₹5,500 = ₹11,000") instead of a single figure. */
+/* Bill ka source: "current" (abhi ka chart), "archive:<id>" (last session ka archived chart) ya koi saved template ka naam. */
+function getArchiveForBillSource(entry, source) {
+  if (!source || typeof source !== "string" || !source.startsWith("archive:")) return null;
+  const id = source.slice(8);
+  return (entry.feeChartArchive || []).find(a => a.id === id) || null;
+}
 function getMultiBillBlockSheet(entry, block) {
   if (block.sheetOverride) return normalizeFeeSheet(block.sheetOverride);
-  if (block.source && block.source !== "current") {
+  const arc = getArchiveForBillSource(entry, block.source);
+  if (arc) return normalizeFeeSheet(arc.chart);
+  if (block.source && block.source !== "current" && !String(block.source).startsWith("archive:")) {
     const tpl = getFeeChartTemplateByType(block.source);
     if (tpl) return tpl;
   }
   return normalizeFeeSheet(entry.feeChart);
 }
 function multiBillSourceLabel(entry, block) {
-  if (block.source && block.source !== "current") return block.source;
+  const arc = getArchiveForBillSource(entry, block.source);
+  if (arc) return `Last Session ${arc.session || "—"} (Class ${arc.className || "—"})`;
+  if (block.source && block.source !== "current" && !String(block.source).startsWith("archive:")) return block.source;
   return T("Current Chart");
 }
-function multiBillSourceOptionsHtml(selectedSource) {
+function multiBillSourceOptionsHtml(selectedSource, entry) {
   const opts = [`<option value="current" ${selectedSource === "current" ? "selected" : ""}>${escapeHtml(T("Current Chart"))}</option>`];
+  ((entry && entry.feeChartArchive) || []).forEach(a => {
+    const v = "archive:" + a.id;
+    opts.push(`<option value="${escapeAttr(v)}" ${selectedSource === v ? "selected" : ""}>${escapeHtml(`📦 Last Session ${a.session || "—"} (Class ${a.className || "—"})`)}</option>`);
+  });
   getFeeChartTypeList().forEach(type => {
     opts.push(`<option value="${escapeAttr(type)}" ${selectedSource === type ? "selected" : ""}>${escapeHtml(type)}</option>`);
   });
@@ -5496,7 +5510,8 @@ async function downloadMultiChartBillPdf(entry, blocks) {
 }
 function renderFeeChartBillCalculator(e, sheet) {
   const templateTypes = getFeeChartTypeList();
-  if (!sheet.rows.length && !templateTypes.length) return "";
+  const hasArchiveCharts = (e.feeChartArchive || []).length > 0;
+  if (!sheet.rows.length && !templateTypes.length && !hasArchiveCharts) return "";
   const draft = getMultiBillDraft(e);
   const blocks = computeMultiBillBlocks(e, draft);
   const included = blocks.filter(b => b.included);
@@ -5512,9 +5527,9 @@ function renderFeeChartBillCalculator(e, sheet) {
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
           <input type="checkbox" id="multiBillIncludeChk-${e.id}-${b.idx}" class="multiBillIncludeChk" data-entry-id="${e.id}" data-block-idx="${b.idx}" ${b.included ? "checked" : ""} style="width:15px;height:15px;flex-shrink:0;cursor:pointer;" />
           <label for="multiBillIncludeChk-${e.id}-${b.idx}" style="font-size:11px;color:#1F2A44;cursor:pointer;flex-shrink:0;">${escapeHtml(T("Include in bill"))}</label>
-          ${templateTypes.length ? `
+          ${(templateTypes.length || hasArchiveCharts) ? `
             <select class="rule-input multiBillSourceSel" data-entry-id="${e.id}" data-block-idx="${b.idx}" style="font-size:12px;flex:1;min-width:110px;">
-              ${multiBillSourceOptionsHtml(b.source)}
+              ${multiBillSourceOptionsHtml(b.source, e)}
             </select>` : `<span style="font-size:11px;color:#6B5F4B;">${escapeHtml(T("Current Chart"))}</span>`}
           ${blocks.length > 1 ? `<button class="multiBillRemoveBtn" data-entry-id="${e.id}" data-block-idx="${b.idx}" title="${escapeAttr(T("Remove"))}" style="margin-left:auto;background:none;border:none;color:#9B3437;font-size:15px;cursor:pointer;line-height:1;padding:2px 4px;">×</button>` : ""}
         </div>
@@ -12739,8 +12754,9 @@ function wireUpEntryRowEvents(el) {
       const templateTypes = getFeeChartTypeList();
       const usedSources = new Set(draft.blocks.map(b => b.source || "current"));
       const nextTemplate = templateTypes.find(t => !usedSources.has(t));
-      const source = nextTemplate || (templateTypes[0] || "current");
-      const newSheet = source === "current" ? normalizeFeeSheet(entry.feeChart) : (getFeeChartTemplateByType(source) || normalizeFeeSheet(entry.feeChart));
+      const nextArchive = (entry.feeChartArchive || []).map(a => "archive:" + a.id).find(v => !usedSources.has(v));
+      const source = nextTemplate || nextArchive || (templateTypes[0] || "current");
+      const newSheet = getMultiBillBlockSheet(entry, { source });
       const pending = getFeeChartBillSelectableRowIndices(newSheet);
       draft.blocks.push({
         source,
