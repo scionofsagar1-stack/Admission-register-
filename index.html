@@ -54,6 +54,8 @@
     overflow-x: hidden;
     max-width: none;
   }
+body, body * { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+button, .btn, [role="button"] { -webkit-user-select: none; user-select: none; }
 </style>
 </head>
 <body>
@@ -6755,6 +6757,7 @@ async function loadEntries() {
   loadColumnPrefsFromStorage();
   loadReceiptSettingsFromStorage();
   await loadCloudConfigs();
+  aiLoadCloudKey();   // admin ke liye AI key Supabase se (background me)
   loadMessageLocksFromStorage();
   loadDeletedArchiveFromStorage();
   loadMessageCombineFromStorage();
@@ -8383,6 +8386,7 @@ function renderHeader() {
   toggleMessageReportBtn.style.background = state.showMessageReportPanel ? "#1F2A44" : "transparent";
   toggleMessageReportBtn.style.color = state.showMessageReportPanel ? "#F3ECDA" : "#1F2A44";
   toggleMessageReportBtn.style.display = (state.editUnlocked && !state.isGuestMode) ? "" : "none";
+  updateAiBotVisibility();
   const archiveMenuBtn = document.getElementById("toggleArchiveBtn");
   if (archiveMenuBtn) archiveMenuBtn.style.display = (state.editUnlocked && !state.isGuestMode) ? "" : "none";
   const staffContactsMenuBtn = document.getElementById("toggleStaffContactsBtn");
@@ -11677,6 +11681,552 @@ function downloadArchivePdf() {
   });
 })();
 
+/* ---------- AI Assistant (chatbot) ----------
+   Floating 🤖 button (sirf admin ko dikhta hai) -> chat. Bot Claude API se baat karta hai, aur app ke data se jawab
+   dene ke liye chhote "tools" use karta hai jo is phone me hi chalte hain (student search, class summary, pending dues,
+   fee chart, collection). Poora student data API ko nahi bheja jata — sirf wahi rows jo sawal ke liye chahiye.
+   API key aapke is device me (localStorage) rehti hai, code me nahi. Bot sirf padhta hai, kuch badalta nahi. */
+const AI_KEY_LS = "adm_reg_ai_key_v1";            // purani (sirf Claude) key — migrate hoti hai
+const AI_KEYS_LS = "adm_reg_ai_keys_v2", AI_MODELS_LS = "adm_reg_ai_models_v1", AI_PROV_LS = "adm_reg_ai_provider_v1";
+const AI_PROVIDERS = {
+  gemini: { label: "Google Gemini (FREE)", keyHint: "AIza...", link: "aistudio.google.com/app/apikey", free: true, defModel: "",
+    note: "Free key (card nahi chahiye). Free me roz ki limit kam ho sakti hai. DHYAN: Google free tier me bheje gaye sawal-jawab apne products sudharne me use kar sakta hai aur reviewers padh sakte hain — student details bhejne se pehle soch lein." },
+  groq: { label: "Groq (FREE)", keyHint: "gsk_...", link: "console.groq.com/keys", free: true, defModel: "openai/gpt-oss-120b",
+    note: "Free key (card nahi chahiye). Free me per-minute aur roz ki limit kam hoti hai, to lambe sawal par 'limit' ka message aa sakta hai. Data policy Groq ki site par dekh lein." },
+  claude: { label: "Claude (PAID)", keyHint: "sk-ant-...", link: "console.anthropic.com", free: false, defModel: "claude-sonnet-5-5",
+    models: [["claude-sonnet-5-5", "Sonnet 5.5 (best)"], ["claude-haiku-5-5", "Haiku 5.5 (fast, cheaper)"], ["claude-opus-5-5", "Opus 5.5 (strongest)"]],
+    note: "API key banane ke liye console.anthropic.com par balance chahiye (Claude.ai subscription alag hai)." },
+};
+let aiUi = null;   // { settings, busy, msgs: [{role, text}], convo: [], prov }
+const AI_CHATS_LS = "adm_reg_ai_chats_v2";   // [{id,title,ts,msgs,convo,prov}] — purani chats ki list (History tab)
+function aiChats() { const l = aiLsGet(AI_CHATS_LS, []); return Array.isArray(l) ? l : []; }
+function aiHistSave() {   // current chat ko history me save/update karo
+  if (!aiUi || !aiUi.msgs.length) return;
+  if (!aiUi.id) aiUi.id = "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const first = aiUi.msgs.find(m => m.role === "user");
+  const entry = { id: aiUi.id, title: String((first && first.text) || "Chat").slice(0, 60), ts: Date.now(),
+    msgs: aiUi.msgs.slice(-60), convo: aiUi.convo, prov: aiUi.prov || "" };
+  const list = aiChats().filter(c => c.id !== entry.id);
+  list.unshift(entry);
+  aiLsSet(AI_CHATS_LS, list.slice(0, 30));
+}
+function aiNewUi() {   // app kholne par sabse nayi chat wapas khulti hai
+  const h = aiChats()[0];
+  return h && Array.isArray(h.msgs) && Array.isArray(h.convo)
+    ? { settings: false, busy: false, view: "chat", id: h.id, msgs: h.msgs, convo: h.convo, prov: h.prov || undefined }
+    : { settings: false, busy: false, view: "chat", id: null, msgs: [], convo: [] };
+}
+function aiHistDelete(id) {
+  aiLsSet(AI_CHATS_LS, aiChats().filter(c => c.id !== id));
+  if (aiUi && aiUi.id === id) { aiUi.id = null; aiUi.msgs = []; aiUi.convo = []; aiUi.prov = undefined; }
+}
+function renderAiHistory() {
+  const box = document.getElementById("aiMsgs");
+  if (!box || !aiUi) return;
+  const list = aiChats();
+  const fmt = (t) => { try { return new Date(t).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); } catch (e) { return ""; } };
+  box.innerHTML = !list.length ? `<p style="color:#6B5F4B;font-size:13px;margin:8px 4px;">Abhi koi purani chat nahi hai.</p>` :
+    `<div style="display:flex;justify-content:flex-end;margin:2px 0 6px;"><button id="aiHistDelAll" style="background:none;border:1px solid #9B3437;color:#9B3437;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;">Sab delete</button></div>` +
+    list.map(c => {
+      const nq = (c.msgs || []).filter(m => m.role === "user").length;
+      return `<div class="aiHistRow" data-id="${escapeAttr(c.id)}" style="display:flex;align-items:center;gap:8px;margin:6px 0;background:#FFFFFF;border:1px solid ${aiUi.id === c.id ? "#1F2A44" : "#D9CBA3"};border-radius:10px;padding:8px 10px;">
+        <div class="aiHistOpen" style="flex:1;min-width:0;cursor:pointer;"><div style="font-size:13.5px;color:#1F2A44;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(c.title)}</div>
+        <div style="font-size:11px;color:#6B5F4B;margin-top:2px;">${escapeHtml(fmt(c.ts))} · ${nq} sawal</div></div>
+        <button class="aiHistDel" title="Delete" style="background:none;border:1px solid #9B3437;color:#9B3437;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:13px;">🗑</button></div>`;
+    }).join("");
+  box.querySelectorAll(".aiHistRow").forEach(row => {
+    const id = row.getAttribute("data-id");
+    row.querySelector(".aiHistOpen").addEventListener("click", () => {
+      if (aiUi.busy) return;
+      const c = aiChats().find(x => x.id === id); if (!c) return;
+      aiUi.id = c.id; aiUi.msgs = c.msgs || []; aiUi.convo = c.convo || []; aiUi.prov = c.prov || undefined; aiUi.view = "chat"; renderAiBot();
+    });
+    row.querySelector(".aiHistDel").addEventListener("click", () => {
+      if (!confirm("Ye chat delete karein?")) return;
+      aiHistDelete(id); renderAiHistory();
+    });
+  });
+  const da = document.getElementById("aiHistDelAll");
+  if (da) da.addEventListener("click", () => { if (!confirm("Saari purani chats delete karein?")) return; aiLsSet(AI_CHATS_LS, []); aiUi.id = null; aiUi.msgs = []; aiUi.convo = []; aiUi.prov = undefined; renderAiHistory(); });
+}
+function aiLsGet(k, def) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? def : v; } catch (e) { return def; } }
+function aiLsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+/* AI key code me nahi hai — Supabase table `app_secrets` (key 'groq_api_key') se sirf ADMIN login par aati hai
+   (RLS: sirf admin padh/likh sakta hai) aur is device me cache ho jati hai. Cache clear ho to login par wapas aa jati hai.
+   Run this ONCE in the Supabase SQL editor:
+
+   create table if not exists app_secrets (
+     key text primary key,
+     value text not null,
+     updated_at timestamptz not null default now()
+   );
+   alter table app_secrets enable row level security;
+   create policy "Admins read secrets" on app_secrets for select using (
+     exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+   create policy "Admins insert secrets" on app_secrets for insert with check (
+     exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+   create policy "Admins update secrets" on app_secrets for update using (
+     exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+   insert into app_secrets (key, value) values ('groq_api_key', 'PASTE_GROQ_KEY_HERE')
+     on conflict (key) do update set value = excluded.value, updated_at = now();
+*/
+let _aiCloudKeyTried = false;
+async function aiLoadCloudKey(force) {
+  if (!(state.editUnlocked && !state.isGuestMode && currentUser)) return;
+  if (_aiCloudKeyTried && !force) return;
+  _aiCloudKeyTried = true;
+  try {
+    const { data, error } = await supabaseClient.from("app_secrets").select("value").eq("key", "groq_api_key").maybeSingle();
+    if (error) { console.warn("app_secrets not available (table created? admin login?):", error); return; }
+    const v = data && String(data.value || "").trim();
+    if (v) { const keys = aiGetKeys(); keys.groq = v; aiLsSet(AI_KEYS_LS, keys); }
+  } catch (e) { console.warn("AI key load failed:", e); }
+}
+function aiGetProvider() { return "groq"; }   // settings UI hata diya — sirf Groq (built-in key)
+function aiGetKeys() {
+  const keys = aiLsGet(AI_KEYS_LS, null);
+  if (keys) return keys;
+  let old = ""; try { old = localStorage.getItem(AI_KEY_LS) || ""; } catch (e) {}
+  return old ? { claude: old } : {};
+}
+function aiGetKey(p) { return (aiGetKeys()[p || aiGetProvider()] || "").trim(); }
+function aiGetModel(p) { p = p || aiGetProvider(); const m = (aiLsGet(AI_MODELS_LS, {})[p] || "").trim(); return m || AI_PROVIDERS[p].defModel; }
+function aiNorm(v) { return String(v == null ? "" : v).toLowerCase().trim(); }
+function aiBrief(e) {
+  return {
+    name: TN(e.name) || e.name, father: TN(e.fatherName) || e.fatherName || "", class: e.className, section: e.section || "",
+    enroll_no: e.rollNo || "", session: e.session || "", mobile: e.mobile || "", address: TN(e.address) || e.address || "",
+    fee_paid_till: e.fMonth || "", transport_paid_till: e.tMonth || "",
+    adm_type: (e.admType || "old") === "new" ? "new" : "old", transport: e.isTransport ? "yes" : "no",
+    stars: Object.keys(e.starMarks || {}).filter(k => e.starMarks[k]).map(k => STAR_NAMES[k] || k),
+  };
+}
+function aiClassOk(cls, a) {   // class (ek) ya class_from..class_to (range) filter
+  const c = aiNorm(cls), one = aiNorm(a.class);
+  if (one && c !== one && aiNorm(TN(cls)) !== one) return false;
+  if (a.class_from || a.class_to) {
+    const list = getClassList(), find = (v) => list.find(x => aiNorm(x) === aiNorm(v) || aiNorm(TN(x)) === aiNorm(v));
+    let f = find(a.class_from || a.class_to), t = find(a.class_to || a.class_from);
+    if (f && t && !classInRange(cls, f, t, list)) return false;
+  }
+  return true;
+}
+function aiMobileCounts() {
+  const m = new Map();
+  (state.allEntries || state.entries).forEach(e => { const k = (e.mobile || "").trim(); if (k) m.set(k, (m.get(k) || 0) + 1); });
+  return m;
+}
+function aiFilter(a) {
+  const q = aiNorm(a.query), sec = aiNorm(a.section), ses = aiNorm(a.session), adm = aiNorm(a.adm_type), tr = aiNorm(a.transport), wa = aiNorm(a.whatsapp);
+  const star = aiNorm(a.star), fpt = aiNorm(a.fee_paid_till), sib = aiNorm(a.siblings);
+  const mc = sib ? aiMobileCounts() : null;
+  const yes = (v) => v === "yes" || v === "true" || v === "haan";
+  return state.entries.filter(e => {
+    if (!aiClassOk(e.className, a)) return false;
+    if (sec && aiNorm(e.section) !== sec) return false;
+    if (ses && aiNorm(e.session) !== ses) return false;
+    if (adm && (e.admType || "old") !== adm) return false;
+    if (tr && !!e.isTransport !== yes(tr)) return false;
+    if (wa && (!!e.isWhatsapp && !!(e.mobile || "").trim()) !== yes(wa)) return false;
+    if (fpt && aiNorm(e.fMonth) !== fpt) return false;
+    if (star) {
+      const names = Object.keys(e.starMarks || {}).filter(k => e.starMarks[k]).map(k => aiNorm(STAR_NAMES[k] || k));
+      if (!names.includes(star) && !Object.keys(e.starMarks || {}).some(k => e.starMarks[k] && k === star)) return false;
+    }
+    if (sib && ((mc.get((e.mobile || "").trim()) || 0) > 1) !== yes(sib)) return false;
+    if (q) {
+      const hay = [e.name, TN(e.name), e.fatherName, TN(e.fatherName), e.motherName, e.mobile, e.rollNo, e.address, TN(e.address), e.notes].map(aiNorm).join(" | ");
+      if (!q.split(/\s+/).every(w => hay.includes(w))) return false;
+    }
+    return true;
+  });
+}
+function aiPendingInfo(g, cur) {   // month-wise pending (current month tak) + bina-month rows
+  const mk = (cells) => { let amt = 0; const months = []; cells.forEach((c, i) => { if (c && c.status === "pending" && i <= cur) { amt += c.amount || 0; months.push(FC_MONTH_ABBR[i]); } }); return { amt, months }; };
+  const fee = mk(g.fee), transport = mk(g.transport), other = [];
+  (g.extras || []).forEach(x => {
+    if (x.status !== "pending" || !(x.amount > 0)) return;
+    other.push({ detail: x.label, amount: x.amount, type: x.cat });
+    (x.cat === "transport" ? transport : fee).amt += x.amount;
+  });
+  return { fee, transport, other };
+}
+function aiDue(e) {
+  const p = aiPendingInfo(feeChartMonthGrid(e), getCurrentSessionMonthIndex());
+  return { fee: { amt: p.fee.amt, months: p.fee.months.length }, transport: { amt: p.transport.amt, months: p.transport.months.length } };
+}
+function aiInvoices(a) {   // filtered paid invoices
+  const from = a.from_date ? new Date(a.from_date + "T00:00:00").getTime() : -Infinity, to = a.to_date ? new Date(a.to_date + "T23:59:59").getTime() : Infinity;
+  const q = aiNorm(a.query), no = aiNorm(a.invoice_no), cat = aiNorm(a.category), sec = aiNorm(a.section), seen = new Set();
+  return computeAllPaidInvoices().filter(inv => {
+    if (!inv.paidAt || inv.paidAt < from || inv.paidAt > to) return false;
+    if (!aiClassOk(inv.className, a)) return false;
+    if (sec && aiNorm(inv.section) !== sec) return false;
+    if (cat && aiNorm(inv.category) !== cat) return false;
+    if (no && aiNorm(inv.invoiceNo) !== no) return false;
+    if (q && !q.split(/\s+/).every(w => [inv.name, TN(inv.name), inv.fatherName, inv.rollNo].map(aiNorm).join(" | ").includes(w))) return false;
+    const key = `${inv.entryId}|${inv.invoiceNo}|${inv.category}|${inv.source}`;
+    if (seen.has(key)) return false; seen.add(key); return true;
+  });
+}
+const AI_FILTER_PROPS = { class: { type: "string", description: "single class" }, class_from: { type: "string", description: "class range start (inclusive)" }, class_to: { type: "string", description: "class range end (inclusive)" }, section: { type: "string" }, session: { type: "string" } };
+const AI_TOOLS = [
+  { name: "search_students", description: "List students. Text query matches name/father/mother/mobile/enroll no/address/notes. Filters: class or class_from..class_to range, section, session, adm_type (new|old), transport (yes|no), whatsapp (yes|no), star (Green|Yellow|Grey|Red), fee_paid_till (month), siblings (yes|no). Returns basic details.",
+    input_schema: { type: "object", properties: { query: { type: "string" }, ...AI_FILTER_PROPS, adm_type: { type: "string" }, transport: { type: "string" }, whatsapp: { type: "string" }, star: { type: "string" }, fee_paid_till: { type: "string" }, siblings: { type: "string" }, limit: { type: "integer" } } } },
+  { name: "student_profile", description: "FULL details of one student (match by name/enroll no): demographics (mother, DOB, address, notes, admission type, transport), dues with pending months, last paid invoices, past-session charts, events, siblings with same mobile.",
+    input_schema: { type: "object", properties: { query: { type: "string" }, class: { type: "string" } }, required: ["query"] } },
+  { name: "school_overview", description: "Headline numbers: total students, by session / admission type / transport / WhatsApp / stars, students with no mobile, sibling count, total dues. Optional class / class range / section / session filter.",
+    input_schema: { type: "object", properties: { ...AI_FILTER_PROPS } } },
+  { name: "class_summary", description: "Per class+section: students, how many have dues up to the current month, fee / transport dues. Optional class range / session filter.",
+    input_schema: { type: "object", properties: { ...AI_FILTER_PROPS } } },
+  { name: "pending_dues", description: "Students with pending fee/transport (up to current month incl. rows without month), with pending month names. Filters as search_students. sort_by: due (default) | class | name.",
+    input_schema: { type: "object", properties: { ...AI_FILTER_PROPS, adm_type: { type: "string" }, transport: { type: "string" }, star: { type: "string" }, min_amount: { type: "number" }, sort_by: { type: "string" }, limit: { type: "integer" } } } },
+  { name: "student_fee_chart", description: "Month-wise (Apr..Mar) fee and transport status (paid/close/pending+amount), rows without month, passbook balance, and past-session (archived) chart dues for students matching a name or enroll no.",
+    input_schema: { type: "object", properties: { query: { type: "string" }, class: { type: "string" } }, required: ["query"] } },
+  { name: "collection_summary", description: "Money collected (paid invoices) between two dates (YYYY-MM-DD inclusive): fee/transport split, invoice count. Optional class or class_from..class_to range, section, student query, category (fee|transport). group_by: class (default) | day | month.",
+    input_schema: { type: "object", properties: { from_date: { type: "string" }, to_date: { type: "string" }, ...AI_FILTER_PROPS, query: { type: "string" }, category: { type: "string" }, group_by: { type: "string" } }, required: ["from_date", "to_date"] } },
+  { name: "invoice_report", description: "List individual paid invoices (newest first) with date, student, class, category, total and the items paid (head/month/amount). Filters: dates, class or range, section, student query, invoice_no, category (fee|transport).",
+    input_schema: { type: "object", properties: { from_date: { type: "string" }, to_date: { type: "string" }, ...AI_FILTER_PROPS, query: { type: "string" }, invoice_no: { type: "string" }, category: { type: "string" }, limit: { type: "integer" } } } },
+  { name: "birthdays_events", description: "Upcoming birthdays (DOB) and student events in the next N days (default 30), or birthdays of a given month number 1-12. Optional class filters.",
+    input_schema: { type: "object", properties: { days: { type: "integer" }, month: { type: "integer" }, ...AI_FILTER_PROPS } } },
+  { name: "recent_updates", description: "Students whose record was added/edited between two dates (YYYY-MM-DD), with last update summary. Default last 7 days.",
+    input_schema: { type: "object", properties: { from_date: { type: "string" }, to_date: { type: "string" }, ...AI_FILTER_PROPS, limit: { type: "integer" } } } },
+];
+function aiRunTool(name, a) {
+  a = a || {};
+  const lim = (d, max) => Math.max(1, Math.min(max, parseInt(a.limit, 10) || d));
+  const cur = getCurrentSessionMonthIndex();
+  const dt = (t) => { try { return new Date(t).toISOString().slice(0, 10); } catch (e) { return ""; } };
+  if (name === "search_students") {
+    const list = aiFilter(a), n = lim(15, 40);
+    return { total_matches: list.length, shown: Math.min(n, list.length), students: list.slice(0, n).map(aiBrief) };
+  }
+  if (name === "student_profile") {
+    const list = aiFilter({ query: a.query, class: a.class }).slice(0, 2), mc = aiMobileCounts();
+    return { matches: list.length, students: list.map(e => {
+      const g = feeChartMonthGrid(e), p = aiPendingInfo(g, cur);
+      const invs = computeEntryPaidInvoices(e).sort((x, y) => (y.paidAt || 0) - (x.paidAt || 0)).slice(0, 5)
+        .map(i => ({ invoice_no: i.invoiceNo, date: dt(i.paidAt), category: i.category, total: i.total, fee_till: i.feeTill || "" }));
+      const sibs = (e.mobile || "").trim() && mc.get(e.mobile.trim()) > 1 ? state.entries.filter(x => x.id !== e.id && (x.mobile || "").trim() === e.mobile.trim()).map(x => ({ name: TN(x.name) || x.name, class: x.className, section: x.section || "" })) : [];
+      return { ...aiBrief(e), mother: TN(e.motherName) || e.motherName || "", dob: e.dob || "", whatsapp: e.isWhatsapp ? "yes" : "no", notes: e.notes || "",
+        created: dt(e.createdAt), last_updated: dt(e.updatedAt), last_update_summary: e.lastUpdateSummary || "",
+        fee_due: p.fee.amt, fee_pending_months: p.fee.months, transport_due: p.transport.amt, transport_pending_months: p.transport.months, other_pending_rows: p.other,
+        last_invoices: invs, past_sessions: (e.feeChartArchive || []).map(a2 => { const pp = aiPendingInfo(feeChartMonthGrid({ feeChart: a2.chart }), 11); return { session: a2.session, class: a2.className, fee_pending: pp.fee.amt, transport_pending: pp.transport.amt }; }),
+        events: (e.events || []).map(ev => ({ title: ev.title, date: ev.date, yearly: !!ev.repeatYearly })), siblings: sibs };
+    }) };
+  }
+  if (name === "school_overview") {
+    const list = aiFilter(a), mc = aiMobileCounts(), cnt = (o, k) => { o[k] = (o[k] || 0) + 1; };
+    const o = { students: list.length, by_session: {}, by_adm_type: {}, transport_yes: 0, whatsapp_yes: 0, no_mobile: 0, with_siblings: 0, by_star: {}, students_with_dues: 0, fee_due_total: 0, transport_due_total: 0 };
+    list.forEach(e => {
+      cnt(o.by_session, e.session || "-"); cnt(o.by_adm_type, (e.admType || "old") === "new" ? "new" : "old");
+      if (e.isTransport) o.transport_yes++; if (e.isWhatsapp && (e.mobile || "").trim()) o.whatsapp_yes++;
+      if (!(e.mobile || "").trim()) o.no_mobile++; else if (mc.get(e.mobile.trim()) > 1) o.with_siblings++;
+      Object.keys(e.starMarks || {}).filter(k => e.starMarks[k]).forEach(k => cnt(o.by_star, STAR_NAMES[k] || k));
+      const d = aiDue(e); if (d.fee.amt > 0 || d.transport.amt > 0) o.students_with_dues++;
+      o.fee_due_total += d.fee.amt; o.transport_due_total += d.transport.amt;
+    });
+    o.classes_in_school = getClassList(); o.note = "dues counted only up to the current month";
+    return o;
+  }
+  if (name === "class_summary") {
+    const map = new Map();
+    aiFilter(a).forEach(e => {
+      const k = `${e.className}|${e.section || ""}`;
+      if (!map.has(k)) map.set(k, { class: e.className, section: e.section || "", students: 0, with_fee_due: 0, fee_due_total: 0, transport_due_total: 0 });
+      const r = map.get(k), d = aiDue(e);
+      r.students++; if (d.fee.amt > 0 || d.transport.amt > 0) r.with_fee_due++;
+      r.fee_due_total += d.fee.amt; r.transport_due_total += d.transport.amt;
+    });
+    const rows = [...map.values()].sort((x, y) => compareClassNames(x.class, y.class) || String(x.section).localeCompare(String(y.section)));
+    return { rows, total_students: rows.reduce((s2, r) => s2 + r.students, 0), total_due: rows.reduce((s2, r) => s2 + r.fee_due_total + r.transport_due_total, 0), note: "dues counted only up to the current month" };
+  }
+  if (name === "pending_dues") {
+    const min = parseFloat(a.min_amount) || 0, n = lim(20, 50);
+    const rows = aiFilter(a).map(e => {
+      const p = aiPendingInfo(feeChartMonthGrid(e), cur);
+      return { name: TN(e.name) || e.name, father: TN(e.fatherName) || e.fatherName || "", class: e.className, section: e.section || "", enroll_no: e.rollNo || "",
+        mobile: e.mobile || "", fee_due: p.fee.amt, fee_pending_months: p.fee.months.join(","), transport_due: p.transport.amt, transport_pending_months: p.transport.months.join(","),
+        other_rows: p.other.map(x => x.detail + " " + x.amount).join("; "), total_due: p.fee.amt + p.transport.amt };
+    }).filter(r => r.total_due > 0 && r.total_due >= min);
+    const sb = aiNorm(a.sort_by);
+    rows.sort(sb === "class" ? (x, y) => compareClassNames(x.class, y.class) || y.total_due - x.total_due : sb === "name" ? (x, y) => String(x.name).localeCompare(String(y.name)) : (x, y) => y.total_due - x.total_due);
+    return { students_with_dues: rows.length, total_due_all: rows.reduce((s2, r) => s2 + r.total_due, 0), fee_due_all: rows.reduce((s2, r) => s2 + r.fee_due, 0), transport_due_all: rows.reduce((s2, r) => s2 + r.transport_due, 0), shown: Math.min(n, rows.length), rows: rows.slice(0, n), note: "dues counted only up to the current month" };
+  }
+  if (name === "student_fee_chart") {
+    const list = aiFilter({ query: a.query, class: a.class }).slice(0, 3);
+    return { matches: list.length, students: list.map(e => {
+      const g = feeChartMonthGrid(e), fmt = (cells) => Object.fromEntries(FC_MONTH_ABBR.map((m, i) => [m, !cells[i] ? "-" : (cells[i].status === "pending" ? "pending " + (cells[i].amount || 0) : cells[i].status)]));
+      const sheet = normalizeFeeSheet(e.feeChart); let passbook = null;
+      try { if (sheet.passbookMode) { const b = computePassbookBalances(sheet); passbook = { opening_balance: parseFloat(sheet.openingBalance) || 0, closing_balance: b.length ? b[b.length - 1] : (parseFloat(sheet.openingBalance) || 0) }; } } catch (er) {}
+      return { ...aiBrief(e), fee_by_month: fmt(g.fee), transport_by_month: fmt(g.transport),
+        other_rows_without_month: (g.extras || []).map(x => ({ detail: x.label, type: x.cat, status: x.status, amount: x.amount, due_amount: x.status === "pending" ? x.amount : 0 })),
+        ...(passbook ? { passbook } : {}), ...(sheet.closeNote ? { close_note: String(sheet.closeNote).slice(0, 120) } : {}),
+        past_sessions: (e.feeChartArchive || []).map(a2 => { const pp = aiPendingInfo(feeChartMonthGrid({ feeChart: a2.chart }), 11); return { session: a2.session, class: a2.className, fee_pending: pp.fee.amt, transport_pending: pp.transport.amt }; }) };
+    }) };
+  }
+  if (name === "collection_summary") {
+    if (isNaN(new Date(a.from_date + "T00:00:00")) || isNaN(new Date(a.to_date + "T00:00:00"))) return { error: "Invalid dates, use YYYY-MM-DD" };
+    const invs = aiInvoices(a), gb = aiNorm(a.group_by) || "class", groups = new Map();
+    let fee = 0, transport = 0;
+    invs.forEach(inv => {
+      const isT = inv.category === "transport", amt = inv.total || 0;
+      if (isT) transport += amt; else fee += amt;
+      const k = gb === "day" ? dt(inv.paidAt) : gb === "month" ? dt(inv.paidAt).slice(0, 7) : (String(inv.className || "").trim() || "(no class)");
+      if (!groups.has(k)) groups.set(k, { [gb === "day" ? "date" : gb === "month" ? "month" : "class"]: k, invoices: 0, fee_collected: 0, transport_collected: 0, total_collected: 0 });
+      const r = groups.get(k); r.invoices++; if (isT) r.transport_collected += amt; else r.fee_collected += amt; r.total_collected += amt;
+    });
+    const rows = [...groups.values()].sort((x, y) => gb === "class" ? compareClassNames(x.class, y.class) : String(x.date || x.month).localeCompare(String(y.date || y.month)));
+    return { from: a.from_date, to: a.to_date, invoices: invs.length, fee_collected: fee, transport_collected: transport, total_collected: fee + transport, group_by: gb, breakdown: rows.slice(0, 40) };
+  }
+  if (name === "invoice_report") {
+    const invs = aiInvoices(a), n = lim(12, 30);
+    return { total_invoices: invs.length, total_amount: invs.reduce((s2, i) => s2 + (i.total || 0), 0), shown: Math.min(n, invs.length),
+      invoices: invs.slice(0, n).map(i => ({ invoice_no: i.invoiceNo, date: dt(i.paidAt), student: TN(i.name) || i.name, father: TN(i.fatherName) || i.fatherName || "", class: i.className, section: i.section || "", enroll_no: i.rollNo || "",
+        category: i.category, total: i.total, fee_till: i.feeTill || "", items: (i.items || []).slice(0, 8).map(x => `${x.head || x.detail || ""}${x.month ? " " + x.month : ""}: ${x.amount}`) })) };
+  }
+  if (name === "birthdays_events") {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const days = Math.max(1, Math.min(366, parseInt(a.days, 10) || 30)), month = parseInt(a.month, 10) || 0, out = [];
+    aiFilter(a).forEach(e => {
+      const m = String(e.dob || "").match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (m) {
+        const mo = +m[2], d0 = +m[3];
+        if (month) { if (mo === month) out.push({ type: "birthday", date: `${String(d0).padStart(2, "0")}-${m[2]}`, student: TN(e.name) || e.name, class: e.className, section: e.section || "", mobile: e.mobile || "" }); }
+        else { let nx = new Date(today.getFullYear(), mo - 1, d0); if (nx < today) nx = new Date(today.getFullYear() + 1, mo - 1, d0); const diff = Math.round((nx - today) / 864e5); if (diff <= days) out.push({ type: "birthday", in_days: diff, date: dt(nx.getTime() + 12 * 36e5), student: TN(e.name) || e.name, class: e.className, section: e.section || "", mobile: e.mobile || "" }); }
+      }
+      if (!month) (e.events || []).forEach(ev => { const ed = eventEffectiveDate(ev); if (!ed) return; const diff = Math.round((ed - today) / 864e5); if (diff >= 0 && diff <= days) out.push({ type: "event", title: ev.title, in_days: diff, date: dt(ed.getTime() + 12 * 36e5), student: TN(e.name) || e.name, class: e.className }); });
+    });
+    out.sort((x, y) => (x.in_days ?? 0) - (y.in_days ?? 0) || String(x.date).localeCompare(String(y.date)));
+    return { total: out.length, shown: Math.min(40, out.length), items: out.slice(0, 40) };
+  }
+  if (name === "recent_updates") {
+    const from = a.from_date ? new Date(a.from_date + "T00:00:00").getTime() : Date.now() - 7 * 864e5, to = a.to_date ? new Date(a.to_date + "T23:59:59").getTime() : Date.now() + 864e5;
+    const n = lim(20, 40);
+    const rows = aiFilter(a).filter(e => { const t = new Date(e.updatedAt || e.createdAt || 0).getTime(); return t >= from && t <= to; })
+      .sort((x, y) => new Date(y.updatedAt || 0) - new Date(x.updatedAt || 0));
+    return { total: rows.length, shown: Math.min(n, rows.length), students: rows.slice(0, n).map(e => ({ name: TN(e.name) || e.name, class: e.className, section: e.section || "", enroll_no: e.rollNo || "", updated: dt(new Date(e.updatedAt || e.createdAt).getTime()), summary: e.lastUpdateSummary || "" })) };
+  }
+  return { error: "Unknown tool" };
+}
+function aiSystemPrompt() {
+  const d = new Date();
+  return `You are the AI assistant inside a school Fee Register app, helping the school admin. Today is ${d.toDateString()} (session months run Apr to Mar). ` +
+    `Use the tools to look up real data; never invent students, amounts or dates. Reply in the same language/style as the user (Hinglish, Hindi or English), short and clear for a phone screen, amounts like ₹1,200. ` +
+    `"Due" means pending months up to the current month, plus any pending rows without a month. A fee chart can also have rows with no month (e.g. admission fee, previous balance, development charge) — these come in other_rows_without_month; always mention them with their status and amount. If a tool result says it shows only some rows, tell the user and offer to narrow down. ` +
+    `Classes in this school (in order): ${getClassList().join(", ") || "-"}. Sessions: ${[...new Set(state.entries.map(e => e.session).filter(Boolean))].join(", ") || "-"}. For "class X to Y" questions use class_from/class_to. For questions about one student use student_profile (all details) or student_fee_chart (month-wise). For counts/overview use school_overview; for money received use collection_summary or invoice_report; for birthdays/events use birthdays_events. Resolve words like "aaj/kal/is mahine/pichhle hafte" into real YYYY-MM-DD dates from today's date. Give complete useful details (names, class, amounts, months), not just totals, but keep it compact. ` +
+    `You can only read data; you cannot change anything — if asked to change data, explain how to do it in the app. Keep mobile numbers and personal details to what the user asked for.`;
+}
+function aiIsUserText(m) { return m.role === "user" && (typeof m.content === "string" || (m.parts && m.parts[0] && m.parts[0].text !== undefined)); }
+function aiTrimConvo() {
+  // Purani baat-cheet lambi ho jaye to shuru ka hissa hata dete hain (user ke naye sawal se hi shuru karte hain)
+  if (aiUi.convo.length > 24) {
+    const start = aiUi.convo.length - 24;
+    const i = aiUi.convo.findIndex((m, idx) => idx >= start && aiIsUserText(m));
+    if (i > 0) aiUi.convo = aiUi.convo.slice(i);
+  }
+}
+async function aiHttp(url, headers, body, providerLabel) {
+  const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+  if (!res.ok) {
+    let msg = ""; try { const j = await res.json(); msg = (j.error && (j.error.message || j.error)) || ""; } catch (e) {}
+    if (res.status === 401 || res.status === 403) throw Object.assign(new Error(`${providerLabel}: API key galat hai ya chali gayi hai. Settings (⚙️) me sahi key daalein.`), { status: res.status });
+    if (res.status === 429) throw Object.assign(new Error(`${providerLabel}: free limit poori ho gayi (bahut sawal ya bahut data). Thodi der baad dobara try karein.`), { status: 429 });
+    throw Object.assign(new Error(`${providerLabel}: ${typeof msg === "string" ? msg : JSON.stringify(msg)} (${res.status})`), { status: res.status });
+  }
+  return res.json();
+}
+// ---- Gemini ----
+function aiGeminiSchema(sch) {   // JSON-schema -> Gemini schema (type names UPPERCASE)
+  if (!sch || typeof sch !== "object") return sch;
+  const out = { type: String(sch.type || "object").toUpperCase() };
+  if (sch.properties) { out.properties = {}; Object.keys(sch.properties).forEach(k => { out.properties[k] = aiGeminiSchema(sch.properties[k]); }); }
+  if (sch.required && sch.required.length) out.required = sch.required;
+  if (sch.description) out.description = sch.description;
+  return out;
+}
+async function aiGeminiModel(key) {
+  const chosen = aiGetModel("gemini");
+  if (chosen) return chosen;
+  const cached = aiLsGet("adm_reg_ai_gemini_auto_v1", null);
+  if (cached && cached.key === key.slice(-8) && cached.model) return cached.model;
+  const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", { headers: { "x-goog-api-key": key } });
+  if (!res.ok) throw Object.assign(new Error(res.status === 400 || res.status === 403 ? "Gemini: API key galat hai. Settings (⚙️) me sahi key daalein." : `Gemini: model list nahi mili (${res.status})`), { status: res.status });
+  const list = ((await res.json()).models || []).filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
+    .map(m => m.name.replace(/^models\//, ""));
+  const bad = /(image|tts|live|audio|embedding|robotics|computer|gemma|veo|imagen|learnlm|vision|exp\b|thinking|customtools)/i;
+  const flash = list.filter(n => /flash/i.test(n) && !bad.test(n));
+  const full = flash.filter(n => !/lite/i.test(n)), pool = full.length ? full : flash;
+  const ver = (n) => { const m = n.match(/(\d+(?:\.\d+)?)/); return m ? parseFloat(m[1]) : 0; };
+  pool.sort((x, y) => (/latest/.test(y) ? 1 : 0) - (/latest/.test(x) ? 1 : 0) || ver(y) - ver(x) || (/preview/.test(x) ? 1 : 0) - (/preview/.test(y) ? 1 : 0));
+  if (!pool.length) throw new Error("Gemini: koi Flash model nahi mila. Settings me model ka naam khud likhein (AI Studio me dekhein).");
+  aiLsSet("adm_reg_ai_gemini_auto_v1", { key: key.slice(-8), model: pool[0] });
+  return pool[0];
+}
+async function aiChatGemini() {
+  const key = aiGetKey("gemini");
+  const model = await aiGeminiModel(key);
+  let data;
+  try {
+    data = await aiHttp(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { "x-goog-api-key": key }, {
+      systemInstruction: { parts: [{ text: aiSystemPrompt() }] },
+      contents: aiUi.convo,
+      tools: [{ functionDeclarations: AI_TOOLS.map(t => ({ name: t.name, description: t.description, parameters: aiGeminiSchema(t.input_schema) })) }],
+      generationConfig: { maxOutputTokens: 1200 },
+    }, "Gemini");
+  } catch (err) {
+    if (err.status === 404) aiLsSet("adm_reg_ai_gemini_auto_v1", null);   // purana auto-model hat gaya ho to agli baar dobara chunega
+    throw err;
+  }
+  const cand = data.candidates && data.candidates[0];
+  const content = cand && cand.content;
+  if (!content || !content.parts) throw new Error("Gemini ne jawab nahi diya" + (data.promptFeedback && data.promptFeedback.blockReason ? " (" + data.promptFeedback.blockReason + ")" : "") + ".");
+  aiUi.convo.push({ role: "model", parts: content.parts });   // poora part (thoughtSignature ke saath) wapas bhejna zaroori hai
+  const calls = content.parts.filter(p => p.functionCall).map((p, i) => ({ id: p.functionCall.id || null, name: p.functionCall.name, input: p.functionCall.args || {} }));
+  const text = content.parts.filter(p => p.text && !p.thought).map(p => p.text).join("\n").trim();
+  return { text, calls };
+}
+// ---- Groq (OpenAI-compatible) ----
+async function aiChatGroq() {
+  const key = aiGetKey("groq");
+  const data = await aiHttp("https://api.groq.com/openai/v1/chat/completions", { authorization: "Bearer " + key }, {
+    model: aiGetModel("groq"), max_tokens: 1000,
+    messages: [{ role: "system", content: aiSystemPrompt() }, ...aiUi.convo],
+    tools: AI_TOOLS.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } })),
+  }, "Groq");
+  const msg = data.choices && data.choices[0] && data.choices[0].message;
+  if (!msg) throw new Error("Groq ne jawab nahi diya.");
+  aiUi.convo.push({ role: "assistant", content: msg.content || "", ...(msg.tool_calls && msg.tool_calls.length ? { tool_calls: msg.tool_calls } : {}) });
+  const calls = (msg.tool_calls || []).map(tc => { let args = {}; try { args = JSON.parse(tc.function.arguments || "{}"); } catch (e) {} return { id: tc.id, name: tc.function.name, input: args }; });
+  return { text: (msg.content || "").trim(), calls };
+}
+// ---- Claude ----
+async function aiChatClaude() {
+  const data = await aiHttp("https://api.anthropic.com/v1/messages", {
+    "x-api-key": aiGetKey("claude"), "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true",
+  }, { model: aiGetModel("claude"), max_tokens: 1200, system: aiSystemPrompt(), tools: AI_TOOLS, messages: aiUi.convo }, "Claude");
+  aiUi.convo.push({ role: "assistant", content: data.content });
+  const calls = (data.content || []).filter(b => b.type === "tool_use").map(u => ({ id: u.id, name: u.name, input: u.input }));
+  const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n").trim();
+  return { text, calls };
+}
+function aiPushToolResults(prov, calls, outs) {
+  if (prov === "gemini") aiUi.convo.push({ role: "user", parts: calls.map((c, i) => ({ functionResponse: { name: c.name, ...(c.id ? { id: c.id } : {}), response: { result: outs[i] } } })) });
+  else if (prov === "groq") calls.forEach((c, i) => aiUi.convo.push({ role: "tool", tool_call_id: c.id, content: outs[i] }));
+  else aiUi.convo.push({ role: "user", content: calls.map((c, i) => ({ type: "tool_result", tool_use_id: c.id, content: outs[i] })) });
+}
+async function aiSend(text) {
+  text = String(text || "").trim();
+  if (!text || !aiUi || aiUi.busy) return;
+  const prov = aiGetProvider();
+  if (!aiGetKey(prov)) await aiLoadCloudKey(true);
+  if (!aiGetKey(prov)) { aiUi.msgs.push({ role: "error", text: "AI key nahi mili. Supabase me app_secrets table me groq_api_key daaliye (steps code ke comment me hain)." }); renderAiMessages(); return; }
+  if (aiUi.prov && aiUi.prov !== prov) { aiUi.convo = []; }   // provider badla to history alag format ki hoti hai
+  aiUi.prov = prov;
+  aiUi.msgs.push({ role: "user", text });
+  aiUi.convo.push(prov === "gemini" ? { role: "user", parts: [{ text }] } : { role: "user", content: text });
+  aiUi.busy = true; renderAiMessages();
+  const cap = prov === "claude" ? 9000 : 4500;   // free providers me per-minute token limit kam hoti hai
+  try {
+    for (let step = 0; step < 8; step++) {
+      aiTrimConvo();
+      const r = prov === "gemini" ? await aiChatGemini() : prov === "groq" ? await aiChatGroq() : await aiChatClaude();
+      if (!r.calls.length) { aiUi.msgs.push({ role: "assistant", text: r.text || "(no answer)" }); break; }
+      const outs = r.calls.map(c => {
+        let out; try { out = aiRunTool(c.name, c.input); } catch (err) { out = { error: String(err && err.message || err) }; }
+        let json = JSON.stringify(out); if (json.length > cap) json = json.slice(0, cap) + '…(truncated)';
+        return prov === "gemini" ? (() => { try { return JSON.parse(json); } catch (e) { return { partial: json }; } })() : json;
+      });
+      aiPushToolResults(prov, r.calls, outs);
+      if (step === 7) aiUi.msgs.push({ role: "assistant", text: "Sawal thoda bada hai — thoda aur seedha poochiye." });
+    }
+  } catch (err) {
+    console.error("AI chat error:", err);
+    aiUi.msgs.push({ role: "error", text: err.message || "Kuch gadbad ho gayi." });
+    // adhoora turn hata do taaki agli baar galat history na jaye
+    let last = -1; aiUi.convo.forEach((m, i) => { if (aiIsUserText(m)) last = i; });
+    if (last >= 0) aiUi.convo = aiUi.convo.slice(0, last);
+  }
+  aiUi.busy = false; aiHistSave(); renderAiMessages();
+}
+function aiFmt(t) { return escapeHtml(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>"); }
+function renderAiMessages() {
+  if (aiUi && aiUi.view === "history") { renderAiHistory(); return; }
+  const box = document.getElementById("aiMsgs");
+  if (!box || !aiUi) return;
+  const bubble = (m, idx) => {
+    const me = m.role === "user", er = m.role === "error";
+    return `<div style="display:flex;justify-content:${me ? "flex-end" : "flex-start"};margin:6px 0;"><div style="max-width:86%;white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.45;padding:8px 12px;border-radius:12px;${me ? "background:#1F2A44;color:#F3ECDA;" : er ? "background:#F5D9D9;color:#9B3437;" : "background:#FFFFFF;color:#1F2A44;border:1px solid #D9CBA3;"}">${aiFmt(m.text)}${me ? "" : `<div><button class="aiCopyBtn" data-i="${idx}" style="margin-top:6px;background:none;border:1px solid #B7A97E;border-radius:6px;padding:2px 8px;cursor:pointer;color:#6B5F4B;font-size:11.5px;">📋 Copy</button></div>`}</div></div>`;
+  };
+  const chips = ["Class Play ke pending fees kitne bachho ke hain?", "Is mahine ka collection kitna hua?", "Sabse zyada baki fees wale 10 students"];
+  box.innerHTML = (aiUi.msgs.length ? aiUi.msgs.map((m, i) => bubble(m, i)).join("") :
+    `<p style="color:#6B5F4B;font-size:13px;margin:4px 0 10px;">Mujhse student, fee aur collection ke baare me poochiye. Kuch badalta nahi, sirf dekhta hai.</p>` +
+    chips.map(c => `<button class="aiChip" style="display:block;width:100%;text-align:left;margin:6px 0;background:#FFFFFF;border:1px solid #B7A97E;border-radius:10px;padding:8px 12px;color:#1F2A44;font-size:13px;cursor:pointer;">${escapeHtml(c)}</button>`).join("")) +
+    (aiUi.busy ? `<div style="color:#6B5F4B;font-size:13px;margin:6px 0;">⏳ soch raha hoon…</div>` : "");
+  box.querySelectorAll(".aiChip").forEach(b => b.addEventListener("click", () => aiSend(b.textContent)));
+  box.querySelectorAll(".aiCopyBtn").forEach(b => b.addEventListener("click", async () => {
+    const m = aiUi.msgs[+b.dataset.i]; if (!m) return;
+    let ok = false;
+    try { await navigator.clipboard.writeText(m.text); ok = true; } catch (e) {}
+    if (!ok) {
+      const tmp = document.createElement("textarea");
+      tmp.value = m.text; tmp.style.cssText = "position:fixed;top:0;left:0;opacity:0;";
+      document.body.appendChild(tmp); tmp.focus(); tmp.select();
+      try { ok = document.execCommand("copy"); } catch (e2) {}
+      tmp.remove();
+    }
+    b.textContent = ok ? "Copied ✓" : "Copy nahi hua";
+    setTimeout(() => { b.textContent = "📋 Copy"; }, 1500);
+  }));
+  box.scrollTop = box.scrollHeight;
+  const sendBtn = document.getElementById("aiSendBtn"); if (sendBtn) sendBtn.disabled = aiUi.busy;
+}
+function renderAiBot() {
+  const ov = document.getElementById("aiBotOverlay");
+  if (!ov) return;
+  if (!aiUi) { ov.style.display = "none"; ov.innerHTML = ""; return; }
+  ov.style.display = "flex";
+  ov.innerHTML = `<div style="width:100%;max-width:520px;height:88vh;max-height:88vh;display:flex;flex-direction:column;background:#FBF7EC;border:1px solid #D9CBA3;border-radius:14px 14px 0 0;border-top:3px solid #1F2A44;padding:12px;box-sizing:border-box;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <div style="font-family:'Zilla Slab',serif;font-weight:700;font-size:16px;color:#1F2A44;flex:1;">🤖 AI Assistant <span style="font-size:11px;font-weight:400;color:#6B5F4B;">${escapeHtml(AI_PROVIDERS[aiGetProvider()].label)}</span></div>
+      <button id="aiHistBtn" title="History" style="background:${aiUi.view === 'history' ? '#1F2A44' : 'none'};border:1px solid #B7A97E;border-radius:6px;padding:4px 8px;cursor:pointer;color:${aiUi.view === 'history' ? '#F3ECDA' : '#1F2A44'};font-size:12px;">🕘 History</button>
+      <button id="aiClearBtn" title="New chat" style="background:none;border:1px solid #B7A97E;border-radius:6px;padding:4px 8px;cursor:pointer;color:#1F2A44;font-size:12px;">New</button>
+      <button id="aiCloseBtn" title="Close" style="background:none;border:none;font-size:20px;cursor:pointer;color:#6B5F4B;">✕</button>
+    </div>
+    <div id="aiMsgs" style="flex:1;overflow-y:auto;padding:2px;"></div>
+    <div style="display:${aiUi.view === 'history' ? 'none' : 'flex'};gap:8px;margin-top:8px;">
+      <input id="aiInput" class="rule-input" placeholder="Poochiye…" autocomplete="off" style="flex:1;" />
+      <button id="aiSendBtn" style="background:#1F2A44;color:#F3ECDA;border:none;border-radius:8px;padding:0 16px;font-size:15px;cursor:pointer;">➤</button>
+    </div>
+  </div>`;
+  document.getElementById("aiCloseBtn").addEventListener("click", () => { aiUi = null; renderAiBot(); });
+  document.getElementById("aiHistBtn").addEventListener("click", () => { aiUi.view = aiUi.view === "history" ? "chat" : "history"; renderAiBot(); });
+  document.getElementById("aiClearBtn").addEventListener("click", () => { if (aiUi.busy) return; aiHistSave(); aiUi.id = null; aiUi.msgs = []; aiUi.convo = []; aiUi.prov = undefined; aiUi.view = "chat"; renderAiBot(); });
+  const inp = document.getElementById("aiInput");
+  const go = () => { const v = inp.value; inp.value = ""; aiSend(v); };
+  document.getElementById("aiSendBtn").addEventListener("click", go);
+  inp.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); go(); } });
+  renderAiMessages();
+}
+function updateAiBotVisibility() {
+  let fab = document.getElementById("aiBotFab");
+  if (!fab) {
+    fab = document.createElement("button");
+    fab.id = "aiBotFab"; fab.title = "AI Assistant"; fab.textContent = "🤖";
+    fab.style.cssText = "position:fixed;right:14px;bottom:14px;width:52px;height:52px;border-radius:50%;border:none;background:#1F2A44;color:#F3ECDA;font-size:24px;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,0.3);z-index:1500;display:none;align-items:center;justify-content:center;";
+    fab.addEventListener("click", () => { if (!aiUi) aiUi = aiNewUi(); renderAiBot(); });
+    document.body.appendChild(fab);
+    const ov = document.createElement("div");
+    ov.id = "aiBotOverlay";
+    ov.style.cssText = "display:none;position:fixed;inset:0;background:rgba(31,42,68,0.55);z-index:2200;align-items:flex-end;justify-content:center;";
+    ov.addEventListener("click", (ev) => { if (ev.target === ov) { aiUi = null; renderAiBot(); } });
+    document.body.appendChild(ov);
+  }
+  const show = !!(state.editUnlocked && !state.isGuestMode);
+  fab.style.display = show ? "flex" : "none";
+  if (!show && aiUi) { aiUi = null; renderAiBot(); }
+}
+
 function renderEventFormInline(e) {
   const events = (e.events || []).slice().sort((a, b) => (eventEffectiveDate(a) - eventEffectiveDate(b)));
   return `
@@ -13934,7 +14484,9 @@ document.getElementById("logoutBtn").addEventListener("click", async () => {
 /* ---------- Basic source-peeking deterrents ---------- */
 document.addEventListener("contextmenu", (e) => {
   if (e.target.closest('[data-allow-menu="1"]')) return; // allow Call/Copy on phone numbers
-  e.preventDefault();
+  // Text (naam, father, class, mobile, address, etc.) har jagah copy ho sake — sirf image/canvas par menu band
+  if (e.target.closest("img, canvas, svg, video")) { e.preventDefault(); return; }
+  return;
 });
 document.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
