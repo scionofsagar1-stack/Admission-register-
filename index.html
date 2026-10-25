@@ -11869,27 +11869,27 @@ function aiInvoices(a) {   // filtered paid invoices
     if (seen.has(key)) return false; seen.add(key); return true;
   });
 }
-const AI_FILTER_PROPS = { class: { type: "string", description: "single class" }, class_from: { type: "string", description: "class range start (inclusive)" }, class_to: { type: "string", description: "class range end (inclusive)" }, section: { type: "string" }, session: { type: "string" } };
+const AI_FILTER_PROPS = { class: { type: "string" }, class_from: { type: "string" }, class_to: { type: "string" }, section: { type: "string" }, session: { type: "string" } };
 const AI_TOOLS = [
-  { name: "search_students", description: "List students. Text query matches name/father/mother/mobile/enroll no/address/notes. Filters: class or class_from..class_to range, section, session, adm_type (new|old), transport (yes|no), whatsapp (yes|no), star (Green|Yellow|Grey|Red), fee_paid_till (month), siblings (yes|no). Returns basic details.",
+  { name: "search_students", description: "List students. query=name/father/mother/mobile/enroll/address. Filters: class or class_from..class_to, section, session, adm_type new|old, transport yes|no, whatsapp yes|no, star, fee_paid_till, siblings yes|no.",
     input_schema: { type: "object", properties: { query: { type: "string" }, ...AI_FILTER_PROPS, adm_type: { type: "string" }, transport: { type: "string" }, whatsapp: { type: "string" }, star: { type: "string" }, fee_paid_till: { type: "string" }, siblings: { type: "string" }, limit: { type: "integer" } } } },
-  { name: "student_profile", description: "FULL details of one student (match by name/enroll no): demographics (mother, DOB, address, notes, admission type, transport), dues with pending months, last paid invoices, past-session charts, events, siblings with same mobile.",
+  { name: "student_profile", description: "Full details of one student: demographics, dues with pending months, last invoices, past sessions, events, siblings.",
     input_schema: { type: "object", properties: { query: { type: "string" }, class: { type: "string" } }, required: ["query"] } },
-  { name: "school_overview", description: "Headline numbers: total students, by session / admission type / transport / WhatsApp / stars, students with no mobile, sibling count, total dues. Optional class / class range / section / session filter.",
+  { name: "school_overview", description: "Totals: students, by session/adm type/transport/whatsapp/stars, no mobile, siblings, dues. Optional class filters.",
     input_schema: { type: "object", properties: { ...AI_FILTER_PROPS } } },
-  { name: "class_summary", description: "Per class+section: students, how many have dues up to the current month, fee / transport dues. Optional class range / session filter.",
+  { name: "class_summary", description: "Per class+section: students, with dues, fee/transport due.",
     input_schema: { type: "object", properties: { ...AI_FILTER_PROPS } } },
-  { name: "pending_dues", description: "Students with pending fee/transport (up to current month incl. rows without month), with pending month names. Filters as search_students. sort_by: due (default) | class | name.",
+  { name: "pending_dues", description: "Students with pending fee/transport (to current month) with pending months. sort_by due|class|name.",
     input_schema: { type: "object", properties: { ...AI_FILTER_PROPS, adm_type: { type: "string" }, transport: { type: "string" }, star: { type: "string" }, min_amount: { type: "number" }, sort_by: { type: "string" }, limit: { type: "integer" } } } },
-  { name: "student_fee_chart", description: "Month-wise (Apr..Mar) fee and transport status (paid/close/pending+amount), rows without month, passbook balance, and past-session (archived) chart dues for students matching a name or enroll no.",
+  { name: "student_fee_chart", description: "Month-wise fee/transport status, rows without month, passbook, past sessions for a student.",
     input_schema: { type: "object", properties: { query: { type: "string" }, class: { type: "string" } }, required: ["query"] } },
-  { name: "collection_summary", description: "Money collected (paid invoices) between two dates (YYYY-MM-DD inclusive): fee/transport split, invoice count. Optional class or class_from..class_to range, section, student query, category (fee|transport). group_by: class (default) | day | month.",
+  { name: "collection_summary", description: "Money collected between dates YYYY-MM-DD. Filters: class/class range, section, query, category fee|transport. group_by class|day|month.",
     input_schema: { type: "object", properties: { from_date: { type: "string" }, to_date: { type: "string" }, ...AI_FILTER_PROPS, query: { type: "string" }, category: { type: "string" }, group_by: { type: "string" } }, required: ["from_date", "to_date"] } },
-  { name: "invoice_report", description: "List individual paid invoices (newest first) with date, student, class, category, total and the items paid (head/month/amount). Filters: dates, class or range, section, student query, invoice_no, category (fee|transport).",
+  { name: "invoice_report", description: "Paid invoices newest first with items. Filters: dates, class/range, section, query, invoice_no, category.",
     input_schema: { type: "object", properties: { from_date: { type: "string" }, to_date: { type: "string" }, ...AI_FILTER_PROPS, query: { type: "string" }, invoice_no: { type: "string" }, category: { type: "string" }, limit: { type: "integer" } } } },
-  { name: "birthdays_events", description: "Upcoming birthdays (DOB) and student events in the next N days (default 30), or birthdays of a given month number 1-12. Optional class filters.",
+  { name: "birthdays_events", description: "Upcoming birthdays/events in next days (default 30) or birthdays of month 1-12.",
     input_schema: { type: "object", properties: { days: { type: "integer" }, month: { type: "integer" }, ...AI_FILTER_PROPS } } },
-  { name: "recent_updates", description: "Students whose record was added/edited between two dates (YYYY-MM-DD), with last update summary. Default last 7 days.",
+  { name: "recent_updates", description: "Students added/edited between dates (default last 7 days).",
     input_schema: { type: "object", properties: { from_date: { type: "string" }, to_date: { type: "string" }, ...AI_FILTER_PROPS, limit: { type: "integer" } } } },
 ];
 function aiRunTool(name, a) {
@@ -12011,17 +12011,26 @@ function aiRunTool(name, a) {
 }
 function aiSystemPrompt() {
   const d = new Date();
-  return `You are the AI assistant inside a school Fee Register app, helping the school admin. Today is ${d.toDateString()} (session months run Apr to Mar). ` +
-    `Use the tools to look up real data; never invent students, amounts or dates. Reply in the same language/style as the user (Hinglish, Hindi or English), short and clear for a phone screen, amounts like ₹1,200. ` +
-    `"Due" means pending months up to the current month, plus any pending rows without a month. A fee chart can also have rows with no month (e.g. admission fee, previous balance, development charge) — these come in other_rows_without_month; always mention them with their status and amount. If a tool result says it shows only some rows, tell the user and offer to narrow down. ` +
-    `Classes in this school (in order): ${getClassList().join(", ") || "-"}. Sessions: ${[...new Set(state.entries.map(e => e.session).filter(Boolean))].join(", ") || "-"}. For "class X to Y" questions use class_from/class_to. For questions about one student use student_profile (all details) or student_fee_chart (month-wise). For counts/overview use school_overview; for money received use collection_summary or invoice_report; for birthdays/events use birthdays_events. Resolve words like "aaj/kal/is mahine/pichhle hafte" into real YYYY-MM-DD dates from today's date. Give complete useful details (names, class, amounts, months), not just totals, but keep it compact. ` +
-    `You can only read data; you cannot change anything — if asked to change data, explain how to do it in the app. Keep mobile numbers and personal details to what the user asked for.`;
+  return `School Fee Register admin assistant. Today ${d.toDateString()} (session Apr-Mar). Use tools for real data, never invent. Reply in user's language (Hinglish/Hindi/English), compact, amounts like ₹1,200. ` +
+    `Due = pending months up to current month plus pending rows without month (other_rows_without_month: always mention). ` +
+    `Classes in order: ${getClassList().join(", ") || "-"}. For "class X to Y" use class_from/class_to. One student: student_profile or student_fee_chart. Counts: school_overview. Money received: collection_summary/invoice_report. Birthdays: birthdays_events. Convert aaj/kal/is mahine to YYYY-MM-DD. ` +
+    `If results are partial say so. Read-only; mention only the personal details asked.`;
 }
 function aiIsUserText(m) { return m.role === "user" && (typeof m.content === "string" || (m.parts && m.parts[0] && m.parts[0].text !== undefined)); }
+function aiShrinkOld() {   // purane sawalon ke bade tool-results hata do (har step me dobara bhejne se token limit jaldi lagti hai)
+  let last = -1; aiUi.convo.forEach((m, i) => { if (aiIsUserText(m)) last = i; });
+  aiUi.convo.forEach((m, i) => {
+    if (i >= last) return;
+    if (m.role === "tool") m.content = "(old data)";
+    else if (m.role === "user" && Array.isArray(m.content)) m.content.forEach(b => { if (b && b.type === "tool_result") b.content = "(old data)"; });
+    else if (m.role === "user" && Array.isArray(m.parts)) m.parts.forEach(pt => { if (pt.functionResponse) pt.functionResponse.response = { result: "(old data)" }; });
+  });
+}
 function aiTrimConvo() {
+  aiShrinkOld();
   // Purani baat-cheet lambi ho jaye to shuru ka hissa hata dete hain (user ke naye sawal se hi shuru karte hain)
-  if (aiUi.convo.length > 24) {
-    const start = aiUi.convo.length - 24;
+  if (aiUi.convo.length > 16) {
+    const start = aiUi.convo.length - 16;
     const i = aiUi.convo.findIndex((m, idx) => idx >= start && aiIsUserText(m));
     if (i > 0) aiUi.convo = aiUi.convo.slice(i);
   }
@@ -12031,8 +12040,8 @@ async function aiHttp(url, headers, body, providerLabel) {
   if (!res.ok) {
     let msg = ""; try { const j = await res.json(); msg = (j.error && (j.error.message || j.error)) || ""; } catch (e) {}
     if (res.status === 401 || res.status === 403) throw Object.assign(new Error(`${providerLabel}: API key galat hai ya chali gayi hai. Settings (⚙️) me sahi key daalein.`), { status: res.status });
-    if (res.status === 429) throw Object.assign(new Error(`${providerLabel}: free limit poori ho gayi (bahut sawal ya bahut data). Thodi der baad dobara try karein.`), { status: 429 });
-    throw Object.assign(new Error(`${providerLabel}: ${typeof msg === "string" ? msg : JSON.stringify(msg)} (${res.status})`), { status: res.status });
+    if (res.status === 429) throw Object.assign(new Error(`${providerLabel}: free limit poori ho gayi. Thodi der baad dobara try karein.` + (typeof msg === "string" && msg ? " [" + msg.slice(0, 170) + "]" : "")), { status: 429, detail: msg });
+    throw Object.assign(new Error(`${providerLabel}: ${typeof msg === "string" ? msg : JSON.stringify(msg)} (${res.status})`), { status: res.status, detail: msg });
   }
   return res.json();
 }
@@ -12087,13 +12096,42 @@ async function aiChatGemini() {
   return { text, calls };
 }
 // ---- Groq (OpenAI-compatible) ----
+const AI_GROQ_PREF = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "qwen/qwen3-32b", "moonshotai/kimi-k2-instruct", "llama-3.1-8b-instant"];
+async function aiGroqModels(key) {   // Groq ke account me jo chat models sach me available hain unki list (6 ghante cache)
+  const c = aiLsGet("adm_reg_ai_groq_models_v1", null);
+  if (c && c.key === key.slice(-8) && Date.now() - c.t < 6 * 3600e3 && c.list && c.list.length) return c.list;
+  try {
+    const res = await fetch("https://api.groq.com/openai/v1/models", { headers: { authorization: "Bearer " + key } });
+    if (!res.ok) return [];
+    const ids = ((await res.json()).data || []).filter(m => m.active !== false).map(m => m.id)
+      .filter(id => !/whisper|tts|guard|orpheus|allam|compound|distil|safeguard|playai/i.test(id));
+    const rank = (id) => { const k = AI_GROQ_PREF.indexOf(id); return k === -1 ? 99 : k; };
+    ids.sort((x, y) => rank(x) - rank(y));
+    aiLsSet("adm_reg_ai_groq_models_v1", { key: key.slice(-8), t: Date.now(), list: ids });
+    return ids;
+  } catch (e) { return []; }
+}
 async function aiChatGroq() {
   const key = aiGetKey("groq");
-  const data = await aiHttp("https://api.groq.com/openai/v1/chat/completions", { authorization: "Bearer " + key }, {
-    model: aiGetModel("groq"), max_tokens: 1000,
-    messages: [{ role: "system", content: aiSystemPrompt() }, ...aiUi.convo],
-    tools: AI_TOOLS.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } })),
-  }, "Groq");
+  const first = aiGetModel("groq"), avail = await aiGroqModels(key);
+  const base = avail.length ? avail : AI_GROQ_PREF;
+  const models = [aiUi.gm, first, ...base].filter((m, i, a) => m && a.indexOf(m) === i && (!avail.length || avail.includes(m))).slice(0, 5);
+  let data, lastErr;
+  for (const model of models) {
+    try {
+      data = await aiHttp("https://api.groq.com/openai/v1/chat/completions", { authorization: "Bearer " + key }, {
+        model, max_tokens: 700,
+        messages: [{ role: "system", content: aiSystemPrompt() }, ...aiUi.convo],
+        tools: AI_TOOLS.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } })),
+      }, "Groq");
+      aiUi.gm = model; break;
+    } catch (err) {
+      if (!lastErr || err.status === 429) lastErr = err;   // asli wajah (limit) dikhao, 404 nahi
+      const bad = err.status === 429 || err.status === 413 || err.status === 404 || (err.status === 400 && /tool|function|generate/i.test(String(err.message)));
+      if (!bad) throw err;
+    }
+  }
+  if (!data) throw lastErr;
   const msg = data.choices && data.choices[0] && data.choices[0].message;
   if (!msg) throw new Error("Groq ne jawab nahi diya.");
   aiUi.convo.push({ role: "assistant", content: msg.content || "", ...(msg.tool_calls && msg.tool_calls.length ? { tool_calls: msg.tool_calls } : {}) });
@@ -12115,6 +12153,17 @@ function aiPushToolResults(prov, calls, outs) {
   else if (prov === "groq") calls.forEach((c, i) => aiUi.convo.push({ role: "tool", tool_call_id: c.id, content: outs[i] }));
   else aiUi.convo.push({ role: "user", content: calls.map((c, i) => ({ type: "tool_result", tool_use_id: c.id, content: outs[i] })) });
 }
+function aiFit(out, cap) {   // bada result ho to list ki rows kam karo (JSON poora rahe), aur note jodo
+  let json = JSON.stringify(out);
+  if (json.length <= cap || !out || typeof out !== "object") return json.length > cap ? json.slice(0, cap) : json;
+  const copy = { ...out }, keys = Object.keys(copy).filter(k => Array.isArray(copy[k]) && copy[k].length > 1);
+  for (let guard = 0; guard < 12 && json.length > cap && keys.length; guard++) {
+    keys.forEach(k => { copy[k] = copy[k].slice(0, Math.max(1, Math.ceil(copy[k].length * 0.7))); });
+    copy.note_truncated = "list cut to fit; tell the user only first rows are shown and offer to narrow down";
+    json = JSON.stringify(copy);
+  }
+  return json.length > cap ? json.slice(0, cap) : json;
+}
 async function aiSend(text) {
   text = String(text || "").trim();
   if (!text || !aiUi || aiUi.busy) return;
@@ -12126,7 +12175,7 @@ async function aiSend(text) {
   aiUi.msgs.push({ role: "user", text });
   aiUi.convo.push(prov === "gemini" ? { role: "user", parts: [{ text }] } : { role: "user", content: text });
   aiUi.busy = true; renderAiMessages();
-  const cap = prov === "claude" ? 9000 : 4500;   // free providers me per-minute token limit kam hoti hai
+  const cap = prov === "claude" ? 9000 : 3200;   // free providers me per-minute token limit kam hoti hai
   try {
     for (let step = 0; step < 8; step++) {
       aiTrimConvo();
@@ -12134,7 +12183,7 @@ async function aiSend(text) {
       if (!r.calls.length) { aiUi.msgs.push({ role: "assistant", text: r.text || "(no answer)" }); break; }
       const outs = r.calls.map(c => {
         let out; try { out = aiRunTool(c.name, c.input); } catch (err) { out = { error: String(err && err.message || err) }; }
-        let json = JSON.stringify(out); if (json.length > cap) json = json.slice(0, cap) + '…(truncated)';
+        let json = aiFit(out, cap);
         return prov === "gemini" ? (() => { try { return JSON.parse(json); } catch (e) { return { partial: json }; } })() : json;
       });
       aiPushToolResults(prov, r.calls, outs);
