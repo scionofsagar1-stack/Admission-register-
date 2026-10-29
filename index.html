@@ -3405,7 +3405,7 @@ function computeFeeChartPaidReceipts(sheet, archiveMeta, extraSheets) {
     const total = items.reduce((s, it) => s + it.total, 0);
     const rowIndices = buckets[category].filter(it => it.source === "primary").map(it => it.ri);
     return {
-      items, total, invoiceNo: latestInvoiceNo[category] || "—", category,
+      items, total, invoiceNo: latestInvoiceNo[category] || "—", category, paidAt: latestPaidAt[category] > 0 ? latestPaidAt[category] : 0,
       label: (archiveMeta && archiveMeta.isArchived) ? `Last Session ${label}` : label,
       rowIndices,
       isArchived: !!(archiveMeta && archiveMeta.isArchived),
@@ -3474,7 +3474,7 @@ function buildReceiptForInvoiceNo(sheet, invoiceNo, archiveMeta, extraSheets) {
   const rowIndices = rawItems.slice(0, primaryCount).map(it => it.ri);
   const label = category === "transport" ? "Transport Fee Receipt" : "Fee Receipt";
   return {
-    items, total, invoiceNo, category,
+    items, total, invoiceNo, category, paidAt: maxPaidAt || 0,
     label: (archiveMeta && archiveMeta.isArchived) ? `Last Session ${label}` : label,
     rowIndices,
     isArchived: !!(archiveMeta && archiveMeta.isArchived),
@@ -4031,7 +4031,7 @@ function buildFeeChartPaidReceiptNode(entry, receipt, scaleOverride) {
         <div style="border-top:1px solid #1F2A44;width:${f(100)};padding-top:${f(3)};font-size:${f(10.5)};color:#6B5F4B;">Authority Signature</div>
       </div>
     </div>
-    <div style="font-size:${f(11)};color:#A69B82;margin-top:${f(14)};">Generated ${new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
+    <div style="font-size:${f(11)};color:#A69B82;margin-top:${f(14)};">${escapeHtml(receiptDateLabel(receipt))}</div>
     </div>
   `;
   return wrap;
@@ -4168,7 +4168,7 @@ function drawFeeChartPaidReceiptCopy(doc, entry, receipt, rs, slot, copyLabel, s
   doc.setFontSize(z(9));
   doc.setTextColor(0, 0, 0);
   doc.text(`Invoice No: ${receipt.invoiceNo}`, L, headingY);
-  doc.text(`Generated ${new Date().toLocaleString()}`, R, headingY, { align: "right" });
+  doc.text(receiptDateLabel(receipt), R, headingY, { align: "right" });
   headingY += z(14);
   doc.setDrawColor(215, 204, 168);
   doc.setLineWidth(0.5);
@@ -4272,6 +4272,15 @@ function fitReceiptPdfScale(entry, receipt, rs, layout) {
   }
 }
 
+/* Receipt par "Paid on <payment ki tareekh/samay>" dikhta hai (jab print/PDF bana wo samay nahi). Purani receipt me paidAt na ho to Generated. */
+function receiptDateLabel(receipt, mode) {
+  const t = receipt && receipt.paidAt;
+  if (t && t > 0) {
+    const d = new Date(t);
+    return "Paid on " + d.toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+  return "Generated " + new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
 function buildFeeChartPaidReceiptPdf(entry, receipt) {
   const rs = state.receiptSettings;
   const { jsPDF } = window.jspdf;
