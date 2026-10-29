@@ -4272,7 +4272,7 @@ function fitReceiptPdfScale(entry, receipt, rs, layout) {
   }
 }
 
-function downloadFeeChartPaidReceiptPdf(entry, receipt) {
+function buildFeeChartPaidReceiptPdf(entry, receipt) {
   const rs = state.receiptSettings;
   const { jsPDF } = window.jspdf;
   const layout = getReceiptPdfLayout(rs);
@@ -4308,7 +4308,94 @@ function downloadFeeChartPaidReceiptPdf(entry, receipt) {
 
   drawFeeChartPaidReceiptCopy(doc, entry, receipt, rs, layout.slots[1], "Student Copy", sc);
 
-  doc.save(`receipt-${receipt.category}-${(entry.name || "student").replace(/[^a-z0-9]+/gi, "_")}-${new Date().toISOString().slice(0, 10)}.pdf`);
+  return { doc, filename: `receipt-${receipt.category}-${(entry.name || "student").replace(/[^a-z0-9]+/gi, "_")}-${new Date().toISOString().slice(0, 10)}.pdf` };
+}
+function downloadFeeChartPaidReceiptPdf(entry, receipt) {
+  const b = buildFeeChartPaidReceiptPdf(entry, receipt);
+  b.doc.save(b.filename);
+}
+/* Print: seedha printer ka print dialog kholta hai (file download nahi hoti). Layout hamesha wahi jo Download PDF me tha
+   (Office + Student copy). Computer par PDF seedha print hota hai; phone/tablet me browser PDF print nahi kar pata,
+   isliye PDF ke pages image bana kar print hote hain. */
+async function printFeeChartPaidReceipt(entry, receipt) {
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
+  if (!isMobile) {
+    const b = buildFeeChartPaidReceiptPdf(entry, receipt);
+    const url = URL.createObjectURL(b.doc.output("blob"));
+    const fr = document.createElement("iframe");
+    fr.setAttribute("aria-hidden", "true");
+    fr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
+    fr.onload = () => { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { window.open(url, "_blank"); } };
+    fr.src = url;
+    document.body.appendChild(fr);
+    setTimeout(() => { if (fr.parentNode) fr.parentNode.removeChild(fr); URL.revokeObjectURL(url); }, 120000);
+    return;
+  }
+  // Phone/tablet: PDF ko pdf.js se page-images me badal kar print karte hain (same layout: Office + Student copy, A4 ke aadhe-aadhe hisse me)
+  const b = buildFeeChartPaidReceiptPdf(entry, receipt);
+  let pages = null;
+  try {
+    if (await loadPdfJsLib()) pages = await pdfDocToPageImages(b.doc);
+  } catch (e) { console.warn("pdf.js print failed:", e); }
+  if (!pages || !pages.length) {
+    b.doc.save(b.filename);
+    alert("Print ke liye internet chahiye (print library load nahi hui). PDF download kar di gayi hai — use khol kar print karein.");
+    return;
+  }
+  const ps = b.doc.internal.pageSize, wMm = (ps.getWidth() * 25.4 / 72).toFixed(2), hMm = (ps.getHeight() * 25.4 / 72).toFixed(2);
+  const fr = document.createElement("iframe");
+  fr.setAttribute("aria-hidden", "true");
+  fr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
+  document.body.appendChild(fr);
+  const d = fr.contentDocument;
+  d.open();
+  d.write(`<!doctype html><html><head><meta charset="utf-8"><title>Receipt</title><style>@page{size:${wMm}mm ${hMm}mm;margin:0}html,body{margin:0;padding:0;background:#fff}img{display:block;width:${wMm}mm;height:${hMm}mm;page-break-after:always;break-after:page}img:last-child{page-break-after:auto;break-after:auto}</style></head><body>${pages.map(u => `<img src="${u}">`).join("")}</body></html>`);
+  d.close();
+  const imgs = [...d.images];
+  await Promise.all(imgs.map(im => im.complete ? null : new Promise(r => { im.onload = im.onerror = r; })));
+  setTimeout(() => { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { alert("Print nahi khul paya: " + e.message); } }, 200);
+  setTimeout(() => { if (fr.parentNode) fr.parentNode.removeChild(fr); }, 180000);
+}
+let _pdfJsLoading = null;
+function loadPdfJsLib() {
+  if (window.pdfjsLib) return Promise.resolve(true);
+  if (_pdfJsLoading) return _pdfJsLoading;
+  const libs = [
+    ["https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js", "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js"],
+    ["https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js", "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"],
+    ["https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js", "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js"],
+  ];
+  _pdfJsLoading = (async () => {
+    for (const [u, w] of libs) {
+      const ok = await new Promise((resolve) => {
+        const sc = document.createElement("script");
+        sc.src = u;
+        const to = setTimeout(() => { sc.remove(); resolve(false); }, 15000);
+        sc.onload = () => { clearTimeout(to); resolve(!!window.pdfjsLib); };
+        sc.onerror = () => { clearTimeout(to); sc.remove(); resolve(false); };
+        document.head.appendChild(sc);
+      });
+      if (ok) { window.pdfjsLib.GlobalWorkerOptions.workerSrc = w; return true; }
+    }
+    return false;
+  })();
+  _pdfJsLoading.then(ok => { if (!ok) _pdfJsLoading = null; });
+  return _pdfJsLoading;
+}
+async function pdfDocToPageImages(doc) {
+  const pdf = await window.pdfjsLib.getDocument({ data: doc.output("arraybuffer") }).promise;
+  const out = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const pg = await pdf.getPage(i);
+    const vp = pg.getViewport({ scale: 2.4 });
+    const c = document.createElement("canvas");
+    c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+    await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+    out.push(c.toDataURL("image/jpeg", 0.92));
+  }
+  return out;
 }
 /* Cancel Receipt: reverts every row belonging to this invoice back to
    Pending (as if the payment never happened) — clears paidAt + invoiceNo on
@@ -4781,7 +4868,7 @@ function renderPaidReceiptBlock(e, receipt) {
       </div>
       ${blockSign ? `<div style="display:flex;justify-content:flex-end;margin-top:8px;"><img src="${escapeAttr(blockSign)}" style="height:26px;max-width:90px;object-fit:contain;" /></div>` : ""}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
-        <button class="downloadFeeChartPaidReceiptPdfBtn" data-entry-id="${e.id}" data-category="${receipt.category}" ${receipt.isArchived ? `data-archive-id="${escapeAttr(receipt.archiveId || "")}"` : ""} style="background:${accentColor};color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Download PDF</button>
+        <button class="printFeeChartPaidReceiptBtn" data-entry-id="${e.id}" data-category="${receipt.category}" ${receipt.isArchived ? `data-archive-id="${escapeAttr(receipt.archiveId || "")}"` : ""} style="background:${accentColor};color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">🖨️ Print</button>
         <button class="shareFeeChartPaidReceiptImageBtn" data-entry-id="${e.id}" data-category="${receipt.category}" ${receipt.isArchived ? `data-archive-id="${escapeAttr(receipt.archiveId || "")}"` : ""} style="background:#1F2A44;color:#F3ECDA;border:none;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Share as Image</button>
         ${state.editUnlocked ? `<button class="cancelFeeChartPaidReceiptBtn" data-entry-id="${e.id}" data-category="${receipt.category}" ${receipt.isArchived ? `data-archive-id="${escapeAttr(receipt.archiveId || "")}"` : ""} style="background:transparent;color:#9B3437;border:1px solid #9B3437;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;">Cancel Receipt</button>` : ""}
         ${hasMobile ? `<a href="${buildWhatsAppLink(e.mobile, text)}" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:6px;background:#25D366;color:#fff;border-radius:3px;padding:7px 12px;font-size:12px;font-family:'IBM Plex Mono',monospace;text-decoration:none;">WhatsApp</a>
@@ -13414,14 +13501,14 @@ function wireUpEntryRowEvents(el) {
       extraSheets: (entry.feeChartArchive || []).map(a => ({ sheet: normalizeFeeSheet(a.chart), sessionLabel: a.session })),
     };
   }
-  el.querySelectorAll(".downloadFeeChartPaidReceiptPdfBtn").forEach(btn => {
+  el.querySelectorAll(".printFeeChartPaidReceiptBtn").forEach(btn => {
     btn.addEventListener("click", () => {
       const ctx = resolveReceiptSheetAndMeta(btn);
       if (!ctx) return;
       const receipts = computeFeeChartPaidReceipts(ctx.sheet, ctx.archiveMeta, ctx.extraSheets);
       const receipt = receipts[btn.dataset.category];
       if (!receipt) return;
-      downloadFeeChartPaidReceiptPdf(ctx.entry, receipt);
+      withButtonBusy(btn, "Print…", () => printFeeChartPaidReceipt(ctx.entry, receipt));
     });
   });
   bindReprintInvoiceButtons(el);
