@@ -193,6 +193,7 @@ button, .btn, [role="button"] { -webkit-user-select: none; user-select: none; }
     <select id="sessionFilterSel" class="stamp"></select>
     <select id="fMonthFilterSel" class="stamp"></select>
     <select id="notPaidTillFilterSel" class="stamp"></select>
+    <select id="paidMonthFilterSel" class="stamp" title="Card par FEE TILL me jo month dikhta hai sirf wahi students"></select>
     <button id="toggleFormBtn" class="btn" style="background:#9B3437;color:#F3ECDA;border:none;">
       <span id="icon-formToggle"></span><span id="formToggleLabel">New Entry</span>
     </button>
@@ -362,7 +363,7 @@ const I18N_LANG_KEY = "feeRegisterLang";
 const VIEW_STATE_KEY = "adm_reg_view_state_v1";
 const VIEW_STATE_FIELDS = [
   "query", "classFilter", "classRangeFrom", "classRangeTo", "sectionFilter", "sessionFilter", "fMonthFilter",
-  "notPaidTillFilter", "starFilter", "whatsappFilter", "admTypeFilter",
+  "notPaidTillFilter", "paidMonthFilter", "starFilter", "whatsappFilter", "admTypeFilter",
   "transportFilter", "siblingFilter", "addressFilter", "notesFilter", "updatedFrom", "updatedTo",
   "showMoreFilters", "listLimit",
   /* Which student's panel (Fee Chart / Bill / Paid Receipt / Message) is
@@ -2240,6 +2241,7 @@ function jumpToSiblingEntry(sibId) {
   state.sessionFilter = "all";
   state.fMonthFilter = "all";
   state.notPaidTillFilter = "all";
+  state.paidMonthFilter = "all";
   state.starFilter = "all";
   state.whatsappFilter = "all";
   state.admTypeFilter = "all";
@@ -6422,7 +6424,7 @@ const state = {
   entries: [], allEntries: [], loading: true, form: { ...EMPTY }, showForm: false,
   editingId: null, editForm: { ...EMPTY }, editOriginal: null, query: "", classFilter: "all", classRangeFrom: "", classRangeTo: "", sectionFilter: "all",
   editOpenDemographic: false, editOpenChart: false,
-  sessionFilter: "all", fMonthFilter: "all", notPaidTillFilter: "all", starFilter: "all", whatsappFilter: "all", admTypeFilter: "all", transportFilter: "all", siblingFilter: "all", addressFilter: "all", notesFilter: "", updatedFrom: "", updatedTo: "", saving: false, error: "", showBackups: false, recentMessageSends: {},
+  sessionFilter: "all", fMonthFilter: "all", notPaidTillFilter: "all", paidMonthFilter: "all", starFilter: "all", whatsappFilter: "all", admTypeFilter: "all", transportFilter: "all", siblingFilter: "all", addressFilter: "all", notesFilter: "", updatedFrom: "", updatedTo: "", saving: false, error: "", showBackups: false, recentMessageSends: {},
   backups: [], restoring: false, selectMode: false, selectedIds: new Set(),
   /* Bulk WhatsApp/SMS send queue — built from the current selection (see
      openBulkMessageQueue). null when the modal is closed. Shape:
@@ -8378,6 +8380,9 @@ function getFiltered() {
     const matchesFMonth = state.fMonthFilter === "all" || (entryMonthIdx !== -1 && entryMonthIdx >= filterMonthIdx);
     const notPaidFilterIdx = MONTHS.indexOf(state.notPaidTillFilter);
     const matchesNotPaidTill = state.notPaidTillFilter === "all" || entryMonthIdx === -1 || entryMonthIdx < notPaidFilterIdx;
+    // "Paid Only Till" filter: card par jo "FEE TILL" month dikhta hai wahi month (exact) — paid/close se koi matlab nahi
+    const paidMonthIdx = state.paidMonthFilter === "all" ? -1 : MONTHS.indexOf(state.paidMonthFilter);
+    const matchesPaidMonth = paidMonthIdx === -1 || MONTHS.indexOf((e.fMonth || "").trim()) === paidMonthIdx;
     const matchesQuery = !q || [e.name, e.fatherName, e.motherName, e.rollNo, e.mobile, e.address, e.className, e.section, e.session, e.notes]
       .some(v => (v || "").toLowerCase().includes(q));
     const matchesAddress = state.addressFilter === "all" || (e.address || "").trim() === state.addressFilter;
@@ -8399,7 +8404,7 @@ function getFiltered() {
     const matchesSibling = state.siblingFilter === "all"
       || (state.siblingFilter === "yes" && hasSiblings)
       || (state.siblingFilter === "no" && !hasSiblings);
-    return matchesClass && matchesSection && matchesSession && matchesFMonth && matchesNotPaidTill && matchesQuery && matchesAddress && matchesNotes && matchesUpdatedFrom && matchesUpdatedTo && matchesStar && matchesWhatsapp && matchesAdmType && matchesTransport && matchesSibling;
+    return matchesClass && matchesSection && matchesSession && matchesFMonth && matchesNotPaidTill && matchesPaidMonth && matchesQuery && matchesAddress && matchesNotes && matchesUpdatedFrom && matchesUpdatedTo && matchesStar && matchesWhatsapp && matchesAdmType && matchesTransport && matchesSibling;
   });
 }
 
@@ -8606,6 +8611,10 @@ function renderFilters() {
   sessionSel.value = state.sessionFilter;
   fMonthSel.value = state.fMonthFilter;
   notPaidSel.value = state.notPaidTillFilter;
+  const paidMonthSel = document.getElementById("paidMonthFilterSel");
+  paidMonthSel.innerHTML = `<option value="all">Fee Till = (exact)</option>` +
+    MONTHS.map(m => `<option value="${escapeAttr(m)}">Fee Till = ${escapeHtml(m)}</option>`).join("");
+  paidMonthSel.value = state.paidMonthFilter;
   starSel.innerHTML = `<option value="all">All Stars</option>` +
     `<option value="none">No Star</option>` +
     [1, 2, 3, 4].map(n => `<option value="${n}">${STAR_NAMES[n]} Star</option>`).join("");
@@ -12512,7 +12521,7 @@ const LIST_PAGE = 60;
 let _listSig, _listSorted = [], _listObserver = null;
 function listFilterSig() {
   return [state.query, state.classFilter, state.classRangeFrom, state.classRangeTo, state.sectionFilter, state.sessionFilter,
-    state.fMonthFilter, state.notPaidTillFilter, state.starFilter, state.whatsappFilter, state.admTypeFilter,
+    state.fMonthFilter, state.notPaidTillFilter, state.paidMonthFilter, state.starFilter, state.whatsappFilter, state.admTypeFilter,
     state.transportFilter, state.siblingFilter, state.addressFilter, state.notesFilter, state.updatedFrom, state.updatedTo].join("\u0001");
 }
 function rowHtmlSafe(e) {
@@ -13879,6 +13888,10 @@ document.getElementById("fMonthFilterSel").addEventListener("change", (e) => {
 });
 document.getElementById("notPaidTillFilterSel").addEventListener("change", (e) => {
   state.notPaidTillFilter = e.target.value;
+  renderEntries();
+});
+document.getElementById("paidMonthFilterSel").addEventListener("change", (e) => {
+  state.paidMonthFilter = e.target.value;
   renderEntries();
 });
 document.getElementById("starFilterSel").addEventListener("change", (e) => {
